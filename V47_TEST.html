@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SBA GENIUS V47 - Test Interface</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: #0a0a12;
+            color: #fff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 {
+            text-align: center;
+            background: linear-gradient(90deg, #f4c430, #fff, #f4c430);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 30px;
+        }
+        .config-section {
+            background: #15151f;
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .config-title {
+            color: #f4c430;
+            font-size: 1.2em;
+            margin-bottom: 15px;
+        }
+        .input-row {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+        }
+        .input-group {
+            flex: 1;
+            min-width: 150px;
+        }
+        label {
+            display: block;
+            color: #aaa;
+            font-size: 0.85em;
+            margin-bottom: 5px;
+        }
+        input, select {
+            width: 100%;
+            padding: 12px;
+            background: #1a1a25;
+            border: 1px solid #333;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 1em;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #f4c430;
+        }
+        .btn {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #f4c430, #d4a420);
+            color: #000;
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(244, 196, 48, 0.4);
+        }
+        .btn-secondary {
+            background: #2a2a35;
+            color: #fff;
+            border: 1px solid #444;
+        }
+        .btn-secondary:hover {
+            background: #3a3a45;
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .buttons {
+            display: flex;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .results-section {
+            background: #15151f;
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        .result-card {
+            background: #1a1a25;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 15px;
+        }
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .diamond-display {
+            font-size: 1.8em;
+            letter-spacing: 3px;
+        }
+        .tier-badge {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+        }
+        .tier-lock { background: linear-gradient(135deg, #f4c430, #d4a420); color: #000; }
+        .tier-strong { background: #00ff88; color: #000; }
+        .tier-value { background: #00f0ff; color: #000; }
+        .tier-lean { background: #a855f7; color: #fff; }
+        .tier-pass { background: #ff3366; color: #fff; }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        .stat-box {
+            background: #12121a;
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+        }
+        .stat-label {
+            color: #888;
+            font-size: 0.85em;
+            margin-bottom: 5px;
+        }
+        .stat-value {
+            font-size: 1.4em;
+            font-weight: 700;
+            color: #f4c430;
+        }
+        .log-section {
+            background: #0a0a12;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 15px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+            white-space: pre-wrap;
+            color: #00ff88;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+        }
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid #333;
+            border-top-color: #f4c430;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .hidden { display: none; }
+        .status-bar {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+        .status-dot.green { background: #00ff88; }
+        .status-dot.yellow { background: #f4c430; }
+        .status-dot.red { background: #ff3366; }
+        .pre-ai-result {
+            background: linear-gradient(135deg, #1a1a25, #12121a);
+            border: 2px solid #f4c430;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .pre-ai-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .pre-diamonds {
+            font-size: 2em;
+            letter-spacing: 5px;
+        }
+        .signals-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .signal-tag {
+            padding: 5px 12px;
+            border-radius: 15px;
+            font-size: 0.85em;
+            font-weight: 500;
+        }
+        .signal-over { background: #00ff8822; border: 1px solid #00ff88; color: #00ff88; }
+        .signal-under { background: #ff336622; border: 1px solid #ff3366; color: #ff3366; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏆 SBA GENIUS V47</h1>
+        <p class="subtitle">Ultimate Prediction Engine — Test Interface</p>
+        
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div class="status-item">
+                <div class="status-dot" id="proxy-status"></div>
+                <span>AI Proxy</span>
+            </div>
+            <div class="status-item">
+                <div class="status-dot" id="v47-status"></div>
+                <span>V47 Engine</span>
+            </div>
+            <div class="status-item">
+                <div class="status-dot" id="bdl-status"></div>
+                <span>BallDontLie</span>
+            </div>
+        </div>
+        
+        <!-- Configuration -->
+        <div class="config-section">
+            <div class="config-title">🔧 Configuration</div>
+            <div class="input-row">
+                <div class="input-group">
+                    <label>AI Proxy URL</label>
+                    <input type="text" id="proxy-url" value="https://sba-ai-proxy-production.up.railway.app" placeholder="Railway proxy URL">
+                </div>
+                <div class="input-group">
+                    <label>BDL API Key</label>
+                    <input type="password" id="bdl-key" placeholder="Your BallDontLie key">
+                </div>
+                <div class="input-group">
+                    <label>Odds API Key</label>
+                    <input type="password" id="odds-key" placeholder="Your Odds API key">
+                </div>
+            </div>
+            <button class="btn btn-secondary" onclick="saveConfig()">💾 Save Config</button>
+        </div>
+        
+        <!-- Prop Input -->
+        <div class="config-section">
+            <div class="config-title">🎯 Prop Analysis</div>
+            <div class="input-row">
+                <div class="input-group">
+                    <label>Player Name</label>
+                    <input type="text" id="player" value="LeBron James" placeholder="e.g., LeBron James">
+                </div>
+                <div class="input-group">
+                    <label>Market</label>
+                    <select id="market">
+                        <option value="player_points">Points</option>
+                        <option value="player_rebounds">Rebounds</option>
+                        <option value="player_assists">Assists</option>
+                        <option value="player_threes">3-Pointers</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label>Line</label>
+                    <input type="number" id="line" value="25.5" step="0.5" placeholder="e.g., 25.5">
+                </div>
+            </div>
+            <div class="input-row">
+                <div class="input-group">
+                    <label>Sport</label>
+                    <select id="sport">
+                        <option value="nba">NBA</option>
+                        <option value="nfl">NFL</option>
+                        <option value="nhl">NHL</option>
+                        <option value="mlb">MLB</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label>Team (Optional)</label>
+                    <input type="text" id="team" placeholder="e.g., Lakers">
+                </div>
+                <div class="input-group">
+                    <label>Opponent (Optional)</label>
+                    <input type="text" id="opponent" placeholder="e.g., Warriors">
+                </div>
+            </div>
+            <div class="buttons">
+                <button class="btn btn-secondary" id="btn-quick" onclick="runQuickCheck()">⚡ Quick Check (Pre-AI)</button>
+                <button class="btn btn-primary" id="btn-full" onclick="runFullAnalysis()">🏆 Full AI Analysis</button>
+            </div>
+        </div>
+        
+        <!-- Results -->
+        <div id="results-section" class="hidden">
+            <div class="results-section">
+                <div class="config-title">📊 Analysis Results</div>
+                
+                <!-- Pre-AI Result -->
+                <div id="pre-ai-result" class="pre-ai-result hidden">
+                    <div class="pre-ai-header">
+                        <div>
+                            <div class="pre-diamonds" id="pre-diamonds">💎💎💎⬜⬜</div>
+                            <div style="color: #888;">Pre-AI Rating</div>
+                        </div>
+                        <div style="text-align: right;">
+                            <div style="font-size: 1.5em; font-weight: 700;" id="pre-direction">OVER</div>
+                            <div style="color: #888;" id="pre-confidence">68% confidence</div>
+                        </div>
+                    </div>
+                    <div class="signals-list" id="signals-list"></div>
+                </div>
+                
+                <!-- Full Result -->
+                <div id="full-result" class="result-card hidden">
+                    <div class="result-header">
+                        <div class="diamond-display" id="diamonds">💎💎💎💎💎💎💎⬜⬜</div>
+                        <div class="tier-badge tier-strong" id="tier-badge">STRONG PLAY</div>
+                    </div>
+                    <div class="stats-grid">
+                        <div class="stat-box">
+                            <div class="stat-label">PICK</div>
+                            <div class="stat-value" id="pick">OVER</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">FEEL-LIKE ODDS</div>
+                            <div class="stat-value" id="feel-odds">-180</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">TRUE PROBABILITY</div>
+                            <div class="stat-value" id="true-prob">64.3%</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">CONFIDENCE</div>
+                            <div class="stat-value" id="confidence">78%</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">EDGE</div>
+                            <div class="stat-value" id="edge">+8.2%</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">AI ENGINES</div>
+                            <div class="stat-value" id="engines">9/11</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Log -->
+                <div style="margin-top: 20px;">
+                    <div class="config-title">📝 Analysis Log</div>
+                    <div class="log-section" id="log"></div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Loading -->
+        <div id="loading" class="loading hidden">
+            <div class="spinner"></div>
+            <div>Analyzing with V47 Ultimate Engine...</div>
+            <div style="color: #888; margin-top: 10px;" id="loading-step">Gathering data...</div>
+        </div>
+    </div>
+    
+    <script src="SBA_GENIUS_V47_MODULE.js"></script>
+    <script>
+        // Global CONFIG object that V47 expects
+        window.CONFIG = {
+            aiProxy: '',
+            keys: {
+                bdl: '',
+                odds: ''
+            }
+        };
+        
+        // Capture console.log for display
+        const logArea = document.getElementById('log');
+        const originalLog = console.log;
+        console.log = function(...args) {
+            originalLog.apply(console, args);
+            const text = args.map(a => typeof a === 'object' ? JSON.stringify(a, null, 2) : a).join(' ');
+            logArea.textContent += text + '\n';
+            logArea.scrollTop = logArea.scrollHeight;
+        };
+        
+        // Load saved config
+        function loadConfig() {
+            const proxy = localStorage.getItem('sba_ai_proxy') || 'https://sba-ai-proxy-production.up.railway.app';
+            const bdl = localStorage.getItem('sba_bdl_key') || '';
+            const odds = localStorage.getItem('sba_odds_key') || '';
+            
+            document.getElementById('proxy-url').value = proxy;
+            document.getElementById('bdl-key').value = bdl;
+            document.getElementById('odds-key').value = odds;
+            
+            CONFIG.aiProxy = proxy;
+            CONFIG.keys.bdl = bdl;
+            CONFIG.keys.odds = odds;
+            
+            checkStatus();
+        }
+        
+        function saveConfig() {
+            const proxy = document.getElementById('proxy-url').value;
+            const bdl = document.getElementById('bdl-key').value;
+            const odds = document.getElementById('odds-key').value;
+            
+            localStorage.setItem('sba_ai_proxy', proxy);
+            localStorage.setItem('sba_bdl_key', bdl);
+            localStorage.setItem('sba_odds_key', odds);
+            
+            CONFIG.aiProxy = proxy;
+            CONFIG.keys.bdl = bdl;
+            CONFIG.keys.odds = odds;
+            
+            checkStatus();
+            alert('Configuration saved!');
+        }
+        
+        async function checkStatus() {
+            // Check proxy
+            const proxyDot = document.getElementById('proxy-status');
+            try {
+                const res = await fetch(`${CONFIG.aiProxy}/api/status`);
+                proxyDot.className = res.ok ? 'status-dot green' : 'status-dot red';
+            } catch (e) {
+                proxyDot.className = 'status-dot red';
+            }
+            
+            // Check V47
+            const v47Dot = document.getElementById('v47-status');
+            v47Dot.className = typeof SBA_GENIUS_V47 !== 'undefined' ? 'status-dot green' : 'status-dot red';
+            
+            // Check BDL
+            const bdlDot = document.getElementById('bdl-status');
+            bdlDot.className = CONFIG.keys.bdl ? 'status-dot green' : 'status-dot yellow';
+        }
+        
+        function getParams() {
+            return {
+                player: document.getElementById('player').value,
+                market: document.getElementById('market').value,
+                line: parseFloat(document.getElementById('line').value),
+                sport: document.getElementById('sport').value,
+                team: document.getElementById('team').value || undefined,
+                opponent: document.getElementById('opponent').value || undefined
+            };
+        }
+        
+        async function runQuickCheck() {
+            logArea.textContent = '';
+            document.getElementById('loading').classList.remove('hidden');
+            document.getElementById('loading-step').textContent = 'Running quick check...';
+            document.getElementById('results-section').classList.add('hidden');
+            document.getElementById('btn-quick').disabled = true;
+            document.getElementById('btn-full').disabled = true;
+            
+            try {
+                const result = await SBA_GENIUS_V47.quickCheck(getParams());
+                
+                showPreAIResult(result);
+                
+            } catch (e) {
+                console.error('Error:', e);
+                alert('Analysis failed: ' + e.message);
+            }
+            
+            document.getElementById('loading').classList.add('hidden');
+            document.getElementById('btn-quick').disabled = false;
+            document.getElementById('btn-full').disabled = false;
+        }
+        
+        async function runFullAnalysis() {
+            logArea.textContent = '';
+            document.getElementById('loading').classList.remove('hidden');
+            document.getElementById('loading-step').textContent = 'Gathering data from all sources...';
+            document.getElementById('results-section').classList.add('hidden');
+            document.getElementById('btn-quick').disabled = true;
+            document.getElementById('btn-full').disabled = true;
+            
+            try {
+                const params = getParams();
+                params.forceAI = true; // Always run full analysis
+                
+                setTimeout(() => {
+                    document.getElementById('loading-step').textContent = 'Running AI synthesis with 11 engines...';
+                }, 2000);
+                
+                setTimeout(() => {
+                    document.getElementById('loading-step').textContent = 'Calculating Feel-Like Odds...';
+                }, 5000);
+                
+                const result = await SBA_GENIUS_V47.analyze(params);
+                
+                if (result.success) {
+                    showFullResult(result);
+                } else {
+                    alert('Analysis failed: ' + (result.error || 'Unknown error'));
+                }
+                
+            } catch (e) {
+                console.error('Error:', e);
+                alert('Analysis failed: ' + e.message);
+            }
+            
+            document.getElementById('loading').classList.add('hidden');
+            document.getElementById('btn-quick').disabled = false;
+            document.getElementById('btn-full').disabled = false;
+        }
+        
+        function showPreAIResult(result) {
+            document.getElementById('results-section').classList.remove('hidden');
+            document.getElementById('pre-ai-result').classList.remove('hidden');
+            document.getElementById('full-result').classList.add('hidden');
+            
+            document.getElementById('pre-diamonds').textContent = result.preDiamondsDisplay;
+            document.getElementById('pre-direction').textContent = result.direction;
+            document.getElementById('pre-confidence').textContent = `${result.confidence}% confidence`;
+            
+            // Show signals
+            const signalsList = document.getElementById('signals-list');
+            signalsList.innerHTML = '';
+            
+            if (result.signals) {
+                for (const signal of result.signals) {
+                    const tag = document.createElement('div');
+                    tag.className = `signal-tag signal-${signal.direction.toLowerCase()}`;
+                    tag.textContent = `${signal.source}: ${signal.detail}`;
+                    signalsList.appendChild(tag);
+                }
+            }
+        }
+        
+        function showFullResult(result) {
+            document.getElementById('results-section').classList.remove('hidden');
+            document.getElementById('full-result').classList.remove('hidden');
+            
+            // Show pre-AI too if available
+            if (result.preAI) {
+                showPreAIResult(result.preAI);
+                document.getElementById('pre-ai-result').classList.remove('hidden');
+            }
+            
+            // Diamonds
+            document.getElementById('diamonds').textContent = result.diamondDisplay;
+            
+            // Tier badge
+            const tierBadge = document.getElementById('tier-badge');
+            tierBadge.textContent = result.tierName;
+            tierBadge.className = 'tier-badge ' + (
+                result.tier?.includes('LOCK') ? 'tier-lock' :
+                result.tier?.includes('STRONG') ? 'tier-strong' :
+                result.tier?.includes('VALUE') ? 'tier-value' :
+                result.tier?.includes('LEAN') ? 'tier-lean' : 'tier-pass'
+            );
+            
+            // Stats
+            document.getElementById('pick').textContent = result.recommendation || 'N/A';
+            document.getElementById('feel-odds').textContent = result.feelOdds || 'N/A';
+            document.getElementById('true-prob').textContent = result.trueProb ? `${(result.trueProb * 100).toFixed(1)}%` : 'N/A';
+            document.getElementById('confidence').textContent = result.confidence ? `${result.confidence}%` : 'N/A';
+            document.getElementById('edge').textContent = result.edge || 'N/A';
+            document.getElementById('engines').textContent = `${result.ai?.enginesSuccessful || 0}/11`;
+        }
+        
+        // Initialize
+        loadConfig();
+    </script>
+</body>
+</html>
