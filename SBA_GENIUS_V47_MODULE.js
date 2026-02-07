@@ -19,6 +19,15 @@ const SBA_GENIUS_V47 = (function() {
     
     const VERSION = 'V47_ULTIMATE';
     const DEBUG = true;
+    const DEFAULT_PROXY = 'https://sba-ai-proxy-production.up.railway.app';
+    
+    // Helper to get proxy URL
+    const getProxyUrl = () => {
+        if (typeof CONFIG !== 'undefined' && CONFIG.aiProxy && !CONFIG.aiProxy.includes('file://')) {
+            return CONFIG.aiProxy;
+        }
+        return DEFAULT_PROXY;
+    };
     
     const log = (...args) => DEBUG && console.log('[V47]', ...args);
     const logSection = (title) => {
@@ -322,14 +331,15 @@ const SBA_GENIUS_V47 = (function() {
             ctx.dataQuality.sourcesAttempted++;
             
             try {
-                const useProxy = CONFIG?.aiProxy?.length > 10;
+                const proxyUrl = getProxyUrl();
+                const useProxy = proxyUrl !== null;
                 const subs = ['sportsbook', ctx.sport];
                 let posts = [];
                 
                 for (const sub of subs) {
                     try {
                         const url = useProxy
-                            ? `${CONFIG.aiProxy}/api/reddit/${sub}/search?q=${encodeURIComponent(ctx.player)}&sort=new&limit=15&t=day`
+                            ? `${proxyUrl}/api/reddit/${sub}/search?q=${encodeURIComponent(ctx.player)}&sort=new&limit=15&t=day`
                             : `https://www.reddit.com/r/${sub}/search.json?q=${encodeURIComponent(ctx.player)}&sort=new&limit=15&t=day`;
                         
                         const res = await fetch(url);
@@ -666,10 +676,12 @@ INJURIES:
         },
         
         async callEngine(id, prompt) {
-            if (!CONFIG?.aiProxy) return null;
+            // Use Railway proxy
+            const proxyUrl = getProxyUrl();
+            if (!proxyUrl) return null;
             
             try {
-                const res = await fetch(`${CONFIG.aiProxy}/api/ai/${id}`, {
+                const res = await fetch(`${proxyUrl}/api/ai/${id}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ prompt, maxTokens: 300 })

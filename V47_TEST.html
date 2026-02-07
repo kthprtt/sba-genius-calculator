@@ -399,14 +399,19 @@
     
     <script src="SBA_GENIUS_V47_MODULE.js"></script>
     <script>
-        // Global CONFIG object that V47 expects
+        // Global CONFIG - Use Railway proxy by default
         window.CONFIG = {
-            aiProxy: '',
+            aiProxy: localStorage.getItem('sba_ai_proxy') || 'https://sba-ai-proxy-production.up.railway.app',
             keys: {
-                bdl: '',
-                odds: ''
+                bdl: localStorage.getItem('sba_bdl_key') || '',
+                odds: localStorage.getItem('sba_odds_key') || ''
             }
         };
+        
+        // IMPORTANT: Set the proxy URL immediately
+        if (!CONFIG.aiProxy || CONFIG.aiProxy.includes('file://')) {
+            CONFIG.aiProxy = 'https://sba-ai-proxy-production.up.railway.app';
+        }
         
         // Capture console.log for display
         const logArea = document.getElementById('log');
