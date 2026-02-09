@@ -6594,6 +6594,10 @@ Return ONLY valid JSON:
                 const sport = this.sportPaths[oddsApiSport];
                 if (!sport) return null;
                 
+                // Skip sports that returned 401 (not in BDL plan)
+                if (!this._gamesUnavailable) this._gamesUnavailable = new Set();
+                if (this._gamesUnavailable.has(sport)) return [];
+                
                 const params = {};
                 
                 // V43: MMA uses 'year' and 'date' params, not 'dates[]'
@@ -6612,6 +6616,13 @@ Return ONLY valid JSON:
                 // V43: Soccer uses 'matches' endpoint, MMA uses 'events', US sports use 'games'
                 const endpoint = this.getGamesEndpoint(sport);
                 const data = await this.fetch(`/${sport}/v1/${endpoint}`, params);
+                
+                // Track sports where games endpoint returns 401
+                if (data === null && !this._gamesUnavailable.has(sport)) {
+                    this._gamesUnavailable.add(sport);
+                    console.log(`🏥 BDL: ${sport} games/matches not available — skipping future calls`);
+                }
+                
                 return data?.data || [];
             },
             
@@ -33810,7 +33821,7 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
         
         function applyFilters(results) {
             const f = scannerState.filters;
-            return results.filter(r => {
+            let filtered = results.filter(r => {
                 // Check tier filters
                 if (r.estimatedTier === 'diamond' && !f.showDiamonds) return false;
                 if (r.estimatedTier === 'lock' && !f.showLocks) return false;
@@ -33827,11 +33838,64 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                     if (edge < f.minEdge) return false;
                 }
                 
+                // Check sportsbook filter — only show results where selected book has odds
+                if (f.bookFilter && f.bookFilter !== 'all') {
+                    const bookKey = f.bookFilter.toLowerCase();
+                    const hasBook = r.bookPrices?.some(bp => 
+                        bp.book?.toLowerCase().includes(bookKey) || 
+                        bp.bookTitle?.toLowerCase().includes(bookKey)
+                    );
+                    if (!hasBook) return false;
+                }
+                
+                // Check My Books — for arbs, BOTH books must be in My Books
+                if (f.myBooks && r.arbPct > 0 && r.bestOverBookKey && r.bestUnderBookKey) {
+                    const matchesMyBook = (bookKey) => {
+                        if (!bookKey) return true;
+                        const k = bookKey.toLowerCase();
+                        return Object.entries(f.myBooks).some(([mk, enabled]) => 
+                            enabled && k.includes(mk)
+                        );
+                    };
+                    if (!matchesMyBook(r.bestOverBookKey) || !matchesMyBook(r.bestUnderBookKey)) return false;
+                }
+                
                 // Check hidden
                 if (f.hiddenIds.has(r.id || `${r.player}_${r.market}_${r.line}`)) return false;
                 
                 return true;
             });
+            
+            // Apply sort
+            const sortBy = scannerState.sortBy || 'edge-desc';
+            const tierRank = { 'diamond': 5, 'lock': 4, 'high': 3, 'streak': 2, 'none': 1 };
+            
+            filtered.sort((a, b) => {
+                switch(sortBy) {
+                    case 'edge-desc':
+                        return (b.arbPct || b.edgePct || 0) - (a.arbPct || a.edgePct || 0);
+                    case 'diamond-desc':
+                        if (a.estimatedTier === 'diamond' && b.estimatedTier !== 'diamond') return -1;
+                        if (b.estimatedTier === 'diamond' && a.estimatedTier !== 'diamond') return 1;
+                        return (tierRank[b.estimatedTier] || 0) - (tierRank[a.estimatedTier] || 0) || (b.arbPct || b.edgePct || 0) - (a.arbPct || a.edgePct || 0);
+                    case 'lock-desc':
+                        if (a.estimatedTier === 'lock' && b.estimatedTier !== 'lock') return -1;
+                        if (b.estimatedTier === 'lock' && a.estimatedTier !== 'lock') return 1;
+                        return (tierRank[b.estimatedTier] || 0) - (tierRank[a.estimatedTier] || 0) || (b.arbPct || b.edgePct || 0) - (a.arbPct || a.edgePct || 0);
+                    case 'roi-desc':
+                        return (b.arbPct || b.edgePct || 0) - (a.arbPct || a.edgePct || 0);
+                    case 'books-desc':
+                        return (b.bookCount || 0) - (a.bookCount || 0);
+                    case 'time-asc':
+                        const tA = a.commenceTime ? new Date(a.commenceTime).getTime() : Infinity;
+                        const tB = b.commenceTime ? new Date(b.commenceTime).getTime() : Infinity;
+                        return tA - tB;
+                    default:
+                        return (b.arbPct || b.edgePct || 0) - (a.arbPct || a.edgePct || 0);
+                }
+            });
+            
+            return filtered;
         }
         
         function renderFilterControls() {
@@ -33862,6 +33926,34 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                         </label>
                     </div>
                     <div style="display: flex; gap: 6px; align-items: center; margin-left: auto;">
+                        <span style="font-size: 11px; color: #888;">Sort:</span>
+                        <select id="filter-sort" onchange="setScanSort(this.value)" style="background: rgba(30,30,50,0.8); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 2px 6px; font-size: 10px;">
+                            <option value="edge-desc" ${(scannerState.sortBy||'edge-desc')==='edge-desc'?'selected':''}>📊 Highest Edge</option>
+                            <option value="diamond-desc" ${scannerState.sortBy==='diamond-desc'?'selected':''}>💎 Diamonds First</option>
+                            <option value="lock-desc" ${scannerState.sortBy==='lock-desc'?'selected':''}>🔒 Locks First</option>
+                            <option value="roi-desc" ${scannerState.sortBy==='roi-desc'?'selected':''}>💰 Highest ROI</option>
+                            <option value="books-desc" ${scannerState.sortBy==='books-desc'?'selected':''}>📚 Most Books</option>
+                            <option value="time-asc" ${scannerState.sortBy==='time-asc'?'selected':''}>⏰ Soonest Game</option>
+                        </select>
+                        <button onclick="toggleMyBooks()" id="my-books-btn" style="background: rgba(255,215,0,0.1); color: #FFD700; border: 1px solid rgba(255,215,0,0.3); border-radius: 4px; padding: 2px 8px; font-size: 10px; cursor: pointer; white-space: nowrap;" title="Select your sportsbook accounts — arbs only show between books you have">📚 My Books</button>
+                        <select id="filter-book-price" onchange="setScanBook(this.value)" style="background: rgba(30,30,50,0.8); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 2px 6px; font-size: 10px; max-width: 100px;" title="Show best price at this specific book">
+                            <option value="all" ${(scannerState.filters.bookFilter||'all')==='all'?'selected':''}>🏷️ Best Price</option>
+                            <option value="fanduel" ${scannerState.filters.bookFilter==='fanduel'?'selected':''}>FanDuel</option>
+                            <option value="draftkings" ${scannerState.filters.bookFilter==='draftkings'?'selected':''}>DraftKings</option>
+                            <option value="betmgm" ${scannerState.filters.bookFilter==='betmgm'?'selected':''}>BetMGM</option>
+                            <option value="pinnacle" ${scannerState.filters.bookFilter==='pinnacle'?'selected':''}>Pinnacle</option>
+                            <option value="caesars" ${scannerState.filters.bookFilter==='caesars'?'selected':''}>Caesars</option>
+                            <option value="bovada" ${scannerState.filters.bookFilter==='bovada'?'selected':''}>Bovada</option>
+                            <option value="betonlineag" ${scannerState.filters.bookFilter==='betonlineag'?'selected':''}>BetOnline</option>
+                            <option value="betrivers" ${scannerState.filters.bookFilter==='betrivers'?'selected':''}>BetRivers</option>
+                            <option value="fanatics" ${scannerState.filters.bookFilter==='fanatics'?'selected':''}>Fanatics</option>
+                            <option value="bet365" ${scannerState.filters.bookFilter==='bet365'?'selected':''}>bet365</option>
+                            <option value="hard_rock" ${scannerState.filters.bookFilter==='hard_rock'?'selected':''}>Hard Rock</option>
+                            <option value="betfair_ex_uk" ${scannerState.filters.bookFilter==='betfair_ex_uk'?'selected':''}>Betfair</option>
+                            <option value="williamhill_us" ${scannerState.filters.bookFilter==='williamhill_us'?'selected':''}>Wm Hill</option>
+                            <option value="unibet_eu" ${scannerState.filters.bookFilter==='unibet_eu'?'selected':''}>Unibet</option>
+                            <option value="betway" ${scannerState.filters.bookFilter==='betway'?'selected':''}>Betway</option>
+                        </select>
                         <span style="font-size: 11px; color: #888;">Min Edge:</span>
                         <select id="filter-min-edge" onchange="setMinEdge(this.value)" style="background: rgba(30,30,50,0.8); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 2px 6px; font-size: 10px;">
                             <option value="0" ${f.minEdge === 0 ? 'selected' : ''}>All</option>
@@ -33886,6 +33978,100 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
             rerenderFilteredResults();
         }
         
+        function setScanSort(value) {
+            scannerState.sortBy = value;
+            rerenderFilteredResults();
+        }
+        
+        function setScanBook(value) {
+            scannerState.filters.bookFilter = value;
+            rerenderFilteredResults();
+        }
+        
+        // ═══ MY BOOKS — multi-select for arb filtering ═══
+        const MY_BOOKS_LIST = [
+            {key: 'fanduel', label: '🏈 FanDuel'}, {key: 'draftkings', label: '👑 DraftKings'},
+            {key: 'betmgm', label: '🦁 BetMGM'}, {key: 'caesars', label: '🏛️ Caesars'},
+            {key: 'fanatics', label: '⭐ Fanatics'}, {key: 'betrivers', label: '🌊 BetRivers'},
+            {key: 'pinnacle', label: '📌 Pinnacle'}, {key: 'bovada', label: '🐂 Bovada'},
+            {key: 'betonlineag', label: '💰 BetOnline'}, {key: 'bet365', label: '🌐 bet365'},
+            {key: 'hard_rock', label: '🎸 Hard Rock'}, {key: 'betfair_ex_uk', label: '🔄 Betfair'},
+            {key: 'williamhill_us', label: '🇬🇧 Wm Hill'}, {key: 'unibet_eu', label: '🇪🇺 Unibet'},
+            {key: 'betway', label: '🎯 Betway'}, {key: 'espnbet', label: '📺 ESPN BET'},
+            {key: 'fliff', label: '🎰 Fliff'}, {key: 'mybookieag', label: '📕 MyBookie'},
+            {key: 'superbook', label: '📗 SuperBook'}, {key: 'pointsbetus', label: '🎯 PointsBet'}
+        ];
+        
+        function toggleMyBooks() {
+            let panel = document.getElementById('my-books-panel');
+            if (panel) {
+                panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+                return;
+            }
+            
+            // Create panel
+            const mb = scannerState.filters.myBooks || {};
+            const container = document.getElementById('scanner-filters') || document.getElementById('scanner-results');
+            
+            let html = `<div id="my-books-panel" style="background: rgba(15,15,30,0.95); border: 1px solid rgba(255,215,0,0.3); border-radius: 8px; padding: 14px; margin: 10px 0;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <span style="color: #FFD700; font-weight: bold; font-size: 13px;">📚 My Sportsbooks</span>
+                    <div style="display: flex; gap: 6px;">
+                        <button onclick="selectAllBooks(true)" style="background: rgba(0,255,136,0.15); color: #00ff88; border: 1px solid rgba(0,255,136,0.3); border-radius: 4px; padding: 2px 8px; font-size: 10px; cursor: pointer;">✅ All</button>
+                        <button onclick="selectAllBooks(false)" style="background: rgba(255,50,50,0.15); color: #ff5252; border: 1px solid rgba(255,50,50,0.3); border-radius: 4px; padding: 2px 8px; font-size: 10px; cursor: pointer;">❌ None</button>
+                    </div>
+                </div>
+                <div style="font-size: 10px; color: #888; margin-bottom: 10px;">Only arbs between selected books will show. Uncheck books you don't have.</div>
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;">`;
+            
+            MY_BOOKS_LIST.forEach(b => {
+                const checked = mb[b.key] !== false ? 'checked' : '';
+                html += `<label style="display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 11px; padding: 4px 6px; background: rgba(30,30,50,0.6); border-radius: 4px; border: 1px solid ${mb[b.key] !== false ? 'rgba(0,255,136,0.2)' : 'rgba(255,255,255,0.05)'};">
+                    <input type="checkbox" ${checked} onchange="toggleMyBook('${b.key}', this.checked)">
+                    <span>${b.label}</span>
+                </label>`;
+            });
+            
+            html += `</div>
+                <div style="margin-top: 10px; text-align: right;">
+                    <button onclick="document.getElementById('my-books-panel').style.display='none'; rerenderFilteredResults();" style="background: linear-gradient(135deg, rgba(255,215,0,0.3), rgba(255,170,0,0.3)); color: #FFD700; border: 1px solid rgba(255,215,0,0.4); border-radius: 4px; padding: 4px 14px; font-size: 11px; cursor: pointer; font-weight: bold;">Apply & Close</button>
+                </div>
+            </div>`;
+            
+            container.insertAdjacentHTML('afterend', html);
+        }
+        
+        function toggleMyBook(bookKey, isChecked) {
+            if (!scannerState.filters.myBooks) {
+                // Init all to true
+                scannerState.filters.myBooks = {};
+                MY_BOOKS_LIST.forEach(b => scannerState.filters.myBooks[b.key] = true);
+            }
+            scannerState.filters.myBooks[bookKey] = isChecked;
+            // Save to localStorage
+            try { localStorage.setItem('sba_my_books', JSON.stringify(scannerState.filters.myBooks)); } catch(e) {}
+        }
+        
+        function selectAllBooks(val) {
+            if (!scannerState.filters.myBooks) scannerState.filters.myBooks = {};
+            MY_BOOKS_LIST.forEach(b => {
+                scannerState.filters.myBooks[b.key] = val;
+                const cb = document.querySelector(`#my-books-panel input[onchange*="${b.key}"]`);
+                if (cb) cb.checked = val;
+            });
+            // Update label borders
+            document.querySelectorAll('#my-books-panel label').forEach(l => {
+                l.style.borderColor = val ? 'rgba(0,255,136,0.2)' : 'rgba(255,255,255,0.05)';
+            });
+            try { localStorage.setItem('sba_my_books', JSON.stringify(scannerState.filters.myBooks)); } catch(e) {}
+        }
+        
+        // Load saved My Books on init
+        try {
+            const saved = localStorage.getItem('sba_my_books');
+            if (saved) scannerState.filters.myBooks = JSON.parse(saved);
+        } catch(e) {}
+        
         function resetFilters() {
             scannerState.filters = {
                 showDiamonds: true,
@@ -33895,8 +34081,11 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                 showStreak: false,
                 showMonitor: false,
                 minEdge: 0,
+                bookFilter: 'all',
+                myBooks: scannerState.filters.myBooks || {},  // preserve My Books on reset
                 hiddenIds: new Set()
             };
+            scannerState.sortBy = 'edge-desc';
             rerenderFilteredResults();
         }
         
