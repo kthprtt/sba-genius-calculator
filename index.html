@@ -6671,6 +6671,10 @@ Return ONLY valid JSON:
                 const sport = this.sportPaths[oddsApiSport];
                 if (!sport) return null;
                 
+                // Skip sports that previously returned 404 for player_props
+                if (!this._propsUnavailable) this._propsUnavailable = new Set();
+                if (this._propsUnavailable.has(sport)) return [];
+                
                 // V43: MMA uses fight_id, soccer uses match_id, US sports use game_id
                 let idParam = 'game_id';
                 if (this.combatSports.has(sport)) idParam = 'fight_id';
@@ -6682,6 +6686,13 @@ Return ONLY valid JSON:
                 if (options.vendors) params.vendors = options.vendors;
                 
                 const data = await this.fetch(`/${sport}/v1/odds/player_props`, params);
+                
+                // Track sports where player_props doesn't exist
+                if (data === null && !this._propsUnavailable.has(sport)) {
+                    this._propsUnavailable.add(sport);
+                    console.log(`🏥 BDL: ${sport} player_props not available — skipping future calls`);
+                }
+                
                 return data?.data || [];
             },
             
@@ -34177,6 +34188,9 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                 for (const sport of sportsToScan) {
                     if (!scannerState.isScanning) break;
                     
+                    // Skip sports that already returned 401
+                    if (scannerState._skippedSports?.has(sport)) continue;
+                    
                     const sportLabel = Object.entries(allSportKeys).find(([k,v]) => v === sport)?.[0] || sport;
                     resultsEl.innerHTML = `<div style="text-align: center; color: #00c8ff; font-size: 12px; padding: 12px;">🔍 Scanning ${sportLabel} — ALL BOOKS arb detection${scannerState.bookFilter !== 'all' ? ' (priority: <b style="color: #FFD700;">' + scannerState.bookFilter.toUpperCase() + '</b>)' : ''}...</div>`;
                     
@@ -34432,6 +34446,17 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                                 }
                                 
                                 const propsRes = await fetch(propsUrl, { signal: scannerState.abortController.signal });
+                                
+                                // Skip sport if API returns 401 (plan doesn't cover it)
+                                if (propsRes.status === 401) {
+                                    if (!scannerState._skippedSports) scannerState._skippedSports = new Set();
+                                    if (!scannerState._skippedSports.has(sport)) {
+                                        scannerState._skippedSports.add(sport);
+                                        console.warn(`💎 Scanner: ${sportLabel} props returned 401 — skipping (not in OddsAPI plan)`);
+                                    }
+                                    break; // Skip remaining events for this sport
+                                }
+                                
                                 const propsData = await propsRes.json();
                                 
                                 let eventPlayerCount = 0;
@@ -34502,7 +34527,13 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                                         gameUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${CONFIG.keys.odds}&regions=us,us2,us_dfs,us_ex,eu,uk,au&markets=${gameMarkets}&oddsFormat=american`;
                                     }
                                     const gameRes = await fetch(gameUrl, { signal: scannerState.abortController.signal });
-                                    gameData = await gameRes.json();
+                                    
+                                    // Skip if 401
+                                    if (gameRes.status === 401) {
+                                        gameData = null;
+                                    } else {
+                                        gameData = await gameRes.json();
+                                    }
                                     
                                     // V40 PHASE 4: Reverse-lookup market key → display name from MARKET_REGISTRY
                                     function getMarketDisplayName(apiKey) {
