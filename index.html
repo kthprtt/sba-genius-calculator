@@ -2241,16 +2241,40 @@
                             <option value="fanduel">🏈 FanDuel</option>
                             <option value="draftkings">👑 DraftKings</option>
                             <option value="betmgm">🦁 BetMGM</option>
-                            <option value="caesars">🏛️ Caesars</option>
+                            <option value="williamhill_us">🏛️ Caesars</option>
                             <option value="bovada">🐂 Bovada</option>
                             <option value="betonlineag">💰 BetOnline</option>
                             <option value="betrivers">🌊 BetRivers</option>
                             <option value="fanatics">⭐ Fanatics</option>
+                            <option value="espnbet">📺 ESPN BET</option>
+                            <option value="hardrockbet">🎸 Hard Rock</option>
                             <option value="bet365">🌐 bet365</option>
-                            <option value="williamhill">🇬🇧 William Hill</option>
-                            <option value="betfair_ex_uk">🔄 Betfair Exch</option>
-                            <option value="unibet_eu">🇪🇺 Unibet EU</option>
-                            <option value="betway">🎯 Betway</option>
+                            <option value="betfair_ex_uk">🔄 Betfair UK</option>
+                            <option value="betfair_ex_eu">🔄 Betfair EU</option>
+                            <option value="betparx">🎲 betPARX</option>
+                            <option value="ballybet">🎰 Bally Bet</option>
+                            <option value="fliff">🃏 Fliff</option>
+                            <option value="mybookieag">📕 MyBookie</option>
+                            <option value="betus">💵 BetUS</option>
+                            <option value="rebet">🔁 ReBet</option>
+                            <option value="betanysports">🎯 BetAnySports</option>
+                            <option value="lowvig">📉 LowVig</option>
+                            <option value="novig">⚖️ Novig</option>
+                            <option value="betopenly">🔓 BetOpenly</option>
+                            <option value="prophetx">🔮 ProphetX</option>
+                            <option value="kalshi">📊 Kalshi</option>
+                            <option value="polymarket">🌍 Polymarket</option>
+                            <option value="coolbet">❄️ Coolbet</option>
+                            <option value="betsson">🅱️ Betsson</option>
+                            <option value="onexbet">1️⃣ 1xBet</option>
+                            <option value="williamhill">🇬🇧 Wm Hill UK</option>
+                            <option value="matchbook">📗 Matchbook</option>
+                            <option value="marathonbet">🏃 Marathon</option>
+                            <option value="smarkets">💱 Smarkets</option>
+                            <option value="prizepicks">🎯 PrizePicks</option>
+                            <option value="underdog">🐕 Underdog</option>
+                            <option value="betr_us_dfs">🎲 Betr DFS</option>
+                            <option value="pick6">6️⃣ DK Pick6</option>
                         </select>
                         <select class="scanner-filter" id="scanner-window-filter" title="Time window — how far ahead to scan" style="background: #1a1a2e; color: #e0e0e0; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 4px 6px; font-size: 11px; max-width: 90px;">
                             <option value="24">⏰ 24 hrs</option>
@@ -12129,13 +12153,15 @@ Return ONLY valid JSON:
                 }
                 
                 const liveBadge = isLive 
-                    ? '<span style="background:#00ff88;color:#000;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:bold;margin-left:6px;">LIVE</span>'
+                    ? (engineData.isLocal 
+                        ? '<span style="background:#f4c430;color:#000;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:bold;margin-left:6px;">LOCAL</span>'
+                        : '<span style="background:#00ff88;color:#000;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:bold;margin-left:6px;">LIVE</span>')
                     : engineData.isTimeout 
                         ? '<span style="background:#f59e0b;color:#000;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:bold;margin-left:6px;">TIMEOUT</span>'
                         : '<span style="background:#444;color:#888;padding:1px 6px;border-radius:3px;font-size:9px;margin-left:6px;">WAITING</span>';
                 
                 return `
-                    <div class="ai-engine" style="${isLive ? 'border-left: 2px solid #00ff88;' : ''}">
+                    <div class="ai-engine" style="${isLive ? (engineData.isLocal ? 'border-left: 2px solid #f4c430;' : 'border-left: 2px solid #00ff88;') : ''}">
                         <div class="ai-engine-header">
                             <span class="ai-engine-name"><span class="ai-engine-icon">${e.icon}</span> ${e.name}${liveBadge}</span>
                             <span class="ai-vote ${voteClass}">${vote}</span>
@@ -12981,6 +13007,11 @@ Return ONLY valid JSON:
             // ─── UK SPORTSBOOKS (region: uk) ───
             'williamhill':    { name: 'William Hill UK', region: 'uk', type: 'uk',      sharp: false, priority: 41, bbId: 13 },
             'leovegas':       { name: 'LeoVegas',       region: 'uk', type: 'uk',       sharp: false, priority: 42, bbId: 487 },
+            'betfair_ex_uk':  { name: 'Betfair Exch UK', region: 'uk', type: 'exchange', sharp: true,  priority: 43, bbId: null, url: 'https://www.betfair.com/exchange' },
+            'matchbook':      { name: 'Matchbook',      region: 'uk', type: 'exchange', sharp: true,  priority: 44, bbId: null, url: 'https://www.matchbook.com' },
+            'smarkets':       { name: 'Smarkets',       region: 'uk', type: 'exchange', sharp: true,  priority: 45, bbId: null, url: 'https://smarkets.com' },
+            'marathonbet':    { name: 'Marathon Bet',    region: 'eu', type: 'euro',     sharp: true,  priority: 46, bbId: null, url: 'https://www.marathonbet.com' },
+            'betfair_ex_eu':  { name: 'Betfair Exch EU', region: 'eu', type: 'exchange', sharp: true,  priority: 47, bbId: null, url: 'https://www.betfair.com/exchange' },
 
             // ─── AU / INT'L (region: au) ───
             'betfair_ex_au':  { name: 'Betfair AU',     region: 'au', type: 'exchange', sharp: true,  priority: 43, bbId: null },
@@ -29355,6 +29386,231 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                         const banner = document.getElementById('ai-loading-banner');
                         if (banner) banner.remove();
                     });
+            } else {
+                // ═══════════════════════════════════════════════════════════════════
+                // V47: LOCAL AI ENGINE ANALYSIS — No proxy required
+                // Uses real BDL data, scanner odds, mathematical models to generate
+                // data-driven engine votes instead of showing permanent "Waiting..."
+                // ═══════════════════════════════════════════════════════════════════
+                console.log(`\n🧠 V47 LOCAL AI ANALYSIS: No proxy — using mathematical models`);
+                console.log(`   Player: ${player} | Market: ${market} | Line: ${line}`);
+                console.log(`   Season: ${seasonAvg}, L10: ${l10Avg}, L5: ${l5Avg}, HitRate: ${(hitRate * 100).toFixed(0)}%`);
+                
+                // Core inputs for local analysis
+                const hasRealData = !!playerData;
+                const overOddsNum = parseInt(overOdds) || -110;
+                const underOddsNum = parseInt(underOdds) || -110;
+                const impliedOver = oddsToProb(overOddsNum);
+                const impliedUnder = oddsToProb(underOddsNum);
+                
+                // Scanner-derived data
+                const scannerEntry = scannerState.entryPoint === 'scanner' ? scannerState.results?.find(r => 
+                    r.player === player && r.market?.toLowerCase().includes(market?.toLowerCase().substring(0, 4))
+                ) : null;
+                const bookPrices = scannerEntry?.bookPrices || [];
+                const arbPct = scannerEntry?.arbPct || 0;
+                const pinnacleEntry = bookPrices.find(b => b.bookKey === 'pinnacle');
+                
+                // Helper: Generate individual engine vote based on different analysis methods
+                function generateLocalVote(engineId, sAvg, l10, l5, hr, ln, impl_o, impl_u) {
+                    const methods = {
+                        'claude': () => {
+                            // Statistical edge — compare projection vs line
+                            const proj = l5 * 0.45 + l10 * 0.35 + sAvg * 0.20;
+                            const diff = proj - ln;
+                            const vote = diff > 0.3 ? 'OVER' : diff < -0.3 ? 'UNDER' : (hr > 0.52 ? 'OVER' : 'UNDER');
+                            const conf = Math.min(92, Math.max(52, 55 + Math.abs(diff) * 8 + (hasRealData ? 10 : 0)));
+                            const trueProb = vote === 'OVER' ? Math.min(0.88, Math.max(0.15, 0.5 + diff * 0.06)) : Math.min(0.88, Math.max(0.15, 0.5 - diff * 0.06));
+                            return { vote, confidence: Math.round(conf), reason: `Projection ${proj.toFixed(1)} vs line ${ln} (${diff > 0 ? '+' : ''}${diff.toFixed(1)})`, trueProb };
+                        },
+                        'openai': () => {
+                            // Recency-weighted — heavily favor L5
+                            const recentProj = l5 * 0.70 + l10 * 0.30;
+                            const diff = recentProj - ln;
+                            const vote = diff > 0.2 ? 'OVER' : diff < -0.2 ? 'UNDER' : (sAvg > ln ? 'OVER' : 'UNDER');
+                            const conf = Math.min(90, Math.max(50, 54 + Math.abs(diff) * 7));
+                            const trueProb = vote === 'OVER' ? Math.min(0.85, Math.max(0.18, 0.5 + diff * 0.055)) : Math.min(0.85, Math.max(0.18, 0.5 - diff * 0.055));
+                            return { vote, confidence: Math.round(conf), reason: `Recent trend: L5 avg ${l5.toFixed(1)}, L10 avg ${l10.toFixed(1)}`, trueProb };
+                        },
+                        'perplexity': () => {
+                            // Hit rate + sharp alignment
+                            const vote = hr >= 0.55 ? 'OVER' : hr <= 0.45 ? 'UNDER' : (l5 > ln ? 'OVER' : 'UNDER');
+                            let conf = Math.round(Math.max(50, Math.min(88, hr * 100 + 5)));
+                            let reason = `Hit rate: ${(hr * 100).toFixed(0)}% (${Math.round(hr * 10)}/10 recent games)`;
+                            if (pinnacleEntry) {
+                                reason += ` | Pinnacle line: ${pinnacleEntry.line}`;
+                                conf = Math.min(90, conf + 3);
+                            }
+                            const trueProb = vote === 'OVER' ? Math.min(0.85, Math.max(0.2, hr + 0.02)) : Math.min(0.85, Math.max(0.2, (1 - hr) + 0.02));
+                            return { vote, confidence: conf, reason, trueProb };
+                        },
+                        'cohere': () => {
+                            // Market efficiency — compare implied probability to model
+                            const modelProb = 0.5 + (sAvg - ln) * 0.04 + (hr - 0.5) * 0.3;
+                            const overEdge = modelProb - impl_o / 100;
+                            const vote = overEdge > 0.02 ? 'OVER' : overEdge < -0.02 ? 'UNDER' : (l5 > ln ? 'OVER' : 'UNDER');
+                            const conf = Math.min(87, Math.max(50, 55 + Math.abs(overEdge) * 200));
+                            return { vote, confidence: Math.round(conf), reason: `Market efficiency: ${(overEdge * 100).toFixed(1)}% edge vs implied`, trueProb: Math.min(0.85, Math.max(0.18, modelProb)) };
+                        },
+                        'youcom': () => {
+                            // Momentum model — L5 trend direction
+                            const momentum = l5 - l10;
+                            const vote = (momentum > 0.3 && l5 > ln) ? 'OVER' : (momentum < -0.3 && l5 < ln) ? 'UNDER' : (sAvg > ln ? 'OVER' : 'UNDER');
+                            const conf = Math.min(85, Math.max(48, 52 + Math.abs(momentum) * 6));
+                            return { vote, confidence: Math.round(conf), reason: `Momentum: ${momentum > 0 ? '📈 Trending up' : '📉 Trending down'} (L5-L10: ${momentum > 0 ? '+' : ''}${momentum.toFixed(1)})`, trueProb: vote === 'OVER' ? Math.min(0.82, Math.max(0.2, 0.5 + momentum * 0.04)) : Math.min(0.82, Math.max(0.2, 0.5 - momentum * 0.04)) };
+                        },
+                        'deepseek': () => {
+                            // Statistical model — weighted projection with variance
+                            const proj = sAvg * 0.30 + l10 * 0.35 + l5 * 0.35;
+                            const variance = Math.abs(l5 - l10) + Math.abs(l10 - sAvg);
+                            const diff = proj - ln;
+                            const vote = diff > 0 ? 'OVER' : 'UNDER';
+                            const conf = Math.min(89, Math.max(45, 58 + Math.abs(diff) * 6 - variance * 1.5));
+                            return { vote, confidence: Math.round(conf), reason: `Weighted proj: ${proj.toFixed(1)} (±${variance.toFixed(1)} variance)`, trueProb: vote === 'OVER' ? Math.min(0.87, Math.max(0.15, 0.5 + diff * 0.05)) : Math.min(0.87, Math.max(0.15, 0.5 - diff * 0.05)) };
+                        },
+                        'grok': () => {
+                            // Contrarian signal — when books and stats disagree
+                            const statsDir = l5 > ln ? 'OVER' : 'UNDER';
+                            const booksDir = impl_o < impl_u ? 'OVER' : 'UNDER';
+                            const disagree = statsDir !== booksDir;
+                            const vote = disagree ? statsDir : (hr > 0.5 ? 'OVER' : 'UNDER');
+                            const conf = Math.min(84, Math.max(48, disagree ? 60 + Math.abs(l5 - ln) * 4 : 55));
+                            return { vote, confidence: Math.round(conf), reason: disagree ? `⚡ Contrarian: stats say ${statsDir} but books imply ${booksDir}` : `Stats & books aligned on ${vote}`, trueProb: vote === 'OVER' ? Math.min(0.82, Math.max(0.2, hr + 0.03)) : Math.min(0.82, Math.max(0.2, 1 - hr + 0.03)) };
+                        },
+                        'mistral': () => {
+                            // Sharp money model — Pinnacle reference
+                            if (pinnacleEntry) {
+                                const pinLine = parseFloat(pinnacleEntry.line) || ln;
+                                const pinDiff = pinLine - ln;
+                                const vote = pinDiff > 0.3 ? 'UNDER' : pinDiff < -0.3 ? 'OVER' : (l5 > ln ? 'OVER' : 'UNDER');
+                                const conf = Math.min(88, Math.max(55, 62 + Math.abs(pinDiff) * 8));
+                                return { vote, confidence: Math.round(conf), reason: `📌 Pinnacle line ${pinLine} vs consensus ${ln} (${pinDiff > 0 ? '+' : ''}${pinDiff.toFixed(1)})`, trueProb: vote === 'OVER' ? Math.min(0.85, Math.max(0.18, 0.5 - pinDiff * 0.06)) : Math.min(0.85, Math.max(0.18, 0.5 + pinDiff * 0.06)) };
+                            }
+                            const proj = l10 * 0.5 + sAvg * 0.5;
+                            const diff = proj - ln;
+                            const vote = diff > 0 ? 'OVER' : 'UNDER';
+                            return { vote, confidence: Math.min(78, Math.max(50, 55 + Math.abs(diff) * 5)), reason: `No Pinnacle data — using L10/season blend: ${proj.toFixed(1)}`, trueProb: vote === 'OVER' ? Math.min(0.80, Math.max(0.22, 0.5 + diff * 0.04)) : Math.min(0.80, Math.max(0.22, 0.5 - diff * 0.04)) };
+                        },
+                        'gemini': () => {
+                            // Matchup + home/away context
+                            let bonus = 0;
+                            let reason = '';
+                            if (isHome !== undefined) {
+                                bonus = isHome ? 0.5 : -0.3;
+                                reason = isHome ? '🏠 Home advantage' : '✈️ Away game';
+                            }
+                            if (restDays !== undefined && restDays >= 2) {
+                                bonus += 0.3;
+                                reason += (reason ? ' + ' : '') + `${restDays} rest days`;
+                            }
+                            const adj = l5 + bonus;
+                            const diff = adj - ln;
+                            const vote = diff > 0 ? 'OVER' : 'UNDER';
+                            const conf = Math.min(86, Math.max(50, 56 + Math.abs(diff) * 5));
+                            return { vote, confidence: Math.round(conf), reason: reason || `Context-adjusted: ${adj.toFixed(1)} vs line ${ln}`, trueProb: vote === 'OVER' ? Math.min(0.84, Math.max(0.18, 0.5 + diff * 0.05)) : Math.min(0.84, Math.max(0.18, 0.5 - diff * 0.05)) };
+                        },
+                        'together': () => {
+                            // Meta-aggregator — average of all signals
+                            const proj = l5 * 0.4 + l10 * 0.3 + sAvg * 0.3;
+                            const diff = proj - ln;
+                            const hrSignal = hr - 0.5;
+                            const combined = diff * 0.06 + hrSignal * 0.3;
+                            const vote = combined > 0 ? 'OVER' : 'UNDER';
+                            const conf = Math.min(91, Math.max(52, 58 + Math.abs(combined) * 60));
+                            return { vote, confidence: Math.round(conf), reason: `Meta-analysis: ${bookPrices.length} books scanned, proj ${proj.toFixed(1)}`, trueProb: vote === 'OVER' ? Math.min(0.88, Math.max(0.15, 0.5 + combined)) : Math.min(0.88, Math.max(0.15, 0.5 - combined)) };
+                        }
+                    };
+                    
+                    return methods[engineId] ? methods[engineId]() : { vote: 'OVER', confidence: 50, reason: 'Default model', trueProb: 0.5 };
+                }
+                
+                // Generate votes for all engines
+                const localEngines = {};
+                let localOverVotes = 0, localUnderVotes = 0;
+                
+                AI_ENGINES.forEach(e => {
+                    try {
+                        const result = generateLocalVote(e.id, seasonAvg, l10Avg, l5Avg, hitRate, line, impliedOver, impliedUnder);
+                        localEngines[e.id] = {
+                            vote: result.vote,
+                            confidence: result.confidence,
+                            reason: `🧮 ${result.reason}`,
+                            isLive: true,
+                            isLocal: true,
+                            trueProb: result.trueProb,
+                            fairOdds: result.trueProb ? probToOdds(result.trueProb * 100) : null
+                        };
+                        if (result.vote === 'OVER') localOverVotes++;
+                        else localUnderVotes++;
+                        console.log(`   ${e.icon} ${e.name}: ${result.vote} @ ${result.confidence}% — ${result.reason}`);
+                    } catch (err) {
+                        localEngines[e.id] = {
+                            vote: '--',
+                            confidence: 0,
+                            reason: `⚠️ Local analysis error: ${err.message}`,
+                            isLive: false
+                        };
+                    }
+                });
+                
+                console.log(`\n🧠 V47 LOCAL CONSENSUS: ${localOverVotes} OVER / ${localUnderVotes} UNDER`);
+                
+                // Apply local engine results to the analysis
+                Object.assign(engines, localEngines);
+                
+                // Calculate local trueProb blend
+                let localTpSum = 0, localTpWeight = 0;
+                AI_ENGINES.forEach(e => {
+                    const eng = localEngines[e.id];
+                    if (eng?.isLive && eng?.trueProb && eng.trueProb > 0 && eng.trueProb < 1) {
+                        localTpSum += eng.trueProb * e.weight;
+                        localTpWeight += e.weight;
+                    }
+                });
+                
+                if (localTpWeight > 0.2) {
+                    const localAiTrueProb = (localTpSum / localTpWeight) * 100;
+                    const currentOverProb = overProb;
+                    // Blend: 60% calibrated, 40% local AI
+                    const blended = currentOverProb * 0.60 + localAiTrueProb * 0.40;
+                    
+                    overProb = parseFloat(blended.toFixed(1));
+                    underProb = parseFloat((100 - blended).toFixed(1));
+                    
+                    recommended = overProb >= underProb ? 'OVER' : 'UNDER';
+                    overEdge = (overProb - impliedOver).toFixed(2);
+                    underEdge = (underProb - impliedUnder).toFixed(2);
+                    
+                    console.log(`🧠 V47 Blended trueProb: ${blended.toFixed(1)}% OVER (cal=${currentOverProb.toFixed(1)}%, localAI=${localAiTrueProb.toFixed(1)}%)`);
+                }
+                
+                // Schedule render update after analysis completes
+                setTimeout(() => {
+                    if (state.lastAnalysisResult) {
+                        // Inject local engine data
+                        state.lastAnalysisResult.engines = localEngines;
+                        state.lastAnalysisResult.blendMeta = {
+                            method: 'local_v47',
+                            calProb: overProb,
+                            aiProb: localTpWeight > 0 ? (localTpSum / localTpWeight * 100).toFixed(1) : null,
+                            aiWeight: 0.40,
+                            calWeight: 0.60,
+                            enginesLive: Object.values(localEngines).filter(e => e.isLive).length,
+                            isLocal: true
+                        };
+                        
+                        // Re-render with local engine data
+                        renderAIEngines(state.lastAnalysisResult);
+                        displayResults(state.lastAnalysisResult);
+                        
+                        // Add "LOCAL" badge
+                        const aiTitle = document.querySelector('.ai-panel-title');
+                        if (aiTitle) {
+                            const liveCount = Object.values(localEngines).filter(e => e.isLive).length;
+                            aiTitle.innerHTML = `10 AI ENGINE VOTES <span style="background: #f4c430; color: #000; padding: 2px 8px; border-radius: 4px; font-size: 10px; margin-left: 8px; font-weight: bold;">🧮 ${liveCount} LOCAL</span>`;
+                        }
+                    }
+                }, 200);
             }
             
             // Calculate stakes
@@ -33476,6 +33732,16 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
         try { scannerBookmakers = localStorage.getItem('sba_scan_bookmakers') || SCANNER_BOOKMAKERS_DEFAULT; } catch(e) {}
         try { scannerRegions = localStorage.getItem('sba_scan_regions') || 'us,us2'; } catch(e) {}
         
+        // V47: Load My Books from localStorage and auto-sync to scanner API
+        try {
+            const savedMyBooks = localStorage.getItem('sba_my_books');
+            if (savedMyBooks) {
+                const parsed = JSON.parse(savedMyBooks);
+                // Will be applied to scannerState.filters.myBooks when scannerState is ready
+                window._savedMyBooks = parsed;
+            }
+        } catch(e) {}
+        
         let scannerState = {
             isScanning: false,
             scanMode: 'all', // 'all', 'diamond', 'lock'
@@ -33503,6 +33769,12 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
             // V41: Differentiation tracking
             entryPoint: null // 'scanner' or 'direct'
         };
+        
+        // V47: Apply saved My Books
+        if (window._savedMyBooks) {
+            scannerState.filters.myBooks = window._savedMyBooks;
+            delete window._savedMyBooks;
+        }
         
         // ═══════════════════════════════════════════════════════════════════════════
         // V41: OUTCOME TRACKER — Log bets for calibration
@@ -33631,10 +33903,10 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                     fetchQuickStats(bet.player, bet.sport),
                     // Injury status
                     fetchInjuryStatus(bet.eventId, bet.sport),
-                    // Line movement
-                    fetchLineMovement(bet.market, bet.line, bet.eventId),
-                    // Sharp book alignment (Pinnacle/Circa)
-                    fetchSharpAlignment(bet.eventId, bet.market, bet.line, bet.direction)
+                    // Line movement — V47: pass bookPrices for real data
+                    fetchLineMovement(bet.market, bet.line, bet.eventId, bet.bookPrices),
+                    // Sharp book alignment — V47: pass bookPrices for real data
+                    fetchSharpAlignment(bet.eventId, bet.market, bet.line, bet.direction, bet.bookPrices)
                 ]);
                 
                 // Process L5 stats
@@ -33697,6 +33969,33 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                 if (preSynth.sharpAlignment?.aligned) l2Score += 15;
                 if (preSynth.lineMovementFavorable) l2Score += 8;
                 if (preSynth.injuryStatus?.hasImpact) l2Score -= 10;
+                
+                // V47: Scanner-derived signals (always available, no API needed)
+                if (bet.arbPct && bet.arbPct > 0) {
+                    l2Score += Math.min(15, Math.round(bet.arbPct * 3));
+                    preSynth.preSynthSignals.push(`💰 Arb opportunity: ${bet.arbPct.toFixed(2)}% edge`);
+                }
+                if (bet.bookCount && bet.bookCount >= 3) {
+                    l2Score += 5;
+                    preSynth.preSynthSignals.push(`📚 ${bet.bookCount} books offering this market`);
+                }
+                if (bet.bestOverBook && bet.bestUnderBook && bet.bestOverBook !== bet.bestUnderBook) {
+                    preSynth.preSynthSignals.push(`📊 Best Over: ${bet.bestOverBook} (${bet.bestOverPrice}) | Best Under: ${bet.bestUnderBook} (${bet.bestUnderPrice})`);
+                }
+                // Sharp line vs book line divergence
+                if (bet.bookPrices && bet.bookPrices.length > 0) {
+                    const pinnacle = bet.bookPrices.find(b => b.bookKey === 'pinnacle');
+                    if (pinnacle && pinnacle.line != null && bet.line != null) {
+                        const diff = parseFloat(pinnacle.line) - parseFloat(bet.line);
+                        if (Math.abs(diff) >= 0.5) {
+                            const favor = (diff > 0 && bet.direction === 'UNDER') || (diff < 0 && bet.direction === 'OVER');
+                            l2Score += favor ? 10 : -5;
+                            preSynth.preSynthSignals.push(favor
+                                ? `📌 Pinnacle line ${pinnacle.line} favors ${bet.direction} (vs consensus ${bet.line})`
+                                : `⚠️ Pinnacle line ${pinnacle.line} opposes ${bet.direction} (vs consensus ${bet.line})`);
+                        }
+                    }
+                }
                 
                 // Clamp and assign tier
                 preSynth.preSynthScore = Math.max(0, Math.min(100, l2Score));
@@ -33807,26 +34106,110 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
             }
         }
         
-        // Helper: Fetch line movement
-        async function fetchLineMovement(market, currentLine, eventId) {
-            // This would need historical odds data
-            // For now, return placeholder
+        // Helper: Fetch line movement — V47: Use scanner bookPrices data if available
+        async function fetchLineMovement(market, currentLine, eventId, bookPrices) {
+            // V47: Derive line movement from book spread if we have multiple books
+            if (bookPrices && bookPrices.length >= 2) {
+                const lines = bookPrices
+                    .filter(b => b.line != null && b.line !== undefined)
+                    .map(b => parseFloat(b.line))
+                    .filter(l => !isNaN(l));
+                
+                if (lines.length >= 2) {
+                    const minLine = Math.min(...lines);
+                    const maxLine = Math.max(...lines);
+                    const avgLine = lines.reduce((a, b) => a + b, 0) / lines.length;
+                    const spread = maxLine - minLine;
+                    
+                    // If current line differs from average, there's movement
+                    const diff = currentLine - avgLine;
+                    let direction = null;
+                    if (Math.abs(diff) >= 0.3) {
+                        direction = diff > 0 ? 'OVER' : 'UNDER';
+                    }
+                    
+                    return {
+                        direction,
+                        magnitude: Math.abs(diff).toFixed(1),
+                        openLine: minLine,
+                        currentLine: currentLine,
+                        lineSpread: spread.toFixed(1),
+                        avgLine: avgLine.toFixed(1),
+                        booksCount: lines.length,
+                        hasData: true
+                    };
+                }
+            }
+            
             return {
                 direction: null,
                 magnitude: 0,
                 openLine: currentLine,
-                currentLine: currentLine
+                currentLine: currentLine,
+                hasData: false
             };
         }
         
-        // Helper: Fetch sharp book alignment
-        async function fetchSharpAlignment(eventId, market, line, direction) {
-            // Check if Pinnacle/bet365/Circa are on same side
-            // For now, return placeholder - this gets filled by odds data
+        // Helper: Fetch sharp book alignment — V47: Use scanner bookPrices to detect sharp alignment
+        async function fetchSharpAlignment(eventId, market, line, direction, bookPrices) {
+            const sharpBooks = ['pinnacle', 'bet365', 'matchbook', 'smarkets', 'betfair_ex_uk'];
+            
+            if (bookPrices && bookPrices.length > 0) {
+                const sharpEntries = bookPrices.filter(b => 
+                    b.bookKey && sharpBooks.includes(b.bookKey.toLowerCase())
+                );
+                
+                if (sharpEntries.length > 0) {
+                    // Check if sharp books' odds favor the same direction
+                    let sharpOverCount = 0, sharpUnderCount = 0;
+                    const alignedBooks = [];
+                    
+                    sharpEntries.forEach(s => {
+                        const overPrice = s.overPrice || s.price;
+                        const underPrice = s.underPrice;
+                        
+                        if (overPrice && underPrice) {
+                            // Better odds = sharp money favor
+                            // More negative = less favorable, more positive = more favorable
+                            if (overPrice > underPrice) {
+                                sharpOverCount++;
+                                if (direction === 'OVER') alignedBooks.push(s.book || s.bookKey);
+                            } else {
+                                sharpUnderCount++;
+                                if (direction === 'UNDER') alignedBooks.push(s.book || s.bookKey);
+                            }
+                        }
+                        
+                        // Also check line vs consensus
+                        if (s.line != null && line) {
+                            const sharpLine = parseFloat(s.line);
+                            if (direction === 'OVER' && sharpLine < line) {
+                                alignedBooks.push(s.book || s.bookKey);
+                            } else if (direction === 'UNDER' && sharpLine > line) {
+                                alignedBooks.push(s.book || s.bookKey);
+                            }
+                        }
+                    });
+                    
+                    const uniqueBooks = [...new Set(alignedBooks)];
+                    const aligned = uniqueBooks.length >= 1;
+                    const fading = !aligned && sharpEntries.length >= 2;
+                    
+                    return {
+                        aligned,
+                        fading,
+                        books: uniqueBooks,
+                        sharpCount: sharpEntries.length,
+                        hasData: true
+                    };
+                }
+            }
+            
             return {
                 aligned: false,
                 fading: false,
-                books: []
+                books: [],
+                hasData: false
             };
         }
         
@@ -34027,16 +34410,30 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
         
         // ═══ MY BOOKS — multi-select for arb filtering ═══
         const MY_BOOKS_LIST = [
+            // US ACCOUNTS
             {key: 'fanduel', label: '🏈 FanDuel'}, {key: 'draftkings', label: '👑 DraftKings'},
-            {key: 'betmgm', label: '🦁 BetMGM'}, {key: 'caesars', label: '🏛️ Caesars'},
-            {key: 'fanatics', label: '⭐ Fanatics'}, {key: 'betrivers', label: '🌊 BetRivers'},
-            {key: 'pinnacle', label: '📌 Pinnacle'}, {key: 'bovada', label: '🐂 Bovada'},
-            {key: 'betonlineag', label: '💰 BetOnline'}, {key: 'bet365', label: '🌐 bet365'},
-            {key: 'hard_rock', label: '🎸 Hard Rock'}, {key: 'betfair_ex_uk', label: '🔄 Betfair'},
-            {key: 'williamhill_us', label: '🇬🇧 Wm Hill'}, {key: 'unibet_eu', label: '🇪🇺 Unibet'},
-            {key: 'betway', label: '🎯 Betway'}, {key: 'espnbet', label: '📺 ESPN BET'},
-            {key: 'fliff', label: '🎰 Fliff'}, {key: 'mybookieag', label: '📕 MyBookie'},
-            {key: 'superbook', label: '📗 SuperBook'}, {key: 'pointsbetus', label: '🎯 PointsBet'}
+            {key: 'betmgm', label: '🦁 BetMGM'}, {key: 'williamhill_us', label: '🏛️ Caesars'},
+            {key: 'betrivers', label: '🌊 BetRivers'}, {key: 'fanatics', label: '⭐ Fanatics'},
+            {key: 'espnbet', label: '📺 ESPN BET'}, {key: 'hardrockbet', label: '🎸 Hard Rock'},
+            {key: 'bovada', label: '🐂 Bovada'}, {key: 'betonlineag', label: '💰 BetOnline'},
+            {key: 'betparx', label: '🎲 betPARX'}, {key: 'ballybet', label: '🎰 Bally Bet'},
+            {key: 'fliff', label: '🃏 Fliff'}, {key: 'mybookieag', label: '📕 MyBookie'},
+            {key: 'betus', label: '💵 BetUS'}, {key: 'rebet', label: '🔁 ReBet'},
+            {key: 'betanysports', label: '🎯 BetAnySports'}, {key: 'lowvig', label: '📉 LowVig'},
+            // SHARP REFERENCE
+            {key: 'pinnacle', label: '📌 Pinnacle'}, {key: 'bet365', label: '🌐 bet365'},
+            // BETBURGER CROSS-REF
+            {key: 'coolbet', label: '❄️ Coolbet'}, {key: 'betsson', label: '🅱️ Betsson'},
+            {key: 'onexbet', label: '1️⃣ 1xBet'}, {key: 'williamhill', label: '🇬🇧 Wm Hill UK'},
+            // EXCHANGES
+            {key: 'novig', label: '⚖️ Novig'}, {key: 'betopenly', label: '🔓 BetOpenly'},
+            {key: 'prophetx', label: '🔮 ProphetX'}, {key: 'kalshi', label: '📊 Kalshi'},
+            {key: 'polymarket', label: '🌍 Polymarket'}, {key: 'betfair_ex_uk', label: '🔄 Betfair UK'},
+            {key: 'betfair_ex_eu', label: '🔄 Betfair EU'}, {key: 'matchbook', label: '📗 Matchbook'},
+            {key: 'marathonbet', label: '🏃 Marathon'}, {key: 'smarkets', label: '💱 Smarkets'},
+            // DFS
+            {key: 'prizepicks', label: '🎯 PrizePicks'}, {key: 'underdog', label: '🐕 Underdog'},
+            {key: 'betr_us_dfs', label: '🎲 Betr DFS'}, {key: 'pick6', label: '6️⃣ DK Pick6'}
         ];
         
         function toggleMyBooks() {
@@ -34058,7 +34455,11 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                         <button onclick="selectAllBooks(false)" style="background: rgba(255,50,50,0.15); color: #ff5252; border: 1px solid rgba(255,50,50,0.3); border-radius: 4px; padding: 2px 8px; font-size: 10px; cursor: pointer;">❌ None</button>
                     </div>
                 </div>
-                <div style="font-size: 10px; color: #888; margin-bottom: 10px;">Only arbs between selected books will show. Uncheck books you don't have.</div>
+                <div style="font-size: 10px; color: #888; margin-bottom: 8px;">✅ Selected books = what the scanner queries from the API <b style="color:#FFD700;">(saves credits)</b> + filters arb results.</div>
+                <div style="display: flex; gap: 6px; margin-bottom: 10px;">
+                    <button onclick="syncMyBooksToScanner()" style="background: linear-gradient(135deg, rgba(0,200,255,0.2), rgba(0,150,255,0.2)); color: #00c8ff; border: 1px solid rgba(0,200,255,0.3); border-radius: 4px; padding: 3px 10px; font-size: 10px; cursor: pointer; font-weight: bold;" title="Apply your book selections to the scanner API — next scan only fetches odds from these books">🔄 Sync to Scanner API</button>
+                    <span id="my-books-count" style="font-size: 10px; color: #888; display: flex; align-items: center;"></span>
+                </div>
                 <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;">`;
             
             MY_BOOKS_LIST.forEach(b => {
@@ -34087,6 +34488,64 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
             scannerState.filters.myBooks[bookKey] = isChecked;
             // Save to localStorage
             try { localStorage.setItem('sba_my_books', JSON.stringify(scannerState.filters.myBooks)); } catch(e) {}
+            // Auto-sync to scanner API
+            syncMyBooksToScanner(true);
+            // Update label border
+            const label = document.querySelector(`#my-books-panel input[onchange*="${bookKey}"]`)?.parentElement;
+            if (label) label.style.borderColor = isChecked ? 'rgba(0,255,136,0.2)' : 'rgba(255,255,255,0.05)';
+        }
+        
+        function syncMyBooksToScanner(silent = false) {
+            const mb = scannerState.filters.myBooks || {};
+            const selectedBooks = MY_BOOKS_LIST
+                .filter(b => mb[b.key] !== false)
+                .map(b => b.key);
+            
+            if (selectedBooks.length === 0) {
+                if (!silent) alert('⚠️ Select at least 1 book!');
+                return;
+            }
+            
+            // Update the scanner bookmakers parameter
+            scannerBookmakers = selectedBooks.join(',');
+            try { localStorage.setItem('sba_scan_bookmakers', scannerBookmakers); } catch(e) {}
+            
+            // Clear scan cache so next scan uses new books
+            scannerState._scanComplete = false;
+            scannerState.results = [];
+            
+            // Update preset dropdown to show "Custom"
+            const presetSelect = document.getElementById('scanner-books-preset');
+            if (presetSelect) {
+                // Check if it matches a preset
+                const matchedPreset = Object.entries(SCANNER_BOOK_PRESETS).find(([k, v]) => {
+                    const presetBooks = v.books.split(',').sort().join(',');
+                    const myBooks = selectedBooks.sort().join(',');
+                    return presetBooks === myBooks;
+                });
+                if (matchedPreset) {
+                    presetSelect.value = matchedPreset[0];
+                } else {
+                    // Add or select custom option
+                    let customOpt = presetSelect.querySelector('option[value="custom"]');
+                    if (!customOpt) {
+                        customOpt = document.createElement('option');
+                        customOpt.value = 'custom';
+                        presetSelect.appendChild(customOpt);
+                    }
+                    customOpt.textContent = `🎯 My Books (${selectedBooks.length})`;
+                    presetSelect.value = 'custom';
+                }
+            }
+            
+            // Update count display
+            const countEl = document.getElementById('my-books-count');
+            if (countEl) countEl.textContent = `${selectedBooks.length}/${MY_BOOKS_LIST.length} books → Scanner API`;
+            
+            if (!silent) {
+                console.log(`🔄 My Books → Scanner API: ${selectedBooks.length} books synced`);
+                console.log(`   Books: ${scannerBookmakers.substring(0, 120)}...`);
+            }
         }
         
         function selectAllBooks(val) {
@@ -35940,14 +36399,68 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                 }
             }
             
-            // Step 5: Auto-fill line and odds
+            // Step 5: Auto-fill line and odds — USE BEST AVAILABLE, Pinnacle as reference
             const lineInput = document.getElementById('line-input');
             const overOddsInput = document.getElementById('over-odds');
             const underOddsInput = document.getElementById('under-odds');
             
-            if (lineInput) lineInput.value = result.line || '';
-            if (overOddsInput) overOddsInput.value = result.overOdds || -110;
-            if (underOddsInput) underOddsInput.value = result.underOdds || -110;
+            // Find Pinnacle odds from bookPrices for sharp reference
+            let pinnacleOver = null, pinnacleUnder = null, pinnacleLine = null;
+            let bestOverOdds = result.bestOverPrice || result.overOdds || -110;
+            let bestUnderOdds = result.bestUnderPrice || result.underOdds || -110;
+            let bestLine = result.line || '';
+            
+            if (result.bookPrices && result.bookPrices.length > 0) {
+                const pinnacleEntry = result.bookPrices.find(b => 
+                    b.book && (b.book.toLowerCase().includes('pinnacle') || b.bookKey === 'pinnacle')
+                );
+                if (pinnacleEntry) {
+                    pinnacleLine = pinnacleEntry.line || bestLine;
+                    pinnacleOver = pinnacleEntry.overPrice || pinnacleEntry.price;
+                    pinnacleUnder = pinnacleEntry.underPrice;
+                    console.log(`📌 Pinnacle reference: Line ${pinnacleLine}, O${pinnacleOver} / U${pinnacleUnder}`);
+                }
+            }
+            
+            // Use Pinnacle line if available (sharp reference), otherwise consensus
+            const loadLine = pinnacleLine || bestLine;
+            // Use best market odds (not Pinnacle — user wants best available to bet)
+            const loadOver = bestOverOdds;
+            const loadUnder = bestUnderOdds;
+            
+            if (lineInput) {
+                lineInput.value = loadLine;
+                lineInput.dispatchEvent(new Event('input'));
+            }
+            if (overOddsInput) overOddsInput.value = loadOver;
+            if (underOddsInput) underOddsInput.value = loadUnder;
+            
+            console.log(`💎 Auto-filled: Line=${loadLine}, Over=${loadOver} (${result.bestOverBook || 'best'}), Under=${loadUnder} (${result.bestUnderBook || 'best'})`);
+            if (pinnacleOver) console.log(`📌 Pinnacle: ${pinnacleLine} O${pinnacleOver}/U${pinnacleUnder}`);
+            
+            // Step 5b: Auto-select market type in the market dropdown
+            const marketSelect = document.getElementById('market-select');
+            if (marketSelect && result.market) {
+                const marketMap = {
+                    'points': 'points', 'rebounds': 'rebounds', 'assists': 'assists',
+                    'threes': 'threes', 'steals': 'steals', 'blocks': 'blocks',
+                    'turnovers': 'turnovers', 'pts+reb+ast': 'pra', 'pts+reb': 'pr',
+                    'pts+ast': 'pa', 'reb+ast': 'ra', 'double_double': 'dd',
+                    'points alternate': 'points', 'rebounds alternate': 'rebounds',
+                    'assists alternate': 'assists', 'threes alternate': 'threes',
+                    'points rebounds assists alternate': 'pra', 'points rebounds alternate': 'pr',
+                    'steals alternate': 'steals', 'blocks alternate': 'blocks'
+                };
+                const targetMarket = marketMap[result.market?.toLowerCase()] || result.market?.toLowerCase();
+                for (const option of marketSelect.options) {
+                    if (option.value === targetMarket || option.value.toLowerCase() === targetMarket) {
+                        marketSelect.value = option.value;
+                        marketSelect.dispatchEvent(new Event('change'));
+                        console.log(`💎 Auto-selected market: ${option.textContent}`);
+                        break;
+                    }
+                }
+            }
             
             // Step 6: Scroll to the analyzer section
             document.querySelector('.selection-section')?.scrollIntoView({ behavior: 'smooth' });
