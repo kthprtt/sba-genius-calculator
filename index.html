@@ -25526,6 +25526,10 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
         
         // V28b: Compute ACTUAL hit rate from game logs
         function getActualHitRate(market, bookLine) {
+            // V48: Return cached result if same market/line (prevents duplicate computation on re-render)
+            const cacheKey = `${market}_${bookLine}`;
+            if (state._hitRateCacheKey === cacheKey && state._cachedHitRate) return state._cachedHitRate;
+            
             const gameLogs = state.playerGameLogs || [];
             if (gameLogs.length < 5) return null;
             
@@ -25541,7 +25545,10 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             console.log(`📊 V28b: Actual hit rate vs ${bookLine}: ${hits}/${values.length} = ${(hitRate * 100).toFixed(1)}% (${statKey})`);
             console.log(`   Recent values: [${values.slice(0, 10).map(v => v.toFixed(1)).join(', ')}]`);
             
-            return { hitRate, hits, total: values.length, values: values.slice(0, 10) };
+            const result = { hitRate, hits, total: values.length, values: values.slice(0, 10) };
+            state._hitRateCacheKey = cacheKey;
+            state._cachedHitRate = result;
+            return result;
         }
         
         // ═══════════════════════════════════════════════════════════
@@ -25551,6 +25558,10 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
         // "What does this player do in THIS situation?"
         // ═══════════════════════════════════════════════════════════
         function computeSituationalH2H(market, bookLine) {
+            // V48: Return cached result if same market/line (prevents duplicate computation on re-render)
+            const cacheKey = `${market}_${bookLine}`;
+            if (state._sitH2HCacheKey === cacheKey && state.situationalH2H) return state.situationalH2H;
+            
             const gameLogs = state.playerGameLogs || [];
             if (gameLogs.length < 5) return null;
             
@@ -25835,6 +25846,8 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 console.log(`   ${f.label}: ${f.avg.toFixed(1)} avg, ${f.hits}/${f.total} (${(f.hitRate * 100).toFixed(0)}%) ${f.favors} [w=${f.weight.toFixed(2)}]`);
             });
             
+            state._sitH2HCacheKey = cacheKey; // V48: Cache for re-render reuse
+            state.situationalH2H = result; // V31: Store for Streak Safe tier system
             return result;
         }
         
@@ -25866,13 +25879,11 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             
             const direction = gap > 0 ? 'OVER' : gap < 0 ? 'UNDER' : 'TOSS-UP';
             
-            // CHANGE 2: Get empirical hit rate from game logs
+            // CHANGE 2: Get empirical hit rate from game logs (V48: self-caching)
             const hitRateData = getActualHitRate(market, bookLine);
-            state._cachedHitRate = hitRateData; // V48: Cache to avoid duplicate computation on re-render
             
-            // V28c: Get situational H2H intelligence
+            // V28c: Get situational H2H intelligence (V48: self-caching)
             const situational = computeSituationalH2H(market, bookLine);
-            state.situationalH2H = situational; // V31: Store for Streak Safe tier system
             
             // Model-based probability
             const rawModelProb = (direction === 'OVER' ? cdfPositive : (1 - cdfPositive)) * 100;
@@ -27725,6 +27736,10 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             let adjustment10_momentum = 0;
             let momentumReason = '';
             let smartMomentumLabel = 'neutral';
+            // V48: Hoisted blowout-detection results for use in base projection
+            let smartL5 = l5Avg;  // Default: raw L5 (overridden if blowout detected)
+            let smartL10 = l10Avg; // Default: raw L10
+            let blowoutContextLow = 0; // Count of blowout/DNP games in L5
             
             // V23: Analyze recent games for blowout/context signals
             const recentGames = intelData.recentForm?.recentGames || [];
@@ -27751,10 +27766,16 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                         if (minRatio < 0.78) {
                             // Low minutes = likely blowout/foul trouble/injury exit
                             contextLow++;
-                            // Extrapolate: what would they have done in full minutes?
-                            const extrapolated = avgMinutes > 0 && mins > 5 ? (val / mins) * avgMinutes : val;
-                            genuineValues.push(extrapolated);
-                            momentumReason += `G${l5Games.indexOf(g)+1}: ${val}${statKey === 'pts' ? 'pts' : ''} in ${mins.toFixed(0)}min (blowout/context) → ~${extrapolated.toFixed(0)} extrapolated; `;
+                            if (mins > 5) {
+                                // Played some minutes — extrapolate to full game
+                                const extrapolated = (val / mins) * avgMinutes;
+                                genuineValues.push(extrapolated);
+                                momentumReason += `G${l5Games.indexOf(g)+1}: ${val}${statKey === 'pts' ? 'pts' : ''} in ${mins.toFixed(0)}min (blowout/context) → ~${extrapolated.toFixed(0)} extrapolated; `;
+                            } else {
+                                // V48: True DNP (≤5 min) — EXCLUDE entirely from smart average
+                                // Don't push 0 into genuineValues — it contaminates the projection
+                                momentumReason += `G${l5Games.indexOf(g)+1}: ${val}${statKey === 'pts' ? 'pts' : ''} in ${mins.toFixed(0)}min (DNP/scratch) → EXCLUDED; `;
+                            }
                         } else {
                             genuineLow++;
                             genuineValues.push(val);
@@ -27765,9 +27786,33 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     }
                 }
                 
-                // Smart L5 average (blowout-adjusted)
-                const smartL5 = genuineValues.length > 0 ? genuineValues.reduce((a,b) => a+b, 0) / genuineValues.length : l5Avg;
+                // Smart L5 average (blowout-adjusted) — V48: writes to hoisted variable
+                smartL5 = genuineValues.length > 0 ? genuineValues.reduce((a,b) => a+b, 0) / genuineValues.length : l5Avg;
+                blowoutContextLow = contextLow; // V48: propagate to base projection
                 const rawL5 = l5Avg;
+                
+                // V48: Also compute clean L10 (filter blowout/DNP from games 1-10)
+                if (recentGames.length >= 10 && contextLow > 0) {
+                    const l10Games = recentGames.slice(0, 10);
+                    const cleanL10Values = [];
+                    for (const g of l10Games) {
+                        const val = (propDefE10.source === 'computed' || propDefE10.source === 'binary')
+                            ? computeGameStat(g, market)
+                            : (g[statKey] || 0);
+                        const mins = g.min || g.minutesPlayed || 0;
+                        const minRatio = avgMinutes > 0 ? mins / avgMinutes : 1;
+                        if (val < vegasLine && minRatio < 0.78) {
+                            if (mins > 5) {
+                                // Blowout with some minutes — extrapolate
+                                cleanL10Values.push((val / mins) * avgMinutes);
+                            }
+                            // V48: DNP (≤5 min) — skip entirely, don't push 0
+                        } else {
+                            cleanL10Values.push(val);
+                        }
+                    }
+                    smartL10 = cleanL10Values.length > 0 ? cleanL10Values.reduce((a,b) => a+b, 0) / cleanL10Values.length : l10Avg;
+                }
                 
                 // Momentum uses smart averages
                 const shortTermTrend = l3Avg - smartL5;
@@ -27813,6 +27858,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             // ═══════════════════════════════════════════════════════════════════════
             // V10: VARIANCE/CONSISTENCY SCORING
             // High variance players are harder to predict - factor into confidence
+            // V48: Filter blowout/DNP games to prevent false High Variance classification
             // ═══════════════════════════════════════════════════════════════════════
             let varianceScore = 0;
             let playerConsistency = 'Average';
@@ -27820,12 +27866,28 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 const games = intelData.recentForm.recentGames;
                 // V34 FIX: Use prop registry for correct market→stat mapping
                 const variancePropDef = getPropDef(market);
-                const varianceValues = games.slice(0, 10).map(g => {
-                    if (variancePropDef.source === 'computed' && variancePropDef.formula) return variancePropDef.formula(g);
-                    if (variancePropDef.source === 'binary' && variancePropDef.test) return variancePropDef.test(g);
-                    return g[variancePropDef.bdlField] || g[variancePropDef.key] || 0;
+                let varianceValues = games.slice(0, 10).map((g, i) => {
+                    const val = variancePropDef.source === 'computed' && variancePropDef.formula ? variancePropDef.formula(g)
+                             : variancePropDef.source === 'binary' && variancePropDef.test ? variancePropDef.test(g)
+                             : (g[variancePropDef.bdlField] || g[variancePropDef.key] || 0);
+                    return { val, mins: g.min || g.minutesPlayed || 0 };
                 });
-                const values = varianceValues;
+                
+                // V48: If blowout contamination detected, filter out DNP/blowout games from variance calc
+                // Games with ≤5 minutes or 0 output + <78% minutes are excluded entirely
+                if (blowoutContextLow > 0 && avgMinutes > 0) {
+                    const cleanValues = varianceValues.filter(v => {
+                        const minRatio = v.mins / avgMinutes;
+                        // Exclude true DNPs (≤5 min) and blowout exits (<50% minutes)
+                        return !(v.mins <= 5) && !(v.val === 0 && minRatio < 0.78) && !(minRatio < 0.5);
+                    });
+                    if (cleanValues.length >= 5) {
+                        varianceValues = cleanValues;
+                        console.log(`🧹 V48 Variance Clean: Filtered ${games.slice(0,10).length - cleanValues.length} blowout/DNP games from CV calculation`);
+                    }
+                }
+                
+                const values = varianceValues.map(v => typeof v === 'object' ? v.val : v);
                 
                 // Calculate standard deviation
                 const mean = values.reduce((a, b) => a + b, 0) / values.length;
@@ -27850,7 +27912,16 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             // CALCULATE BASE PROJECTION (V10 IMPROVED WEIGHTS)
             // Research shows: L5 most predictive, then season, then L10
             // Consistent players: weight season more. Volatile: weight recency more.
+            // V48: Use blowout-cleaned L5/L10 when DNP/blowout contamination detected
             // ═══════════════════════════════════════════════════════════════════════
+            
+            // V48: If blowout games detected, use smart (cleaned) values
+            const projL5 = blowoutContextLow > 0 ? smartL5 : engine2_recentForm;
+            const projL10 = blowoutContextLow > 0 ? smartL10 : l10Avg;
+            if (blowoutContextLow > 0) {
+                console.log(`🧹 V48 Blowout Clean: ${blowoutContextLow} DNP/blowout games in L5 → L5: ${l5Avg.toFixed(1)} → ${projL5.toFixed(1)}, L10: ${l10Avg.toFixed(1)} → ${projL10.toFixed(1)}`);
+            }
+            
             let baseWeights;
             if (playerConsistency === 'Consistent') {
                 // Consistent players: trust season average more
@@ -27880,11 +27951,11 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             
             let baseProjection = 
                 (engine1_seasonAvg * baseWeights.seasonAvg) +
-                (engine2_recentForm * baseWeights.recentForm) +
+                (projL5 * baseWeights.recentForm) +
                 (engine3_matchupHistory * baseWeights.matchupHistory) +
-                (l10Avg * baseWeights.l10Form);
+                (projL10 * baseWeights.l10Form);
             
-            console.log(`📊 Base Projection: ${baseProjection.toFixed(1)} (${(baseWeights.seasonAvg*100).toFixed(0)}% season + ${(baseWeights.recentForm*100).toFixed(0)}% L5 + ${(baseWeights.matchupHistory*100).toFixed(0)}% matchup + ${(baseWeights.l10Form*100).toFixed(0)}% L10) [${playerConsistency}]`);
+            console.log(`📊 Base Projection: ${baseProjection.toFixed(1)} (${(baseWeights.seasonAvg*100).toFixed(0)}% season + ${(baseWeights.recentForm*100).toFixed(0)}% L5${blowoutContextLow > 0 ? '🧹' : ''} + ${(baseWeights.matchupHistory*100).toFixed(0)}% matchup + ${(baseWeights.l10Form*100).toFixed(0)}% L10${blowoutContextLow > 0 ? '🧹' : ''}) [${playerConsistency}]`);
             
             // ═══════════════════════════════════════════════════════════════════════
             // APPLY ADJUSTMENTS (Engines 4-10)
@@ -28295,7 +28366,9 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 l3Avg: l3Avg,
                 momentum: smartMomentumLabel || ((l3Avg - l5Avg) > 1 ? 'hot' : (l3Avg - l5Avg) < -1 ? 'cold' : 'neutral'),
                 momentumReason: momentumReason || '',
-                smartL5: null, // populated by smart momentum engine
+                smartL5: blowoutContextLow > 0 ? smartL5 : null, // V48: populated when blowout cleaning applied
+                smartL10: blowoutContextLow > 0 ? smartL10 : null, // V48: cleaned L10
+                blowoutGamesInL5: blowoutContextLow, // V48: count of DNP/blowout games filtered
                 variance: playerConsistency,
                 // V8 additions
                 hitRate: intelData.hitRate,
@@ -28315,8 +28388,10 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 engines: {
                     seasonAvg: engine1_seasonAvg,
                     recentForm: engine2_recentForm,
+                    recentFormClean: blowoutContextLow > 0 ? projL5 : engine2_recentForm, // V48
                     matchupHistory: engine3_matchupHistory,
                     l10Avg: l10Avg,
+                    l10AvgClean: blowoutContextLow > 0 ? projL10 : l10Avg, // V48
                     l3Avg: l3Avg // V10: Add L3 for display
                 },
                 dataQuality: {
@@ -29394,6 +29469,11 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
         
         async function runAnalysis() {
             state._analysisRunning = true; // V48: Suppress noisy logs during analysis
+            // V48: Clear caches from previous analysis so new player gets fresh computation
+            state._hitRateCacheKey = null;
+            state._cachedHitRate = null;
+            state._sitH2HCacheKey = null;
+            state.situationalH2H = null;
             const player = document.getElementById('player-select').value;
             const market = document.getElementById('market-type').value;
             const lineInput = document.getElementById('line-input');
@@ -29875,6 +29955,11 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     seasonAvgLabel: getStatLabel(market || 'Points'),
                     l10Avg: (projData.l10Avg != null && projData.l10Avg > 0) ? projData.l10Avg : l10Avg,
                     l5Avg: (projData.l5Avg != null && projData.l5Avg > 0) ? projData.l5Avg : l5Avg,
+                    // V48: Provide blowout-cleaned values so AI engines aren't misled by DNP games
+                    l5AvgClean: projData.engines?.recentFormClean || null,
+                    l10AvgClean: projData.engines?.l10AvgClean || null,
+                    blowoutWarning: (projData.blowoutGamesInL5 > 0) ? 
+                        `WARNING: ${projData.blowoutGamesInL5} of last 5 games are blowout/DNP with <78% minutes. Raw L5 is misleadingly low. Clean L5=${projData.engines?.recentFormClean?.toFixed(1)}` : null,
                     hitRate: projData.hitRate?.hitRate ?? (typeof projData.hitRate === 'number' ? projData.hitRate : hitRate),
                     isHome,
                     restDays,
@@ -33825,7 +33910,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             }
             
             // V28c: 9. Situational H2H agreement (0-15 pts)
-            const situational = computeSituationalH2H(currentMarket, bookLine);
+            const situational = state.situationalH2H || computeSituationalH2H(currentMarket, bookLine);
             convictionMax += 15;
             if (situational && situational.filterCount >= 3) {
                 const sitAgrees = (modelSide === sideA && situational.situationalHitRate > 0.55) ||
