@@ -33796,7 +33796,10 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
             prefetchCache: {},
             prefetchQueue: [],
             // V41: Differentiation tracking
-            entryPoint: null // 'scanner' or 'direct'
+            entryPoint: null, // 'scanner' or 'direct'
+            // V47: Parlay builder
+            parlaySlip: [],
+            viewMode: 'all'
         };
         
         // V47: Apply saved My Books
@@ -34693,6 +34696,23 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
             // Update parlay button count
             updateParlayButton();
             
+            // Auto-refresh parlay panel if visible
+            const panel = document.getElementById('parlay-builder-panel');
+            if (panel && panel.style.display !== 'none') {
+                renderParlayPanel();
+            }
+            
+            // Update the floating strip if it exists
+            const strip = document.getElementById('parlay-floating-strip');
+            if (strip) {
+                const count = scannerState.parlaySlip.length;
+                strip.innerHTML = `
+                    <span style="font-size: 11px; color: #FFD700; font-weight: 700;">🎫 ${count} Leg${count > 1 ? 's' : ''} in Parlay</span>
+                    <span style="font-size: 10px; color: #aaa;">${scannerState.parlaySlip.map(l => l.player?.split(' ').pop()).join(' • ')}</span>
+                    <span style="font-size: 10px; color: #FFD700;">▼ View SGP Analyzer</span>
+                `;
+            }
+            
             // Flash confirmation
             const btn = document.getElementById('parlay-toggle-btn');
             if (btn) {
@@ -34807,11 +34827,15 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
         }
         
         function renderParlayPanel() {
-            const slip = scannerState.parlaySlip;
+            const slip = scannerState.parlaySlip || [];
+            console.log(`🎫 renderParlayPanel: ${slip.length} legs in slip`);
             let panel = document.getElementById('parlay-builder-panel');
             
             const container = document.getElementById('scanner-filters') || document.getElementById('scanner-results');
-            if (!container) return;
+            if (!container) {
+                console.log('🎫 renderParlayPanel: No container found');
+                return;
+            }
             
             if (!panel) {
                 panel = document.createElement('div');
@@ -34905,9 +34929,10 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
             panel.innerHTML = `
                 <div style="background: rgba(15,15,30,0.95); border: 1px solid rgba(255,215,0,0.4); border-radius: 10px; padding: 16px; margin: 10px 0; max-height: 500px; overflow-y: auto;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                        <span style="color: #FFD700; font-weight: bold; font-size: 14px;">🎫 Parlay Builder (${slip.length} Legs)</span>
+                        <span style="color: #FFD700; font-weight: bold; font-size: 14px;">🎫 SGP Parlay Analyzer (${slip.length} Legs)</span>
                         <div style="display: flex; gap: 6px;">
-                            <button onclick="clearParlay()" style="background: rgba(255,50,50,0.15); color: #ff6b6b; border: 1px solid rgba(255,50,50,0.3); border-radius: 4px; padding: 3px 10px; font-size: 10px; cursor: pointer;">🗑 Clear All</button>
+                            <button onclick="SBA_V47.analyze(); renderParlayPanel();" style="background: linear-gradient(135deg, rgba(185,143,255,0.3), rgba(130,80,255,0.3)); color: #b98fff; border: 1px solid rgba(185,143,255,0.4); border-radius: 4px; padding: 3px 10px; font-size: 10px; cursor: pointer; font-weight: 700;">🔮 Analyze SGP</button>
+                            <button onclick="clearParlay()" style="background: rgba(255,50,50,0.15); color: #ff6b6b; border: 1px solid rgba(255,50,50,0.3); border-radius: 4px; padding: 3px 10px; font-size: 10px; cursor: pointer;">🗑 Clear</button>
                             <button onclick="document.getElementById('parlay-builder-panel').style.display='none'" style="background: rgba(100,100,120,0.3); color: #aaa; border: none; border-radius: 4px; padding: 3px 8px; cursor: pointer; font-size: 11px;">✕</button>
                         </div>
                     </div>
@@ -36997,26 +37022,52 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
             if (pinnacleOver) console.log(`📌 Pinnacle: ${pinnacleLine} O${pinnacleOver}/U${pinnacleUnder}`);
             
             // Step 5b: Auto-select market type in the market dropdown
-            const marketSelect = document.getElementById('market-select');
+            const marketSelect = document.getElementById('market-type');
             if (marketSelect && result.market) {
                 const marketMap = {
-                    'points': 'points', 'rebounds': 'rebounds', 'assists': 'assists',
-                    'threes': 'threes', 'steals': 'steals', 'blocks': 'blocks',
-                    'turnovers': 'turnovers', 'pts+reb+ast': 'pra', 'pts+reb': 'pr',
-                    'pts+ast': 'pa', 'reb+ast': 'ra', 'double_double': 'dd',
-                    'points alternate': 'points', 'rebounds alternate': 'rebounds',
-                    'assists alternate': 'assists', 'threes alternate': 'threes',
-                    'points rebounds assists alternate': 'pra', 'points rebounds alternate': 'pr',
-                    'steals alternate': 'steals', 'blocks alternate': 'blocks'
+                    'points': 'Points', 'rebounds': 'Rebounds', 'assists': 'Assists',
+                    'threes': '3-Pointers', 'steals': 'Steals', 'blocks': 'Blocks',
+                    'turnovers': 'Turnovers', 'pts+reb+ast': 'Pts+Reb+Ast', 'pts+reb': 'Pts+Reb',
+                    'pts+ast': 'Pts+Ast', 'reb+ast': 'Reb+Ast', 'double_double': 'Double Double',
+                    'points alternate': 'Points', 'rebounds alternate': 'Rebounds',
+                    'assists alternate': 'Assists', 'threes alternate': '3-Pointers',
+                    'points rebounds assists alternate': 'Pts+Reb+Ast', 'points rebounds alternate': 'Pts+Reb',
+                    'steals alternate': 'Steals', 'blocks alternate': 'Blocks',
+                    'hits': 'Hits', 'total bases': 'Total Bases', 'strikeouts': 'Strikeouts',
+                    'goals': 'Goals', 'shots on goal': 'Shots on Goal',
+                    'game total': 'Game Total', 'alt game total': 'Game Total',
+                    'spread': 'Spread', 'moneyline': 'Moneyline', 'team total': 'Team Total'
                 };
-                const targetMarket = marketMap[result.market?.toLowerCase()] || result.market?.toLowerCase();
+                const targetMarket = marketMap[result.market?.toLowerCase()] || result.market;
+                let matched = false;
                 for (const option of marketSelect.options) {
-                    if (option.value === targetMarket || option.value.toLowerCase() === targetMarket) {
+                    if (option.value === targetMarket || option.textContent === targetMarket ||
+                        option.value.toLowerCase() === targetMarket.toLowerCase() ||
+                        option.textContent.toLowerCase() === targetMarket.toLowerCase()) {
                         marketSelect.value = option.value;
-                        marketSelect.dispatchEvent(new Event('change'));
-                        console.log(`💎 Auto-selected market: ${option.textContent}`);
+                        console.log(`💎 Auto-selected market: ${option.textContent} (value: ${option.value})`);
+                        matched = true;
                         break;
                     }
+                }
+                if (!matched) {
+                    // Try partial match
+                    const lower = targetMarket.toLowerCase();
+                    for (const option of marketSelect.options) {
+                        if (option.value.toLowerCase().includes(lower.substring(0, 4)) ||
+                            option.textContent.toLowerCase().includes(lower.substring(0, 4))) {
+                            marketSelect.value = option.value;
+                            console.log(`💎 Fuzzy-matched market: ${option.textContent}`);
+                            matched = true;
+                            break;
+                        }
+                    }
+                }
+                if (matched) {
+                    marketSelect.dispatchEvent(new Event('change'));
+                    await new Promise(r => setTimeout(r, 300));
+                } else {
+                    console.log(`⚠️ Could not match scanner market "${result.market}" to dropdown options: ${Array.from(marketSelect.options).map(o => o.value).join(', ')}`);
                 }
             }
             
