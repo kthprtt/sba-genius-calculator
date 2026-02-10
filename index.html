@@ -24379,11 +24379,22 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                 if (!CONFIG.aiProxy) return null;
                 
                 try {
-                    const response = await fetch(`${CONFIG.aiProxy}/api/youcom/search?q=${encodeURIComponent(query)}`);
+                    const response = await fetch(`${CONFIG.aiProxy}/api/ai/youcom`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ prompt: query, maxTokens: 400 })
+                    });
                     if (!response.ok) return null;
                     
                     const data = await response.json();
-                    return data;
+                    // Parse using proven parser
+                    let raw = '';
+                    if (typeof data === 'string') raw = data;
+                    else if (data?.result?.raw) raw = data.result.raw;
+                    else if (data?.result) raw = typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
+                    else raw = JSON.stringify(data);
+                    if (typeof raw !== 'string') raw = JSON.stringify(raw);
+                    return { result: raw, source: 'youcom' };
                 } catch (e) {
                     return null;
                 }
@@ -24393,17 +24404,21 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                 if (!CONFIG.aiProxy) return null;
                 
                 try {
-                    const response = await fetch(`${CONFIG.aiProxy}/api/youcom/analyze`, {
+                    const response = await fetch(`${CONFIG.aiProxy}/api/ai/youcom`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ player, market, line, context })
+                        body: JSON.stringify({ 
+                            prompt: `Analyze ${player} ${market} OVER/UNDER ${line}. Context: ${JSON.stringify(context || {}).substring(0, 300)}. Respond with ONLY JSON: {"pick":"OVER","confidence":70,"reasoning":"explanation"}`,
+                            maxTokens: 400 
+                        })
                     });
                     
                     if (!response.ok) return null;
                     
                     const data = await response.json();
-                    console.log(`📰 You.com: ${player} - ${data.result?.pick || 'N/A'}`);
-                    return data.result;
+                    const parsed = parseProxyAIResponse(data, 'youcom');
+                    console.log(`📰 You.com: ${player} - ${parsed?.pick || 'N/A'}`);
+                    return parsed;
                 } catch (e) {
                     return null;
                 }
@@ -24449,6 +24464,104 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
             }
         }
         
+        // V47 FIX: Robust AI response parser — ported from ULTIMATE V5.5.1 parseAIResponse
+        // Handles all proxy response formats: data.result.raw, data.result.parsed, data.raw, string, etc.
+        function parseProxyAIResponse(data, engineId = 'unknown') {
+            try {
+                let raw = '';
+                if (typeof data === 'string') {
+                    raw = data;
+                } else if (data?.result?.raw) {
+                    raw = data.result.raw;
+                } else if (data?.result?.parsed) {
+                    const p = data.result.parsed;
+                    if (p.pick) {
+                        return {
+                            pick: ['OVER','UNDER','PASS'].includes((p.pick||'').toUpperCase()) ? p.pick.toUpperCase() : 'PASS',
+                            confidence: Math.min(95, Math.max(50, parseInt(p.confidence) || 65)),
+                            trueProb: Math.min(0.70, Math.max(0.35, parseFloat(p.trueProb) || 0.5)),
+                            reasoning: (p.reasoning || '').substring(0, 400)
+                        };
+                    }
+                } else if (data?.raw) {
+                    raw = data.raw;
+                } else if (data?.result) {
+                    raw = typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
+                } else if (data?.content) {
+                    raw = typeof data.content === 'string' ? data.content : JSON.stringify(data.content);
+                } else if (data?.text) {
+                    raw = typeof data.text === 'string' ? data.text : JSON.stringify(data.text);
+                } else {
+                    raw = JSON.stringify(data);
+                }
+                
+                // Safety: ensure raw is always a string
+                if (typeof raw !== 'string') raw = JSON.stringify(raw);
+                raw = raw.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+                
+                let parsed = null;
+                
+                // Method 1: Direct JSON parse
+                try { parsed = JSON.parse(raw); } catch(e1) {
+                    // Method 2: Find JSON with "pick" key
+                    const jsonMatch = raw.match(/\{[^{}]*"pick"[^{}]*\}/i);
+                    if (jsonMatch) {
+                        try { parsed = JSON.parse(jsonMatch[0]); } catch(e2) {}
+                    }
+                    // Method 3: Any JSON object
+                    if (!parsed) {
+                        const anyJson = raw.match(/\{[\s\S]*?\}/);
+                        if (anyJson) {
+                            try { parsed = JSON.parse(anyJson[0]); } catch(e3) {}
+                        }
+                    }
+                    // Method 4: Regex extraction
+                    if (!parsed) {
+                        const pickMatch = raw.match(/"?pick"?\s*[:\s]+["']?(OVER|UNDER|PASS)["']?/i);
+                        const confMatch = raw.match(/"?confidence"?\s*[:\s]+(\d+)/i);
+                        const probMatch = raw.match(/"?trueProb"?\s*[:\s]+(0?\.\d+)/i);
+                        const reasonMatch = raw.match(/"?reasoning"?\s*[:\s]+["']([^"']+)["']/i);
+                        if (pickMatch) {
+                            parsed = {
+                                pick: pickMatch[1].toUpperCase(),
+                                confidence: confMatch ? parseInt(confMatch[1]) : 65,
+                                trueProb: probMatch ? parseFloat(probMatch[1]) : 0.5,
+                                reasoning: reasonMatch ? reasonMatch[1] : raw.substring(0, 200)
+                            };
+                        }
+                    }
+                }
+                
+                if (parsed && parsed.pick) {
+                    const pick = (parsed.pick || '').toUpperCase();
+                    const confidence = Math.min(95, Math.max(50, parseInt(parsed.confidence) || 65));
+                    // V4.5 FIX from ULTIMATE: Derive trueProb from confidence for consistency
+                    let trueProb = 0.50 + ((confidence - 50) / 45) * 0.25;
+                    trueProb = Math.min(0.75, Math.max(0.50, trueProb));
+                    
+                    return {
+                        pick: ['OVER','UNDER','PASS'].includes(pick) ? pick : 'PASS',
+                        confidence,
+                        trueProb,
+                        reasoning: (parsed.reasoning || raw.substring(0, 200) || '').substring(0, 400)
+                    };
+                }
+                
+                // Last resort: detect OVER/UNDER from text
+                const upperRaw = raw.toUpperCase();
+                const hasOver = upperRaw.includes('RECOMMEND OVER') || upperRaw.includes('TAKE OVER') || upperRaw.includes('BET OVER') || upperRaw.includes('PICK: OVER') || upperRaw.includes('"OVER"');
+                const hasUnder = upperRaw.includes('RECOMMEND UNDER') || upperRaw.includes('TAKE UNDER') || upperRaw.includes('BET UNDER') || upperRaw.includes('PICK: UNDER') || upperRaw.includes('"UNDER"');
+                
+                if (hasOver && !hasUnder) return { pick: 'OVER', confidence: 65, trueProb: 0.58, reasoning: raw.substring(0, 200) };
+                if (hasUnder && !hasOver) return { pick: 'UNDER', confidence: 65, trueProb: 0.58, reasoning: raw.substring(0, 200) };
+                
+                console.log(`[V47] ${engineId} parse failed, raw: ${raw.substring(0, 100)}...`);
+            } catch(e) {
+                console.log(`[V47] ${engineId} parse exception: ${e.message}`);
+            }
+            return { pick: 'PASS', confidence: 50, trueProb: 0.5, isError: true };
+        }
+        
         // Call a single AI engine via proxy
         async function callAIEngine(engineId, player, market, line, context) {
             if (!isAIProxyConfigured()) {
@@ -24478,19 +24591,9 @@ Analyze this prop. Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueP
                 }
                 
                 const data = await response.json();
-                // Parse response like ULTIMATE does
-                const text = data.result || data.content || data.text || (typeof data === 'string' ? data : JSON.stringify(data));
-                let parsed = null;
-                try {
-                    const jsonMatch = text.match(/\{[\s\S]*?"pick"[\s\S]*?\}/);
-                    if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
-                } catch(e) {}
-                if (!parsed) {
-                    const pickMatch = text.match(/\b(OVER|UNDER)\b/i);
-                    if (pickMatch) parsed = { pick: pickMatch[1].toUpperCase(), confidence: 65, trueProb: 0.55 };
-                }
+                const parsed = parseProxyAIResponse(data, engineId);
                 
-                if (parsed) {
+                if (parsed && parsed.pick && parsed.pick !== 'PASS' && !parsed.isError) {
                     console.log(`✅ ${engineId}: ${parsed.pick} @ ${parsed.confidence}%`);
                     return { result: parsed, isLive: true };
                 }
@@ -24560,32 +24663,10 @@ Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueProb":0.55,"reasonin
                         }
                         
                         const data = await res.json();
-                        // Parse response — handle various AI output formats
-                        let parsed = null;
-                        const text = data.result || data.content || data.text || (typeof data === 'string' ? data : JSON.stringify(data));
+                        // V47 FIX: Use ULTIMATE's proven parseAIResponse logic
+                        const parsed = parseProxyAIResponse(data, engine.id);
                         
-                        // Try JSON parse
-                        try {
-                            const jsonMatch = text.match(/\{[\s\S]*?"pick"[\s\S]*?\}/);
-                            if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
-                        } catch(e) {}
-                        
-                        // Fallback: extract from text
-                        if (!parsed) {
-                            const pickMatch = text.match(/\b(OVER|UNDER)\b/i);
-                            const confMatch = text.match(/confidence[:\s]*(\d+)/i);
-                            const probMatch = text.match(/trueProb[:\s]*(0\.\d+)/i);
-                            if (pickMatch) {
-                                parsed = {
-                                    pick: pickMatch[1].toUpperCase(),
-                                    confidence: parseInt(confMatch?.[1]) || 65,
-                                    trueProb: parseFloat(probMatch?.[1]) || 0.55,
-                                    reasoning: text.substring(0, 200)
-                                };
-                            }
-                        }
-                        
-                        if (parsed && parsed.pick) {
+                        if (parsed && parsed.pick && parsed.pick !== 'PASS' && !parsed.isError) {
                             const icon = AI_ENGINES.find(e => e.id === engine.id)?.icon || '🤖';
                             console.log(`   ${icon} ${engine.name}: ${parsed.pick} @ ${parsed.confidence}%`);
                             console.log(`         └─ "${(parsed.reasoning || '').substring(0, 80)}..."`);
@@ -24711,85 +24792,81 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 if (!response.ok) throw new Error(`Pass 1 proxy error: ${response.status}`);
                 const data = await response.json();
                 
-                // Extract projected totals from each engine
-                // Engines return confidence %, but for Pass 1 we need their PROJECTED NUMBER
-                // The proxy's prompt should ask for a number; we'll extract from reason text
-                // Meanwhile, we compute SBA Line from the V26 matchup + engine leanings
+                // V47 FIX: We're calling a single engine (/api/ai/claude), not batch
+                // Parse the single response using proven parser
+                const parsed = parseProxyAIResponse(data, 'claude');
                 const engineProjections = [];
-                const enginesObj = data.engines || {};
                 
-                for (const [engineId, engineData] of Object.entries(enginesObj)) {
-                    if (!engineData?.result?.pick) continue;
-                    const eng = AI_ENGINES.find(e => e.id === engineId);
-                    if (!eng) continue;
-                    
-                    // Try to extract a projected number from reason text
+                if (parsed && parsed.pick && parsed.pick !== 'PASS' && !parsed.isError) {
+                    // Try to extract projected number from reasoning
                     let projTotal = null;
-                    const reason = engineData.result.reason || '';
+                    const reason = parsed.reasoning || '';
                     
-                    // V39 FIX: Market-aware number extraction
-                    // For player props, look for 1-2 digit numbers; for game totals, 3-digit
-                    const isPlayerPropMarket = !['Game Total', 'Team Total', 'Match Total'].includes(market);
+                    // Try to extract "projection" field first (we asked for it in prompt)
+                    const projMatch = reason.match(/(?:projection|projected|project|estimate)[:\s]*(\d+\.?\d*)/i);
+                    if (projMatch) projTotal = parseFloat(projMatch[1]);
                     
-                    // Universal patterns — try to extract the projected number from engine reason text
-                    const numPatterns = isPlayerPropMarket ? [
-                        // Player prop patterns (1-2 digit numbers)
-                        /(?:project[s]?|predict[s]?|estimate[s]?|expect[s]?|forecast[s]?|yield[s]?|λ[≈=])[\s:]*(?:of\s+|to\s+|at\s+|be\s+|around\s+|about\s+|approximately\s+)?(\d{1,2}(?:\.\d+)?)/i,
-                        /(?:projected|estimated|expected)\s+(?:to\s+)?(?:get\s+|record\s+|have\s+)?(?:about\s+|around\s+)?(\d{1,2}(?:\.\d+)?)\s*(?:assists|rebounds|points|steals|blocks|threes|3-pointers|turnovers)/i,
-                        /(?:mean|average|base|lambda|λ)\s*(?:of\s+|=\s*|≈\s*|:\s*)?(\d{1,2}(?:\.\d+)?)/i,
-                        /(\d{1,2}\.\d+)\s*(?:assists|rebounds|steals|blocks|threes|turnovers|ast|reb)/i
-                    ] : [
-                        // Game total patterns (3-digit numbers)
-                        /(?:project[s]?|total[s]?|estimate[s]?|predict[s]?|expect[s]?|average[s]?|yield[s]?|λ[≈=])\s*(?:of\s+|to\s+|at\s+|be\s+|around\s+)?(\d{3}(?:\.\d+)?)/i,
-                        /(\d{3}\.\d+)\s*(?:points|pts|total)/i,
-                        /(?:projected|estimated|expected)\s+(?:total\s+)?(?:of\s+)?(\d{3}(?:\.\d+)?)/i
-                    ];
-                    for (const pat of numPatterns) {
-                        const m = reason.match(pat);
-                        if (m) { projTotal = parseFloat(m[1]); break; }
+                    // Also try parsing the raw response for a projection JSON
+                    if (!projTotal) {
+                        let raw = '';
+                        if (typeof data === 'string') raw = data;
+                        else if (data?.result?.raw) raw = data.result.raw;
+                        else if (data?.result) raw = typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
+                        else raw = JSON.stringify(data);
+                        if (typeof raw !== 'string') raw = JSON.stringify(raw);
+                        
+                        const projJsonMatch = raw.match(/"projection"\s*:\s*(\d+\.?\d*)/i);
+                        if (projJsonMatch) projTotal = parseFloat(projJsonMatch[1]);
                     }
                     
-                    // If engine didn't give a number, estimate from its confidence + direction
-                    // V39 FIX: Use ONLY market-relevant averages (exclude contaminated seasonAvg)
+                    // V39 FIX: Market-aware number extraction from reasoning
                     if (!projTotal) {
-                        const conf = engineData.result.confidence || 65;
-                        const pick = engineData.result.pick;
-                        // V39: Prefer L5/L10 which are always correct; seasonAvg may be PPG-contaminated
+                        const isPlayerPropMarket = !['Game Total', 'Team Total', 'Match Total'].includes(market);
+                        const numPatterns = isPlayerPropMarket ? [
+                            /(?:project[s]?|predict[s]?|estimate[s]?|expect[s]?|forecast[s]?)\s*(?:of\s+|to\s+|at\s+|be\s+|around\s+|about\s+|approximately\s+)?(\d{1,2}(?:\.\d+)?)/i,
+                            /(?:mean|average|base|lambda|λ)\s*(?:of\s+|=\s*|≈\s*|:\s*)?(\d{1,2}(?:\.\d+)?)/i,
+                        ] : [
+                            /(?:project[s]?|total[s]?|estimate[s]?)\s*(?:of\s+|to\s+|at\s+)?(\d{3}(?:\.\d+)?)/i,
+                        ];
+                        for (const pat of numPatterns) {
+                            const m = reason.match(pat);
+                            if (m) { projTotal = parseFloat(m[1]); break; }
+                        }
+                    }
+                    
+                    // If still no number, estimate from confidence + direction
+                    if (!projTotal) {
+                        const conf = parsed.confidence || 65;
                         const safeAvgs = [blindContext.l5Avg, blindContext.l10Avg].filter(v => v != null && v > 0);
                         const baseAvg = safeAvgs.length > 0 
                             ? safeAvgs.reduce((a,b) => a+b, 0) / safeAvgs.length
                             : blindContext.seasonAvg || line || 10;
-                        // Estimate: if OVER at 75%, project ~15% above base; if UNDER at 75%, ~15% below
-                        const confFactor = (conf - 50) / 50; // 0 to 1 scale
-                        const adjustment = confFactor * baseAvg * 0.20; // max 20% of baseAvg
-                        projTotal = pick === 'OVER' ? baseAvg + adjustment : baseAvg - adjustment;
+                        const confFactor = (conf - 50) / 50;
+                        const adjustment = confFactor * baseAvg * 0.20;
+                        projTotal = parsed.pick === 'OVER' ? baseAvg + adjustment : baseAvg - adjustment;
                     }
                     
-                    // V39 SANITY CLAMP: Reject engine projections that are impossible for this market
+                    // V39 SANITY CLAMP
                     const marketSanityMax = {
                         'Assists': 20, 'Rebounds': 28, '3-Pointers': 10, 'Steals': 6,
-                        'Blocks': 8, 'Turnovers': 10, 'PRA': 90, 'Pts+Reb': 75,
-                        'Pts+Ast': 70, 'Reb+Ast': 35, 'Points': 60, 'Game Total': 300,
-                        'Team Total': 160, 'Pass Yards': 500, 'Rush Yards': 220
+                        'Blocks': 8, 'Turnovers': 10, 'PRA': 90, 'Points': 60, 'Game Total': 300,
                     }[market] || 999;
                     if (projTotal > marketSanityMax) {
-                        console.warn(`⚠️ V39: ${eng.name} projected ${projTotal} for ${market} — exceeds max ${marketSanityMax}, clamping`);
-                        // Use L5/L10 average instead of the insane projection
                         const safeAvgs = [blindContext.l5Avg, blindContext.l10Avg].filter(v => v != null && v > 0);
                         projTotal = safeAvgs.length > 0 
-                            ? safeAvgs.reduce((a,b) => a+b, 0) / safeAvgs.length * (engineData.result.pick === 'OVER' ? 1.05 : 0.95)
-                            : line * (engineData.result.pick === 'OVER' ? 1.1 : 0.9);
+                            ? safeAvgs.reduce((a,b) => a+b, 0) / safeAvgs.length * (parsed.pick === 'OVER' ? 1.05 : 0.95)
+                            : line * (parsed.pick === 'OVER' ? 1.1 : 0.9);
                     }
                     
                     engineProjections.push({
-                        id: engineId,
-                        name: eng.name,
-                        icon: eng.icon,
-                        weight: eng.weight,
+                        id: 'claude',
+                        name: 'Claude',
+                        icon: '🟣',
+                        weight: 0.18,
                         projectedTotal: Math.round(projTotal * 10) / 10,
-                        pick: engineData.result.pick,
-                        confidence: engineData.result.confidence || 65,
-                        reason: reason.substring(0, 200)
+                        pick: parsed.pick,
+                        confidence: parsed.confidence || 65,
+                        reason: (parsed.reasoning || '').substring(0, 200)
                     });
                 }
                 
