@@ -2282,6 +2282,11 @@
                             <option value="72">⏰ 72 hrs</option>
                             <option value="0">⏰ No limit</option>
                         </select>
+                        <select class="scanner-filter" id="scanner-live-filter" title="Filter by game status" onchange="rerenderFilteredResults()" style="background: #1a1a2e; color: #e0e0e0; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 4px 6px; font-size: 11px; max-width: 100px;">
+                            <option value="all" selected>🎯 All Games</option>
+                            <option value="pregame">📅 Pre-Game</option>
+                            <option value="live">🔴 Live Only</option>
+                        </select>
                         <select class="scanner-filter" id="scanner-sport-filter" onchange="filterScanResults()">
                             <option value="all">All Sports</option>
                             <option value="NBA">🏀 NBA</option>
@@ -12130,10 +12135,11 @@ Return ONLY valid JSON:
                 const engineData = results?.engines?.[e.id] || {};
                 const vote = engineData.vote || '--';
                 const conf = engineData.confidence || 0;
-                const reason = engineData.reason || 'Waiting for analysis...';
+                const reason = engineData.reason || (results ? 'Waiting for analysis...' : 'Click ANALYZE BOTH to activate');
                 const isLive = engineData.isLive === true;
                 const isOver = vote === 'OVER';
                 const voteClass = vote === '--' ? '' : (isOver ? 'over' : 'under');
+                const statusBadge = !results ? 'READY' : (isLive ? '' : 'WAITING');
                 
                 if (isLive) liveCount++;
                 
@@ -12158,7 +12164,9 @@ Return ONLY valid JSON:
                         : '<span style="background:#00ff88;color:#000;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:bold;margin-left:6px;">LIVE</span>')
                     : engineData.isTimeout 
                         ? '<span style="background:#f59e0b;color:#000;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:bold;margin-left:6px;">TIMEOUT</span>'
-                        : '<span style="background:#444;color:#888;padding:1px 6px;border-radius:3px;font-size:9px;margin-left:6px;">WAITING</span>';
+                        : statusBadge === 'READY' 
+                            ? '<span style="background:rgba(0,200,255,0.2);color:#00c8ff;padding:1px 6px;border-radius:3px;font-size:9px;margin-left:6px;">READY</span>'
+                            : '<span style="background:#444;color:#888;padding:1px 6px;border-radius:3px;font-size:9px;margin-left:6px;">WAITING</span>';
                 
                 return `
                     <div class="ai-engine" style="${isLive ? (engineData.isLocal ? 'border-left: 2px solid #f4c430;' : 'border-left: 2px solid #00ff88;') : ''}">
@@ -12817,6 +12825,55 @@ Return ONLY valid JSON:
                     
                     if (state.liveOdds) {
                         updateRecommendationWithBestOdds();
+                    }
+                    
+                    // V47: Auto-run pre-synthesis when manual selection has data
+                    if (selection && market && line && scannerState.entryPoint !== 'scanner') {
+                        try {
+                            const overOdds = parseInt(document.getElementById('over-odds')?.value) || -110;
+                            const underOdds = parseInt(document.getElementById('under-odds')?.value) || -110;
+                            const manualBet = {
+                                player: selection,
+                                market: market,
+                                line: line,
+                                overOdds,
+                                underOdds,
+                                event: selectedEvent ? `${selectedEvent.shortName || selectedEvent.name}` : '',
+                                eventId: selectedEvent?.id || '',
+                                sport: state.sport || 'nba',
+                                bookPrices: state.liveOdds?.lines ? Object.entries(state.liveOdds.lines).map(([book, data]) => ({
+                                    book, bookTitle: book, bookKey: book.toLowerCase().replace(/\s/g, ''),
+                                    line: data.line || line,
+                                    overPrice: data.over || overOdds, underPrice: data.under || underOdds
+                                })) : [],
+                                bookCount: Object.keys(state.liveOdds?.lines || {}).length,
+                                isGameLevel: state.marketType === 'game' || state.marketType === 'team',
+                                entryPoint: 'manual'
+                            };
+                            console.log(`🔬 V47: Auto pre-synthesis for manual selection: ${selection} ${market} ${line}`);
+                            const preSynth = await runPreSynthesis(manualBet, false);
+                            if (preSynth) {
+                                // Show pre-synth badge in the right panel
+                                const streakBadge = document.getElementById('streak-safe-badge');
+                                if (streakBadge) {
+                                    const tier = preSynth.preSynthTier || 'none';
+                                    const tierIcon = {diamond: '💎', lock: '🔒', high: '🟢', streak: '📈', none: '🔵'}[tier] || '📊';
+                                    const tierLabel = {diamond: 'DIAMOND', lock: 'LOCK', high: 'HIGH VALUE', streak: 'STREAK SAFE', none: 'MONITOR'}[tier] || 'MONITOR';
+                                    const tierColor = {diamond: '#b98fff', lock: '#FFD700', high: '#00ff88', streak: '#00c8ff', none: '#888'}[tier] || '#888';
+                                    streakBadge.innerHTML = `
+                                        <div style="background: rgba(${tier === 'diamond' ? '185,143,255' : tier === 'lock' ? '255,215,0' : tier === 'high' ? '0,255,136' : '100,100,120'},0.1); border: 1px solid ${tierColor}40; border-radius: 6px; padding: 8px; margin-bottom: 8px;">
+                                            <div style="font-size: 11px; color: ${tierColor}; font-weight: 700; margin-bottom: 4px;">${tierIcon} PRE-SYNTHESIS: ${tierLabel}</div>
+                                            <div style="font-size: 10px; color: #aaa;">Score: ${preSynth.preSynthScore || 0}/100 | ${manualBet.bookCount} books</div>
+                                            ${preSynth.injuryStatus ? `<div style="font-size: 10px; color: #ff6b6b; margin-top: 3px;">🏥 ${preSynth.injuryStatus}</div>` : ''}
+                                        </div>
+                                    `;
+                                }
+                                state.lastPreSynth = preSynth;
+                                console.log(`✅ V47 Pre-Synthesis: ${preSynth.preSynthTier?.toUpperCase()} (score: ${preSynth.preSynthScore})`);
+                            }
+                        } catch (e) {
+                            console.log(`⚠️ V47 Pre-synth auto-run failed: ${e.message}`);
+                        }
                     }
                 }
             }
@@ -34215,10 +34272,21 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
             const f = scannerState.filters;
             const viewMode = scannerState.viewMode || 'all';
             const scanMode = scannerState.scanMode || 'all';
+            const liveFilter = document.getElementById('scanner-live-filter')?.value || 'all';
             
             let filtered = results.filter(r => {
                 const isArb = r.arbPct && r.arbPct > 0;
                 const isQuality = r.estimatedTier === 'diamond' || r.estimatedTier === 'lock' || r.estimatedTier === 'high';
+                
+                // Live vs Pre-game filter
+                if (liveFilter === 'pregame') {
+                    const commence = r.commenceTime ? new Date(r.commenceTime) : null;
+                    if (commence && commence <= new Date()) return false; // Game already started
+                }
+                if (liveFilter === 'live') {
+                    const commence = r.commenceTime ? new Date(r.commenceTime) : null;
+                    if (!commence || commence > new Date()) return false; // Game hasn't started
+                }
                 
                 // Scanner mode filter (from top buttons: Diamond Only, Locks & Above, All)
                 if (scanMode === 'diamond' && r.estimatedTier !== 'diamond') return false;
