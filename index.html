@@ -34241,16 +34241,25 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
         
         function applyFilters(results) {
             const f = scannerState.filters;
+            const viewMode = scannerState.viewMode || 'all';
+            
             let filtered = results.filter(r => {
-                // Check tier filters
-                if (r.estimatedTier === 'diamond' && !f.showDiamonds) return false;
-                if (r.estimatedTier === 'lock' && !f.showLocks) return false;
-                if (r.estimatedTier === 'high' && !f.showHigh) return false;
-                if (r.estimatedTier === 'streak' && !f.showStreak) return false;
-                if (r.estimatedTier === 'none' && !f.showMonitor) return false;
+                const isArb = r.arbPct && r.arbPct > 0;
+                const isQuality = r.estimatedTier === 'diamond' || r.estimatedTier === 'lock';
                 
-                // Check arb filter
-                if (r.arbPct && r.arbPct > 0 && !f.showArbs) return false;
+                // View mode filter
+                if (viewMode === 'quality' && !isQuality) return false;
+                if (viewMode === 'arbs' && !isArb) return false;
+                
+                // For 'all' mode, apply individual tier checkboxes
+                if (viewMode === 'all') {
+                    if (r.estimatedTier === 'diamond' && !f.showDiamonds) return false;
+                    if (r.estimatedTier === 'lock' && !f.showLocks) return false;
+                    if (r.estimatedTier === 'high' && !f.showHigh) return false;
+                    if (r.estimatedTier === 'streak' && !f.showStreak) return false;
+                    if (r.estimatedTier === 'none' && !f.showMonitor) return false;
+                    if (isArb && !f.showArbs) return false;
+                }
                 
                 // Check minimum edge
                 if (f.minEdge > 0) {
@@ -34258,18 +34267,19 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                     if (edge < f.minEdge) return false;
                 }
                 
-                // Check sportsbook filter — only show results where selected book has odds
+                // Check sportsbook filter
                 if (f.bookFilter && f.bookFilter !== 'all') {
                     const bookKey = f.bookFilter.toLowerCase();
                     const hasBook = r.bookPrices?.some(bp => 
                         bp.book?.toLowerCase().includes(bookKey) || 
-                        bp.bookTitle?.toLowerCase().includes(bookKey)
+                        bp.bookTitle?.toLowerCase().includes(bookKey) ||
+                        bp.bookKey?.toLowerCase() === bookKey
                     );
                     if (!hasBook) return false;
                 }
                 
                 // Check My Books — for arbs, BOTH books must be in My Books
-                if (f.myBooks && r.arbPct > 0 && r.bestOverBookKey && r.bestUnderBookKey) {
+                if (f.myBooks && isArb && r.bestOverBookKey && r.bestUnderBookKey) {
                     const matchesMyBook = (bookKey) => {
                         if (!bookKey) return true;
                         const k = bookKey.toLowerCase();
@@ -34297,13 +34307,17 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                     case 'diamond-desc':
                         if (a.estimatedTier === 'diamond' && b.estimatedTier !== 'diamond') return -1;
                         if (b.estimatedTier === 'diamond' && a.estimatedTier !== 'diamond') return 1;
-                        return (tierRank[b.estimatedTier] || 0) - (tierRank[a.estimatedTier] || 0) || (b.arbPct || b.edgePct || 0) - (a.arbPct || a.edgePct || 0);
+                        return (tierRank[b.estimatedTier] || 0) - (tierRank[a.estimatedTier] || 0) || (b.score || 0) - (a.score || 0);
                     case 'lock-desc':
                         if (a.estimatedTier === 'lock' && b.estimatedTier !== 'lock') return -1;
                         if (b.estimatedTier === 'lock' && a.estimatedTier !== 'lock') return 1;
-                        return (tierRank[b.estimatedTier] || 0) - (tierRank[a.estimatedTier] || 0) || (b.arbPct || b.edgePct || 0) - (a.arbPct || a.edgePct || 0);
+                        return (tierRank[b.estimatedTier] || 0) - (tierRank[a.estimatedTier] || 0) || (b.score || 0) - (a.score || 0);
+                    case 'tier-desc':
+                        return (tierRank[b.estimatedTier] || 0) - (tierRank[a.estimatedTier] || 0) || (b.score || 0) - (a.score || 0);
                     case 'roi-desc':
-                        return (b.arbPct || b.edgePct || 0) - (a.arbPct || a.edgePct || 0);
+                        return (b.arbPct || 0) - (a.arbPct || 0);
+                    case 'score-desc':
+                        return (b.score || 0) - (a.score || 0);
                     case 'books-desc':
                         return (b.bookCount || 0) - (a.bookCount || 0);
                     case 'time-asc':
@@ -34320,59 +34334,47 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
         
         function renderFilterControls() {
             const f = scannerState.filters;
+            const parlayCount = (scannerState.parlaySlip || []).length;
+            const viewMode = scannerState.viewMode || 'all';
             return `
-                <div id="scanner-filters" style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; padding: 10px; background: rgba(20,20,40,0.6); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
-                    <div style="display: flex; gap: 6px; align-items: center;">
-                        <span style="font-size: 11px; color: #888; margin-right: 4px;">Show:</span>
-                        <label style="display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 11px;">
-                            <input type="checkbox" id="filter-diamonds" ${f.showDiamonds ? 'checked' : ''} onchange="toggleFilter('showDiamonds')">
-                            <span style="color: #b98fff;">💎 Diamonds</span>
-                        </label>
-                        <label style="display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 11px;">
-                            <input type="checkbox" id="filter-locks" ${f.showLocks ? 'checked' : ''} onchange="toggleFilter('showLocks')">
-                            <span style="color: #FFD700;">🔒 Locks</span>
-                        </label>
-                        <label style="display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 11px;">
-                            <input type="checkbox" id="filter-arbs" ${f.showArbs ? 'checked' : ''} onchange="toggleFilter('showArbs')">
-                            <span style="color: #00ff88;">💰 Arbs</span>
-                        </label>
-                        <label style="display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 11px;">
-                            <input type="checkbox" id="filter-high" ${f.showHigh ? 'checked' : ''} onchange="toggleFilter('showHigh')">
-                            <span style="color: #00ff88;">🟢 High</span>
-                        </label>
-                        <label style="display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 11px;">
-                            <input type="checkbox" id="filter-streak" ${f.showStreak ? 'checked' : ''} onchange="toggleFilter('showStreak')">
-                            <span style="color: #00c8ff;">📈 Streak</span>
-                        </label>
+                <div id="scanner-filters" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; padding: 10px; background: rgba(20,20,40,0.6); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+                    <!-- Row 1: View Mode + Tier Filters -->
+                    <div style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+                        <span style="font-size: 11px; color: #888; margin-right: 2px;">View:</span>
+                        <button onclick="setViewMode('all')" class="view-mode-btn" style="background: ${viewMode === 'all' ? 'rgba(185,143,255,0.3)' : 'rgba(50,50,70,0.5)'}; color: ${viewMode === 'all' ? '#b98fff' : '#888'}; border: 1px solid ${viewMode === 'all' ? 'rgba(185,143,255,0.5)' : 'rgba(255,255,255,0.1)'}; border-radius: 4px; padding: 3px 8px; font-size: 10px; cursor: pointer; font-weight: ${viewMode === 'all' ? '700' : '400'};">📋 All</button>
+                        <button onclick="setViewMode('quality')" class="view-mode-btn" style="background: ${viewMode === 'quality' ? 'rgba(255,215,0,0.2)' : 'rgba(50,50,70,0.5)'}; color: ${viewMode === 'quality' ? '#FFD700' : '#888'}; border: 1px solid ${viewMode === 'quality' ? 'rgba(255,215,0,0.4)' : 'rgba(255,255,255,0.1)'}; border-radius: 4px; padding: 3px 8px; font-size: 10px; cursor: pointer; font-weight: ${viewMode === 'quality' ? '700' : '400'};">💎🔒 Quality Only</button>
+                        <button onclick="setViewMode('arbs')" class="view-mode-btn" style="background: ${viewMode === 'arbs' ? 'rgba(0,255,136,0.2)' : 'rgba(50,50,70,0.5)'}; color: ${viewMode === 'arbs' ? '#00ff88' : '#888'}; border: 1px solid ${viewMode === 'arbs' ? 'rgba(0,255,136,0.4)' : 'rgba(255,255,255,0.1)'}; border-radius: 4px; padding: 3px 8px; font-size: 10px; cursor: pointer; font-weight: ${viewMode === 'arbs' ? '700' : '400'};">💰 Arbs Only</button>
+                        <div style="margin-left: auto; display: flex; gap: 6px; align-items: center;">
+                            <button onclick="toggleParlayBuilder()" id="parlay-toggle-btn" style="background: ${parlayCount > 0 ? 'linear-gradient(135deg, rgba(255,215,0,0.3), rgba(255,170,0,0.3))' : 'rgba(50,50,70,0.5)'}; color: ${parlayCount > 0 ? '#FFD700' : '#aaa'}; border: 1px solid ${parlayCount > 0 ? 'rgba(255,215,0,0.5)' : 'rgba(255,255,255,0.15)'}; border-radius: 4px; padding: 3px 10px; font-size: 10px; cursor: pointer; font-weight: 700; position: relative;">🎫 Parlay${parlayCount > 0 ? ` (${parlayCount})` : ''}</button>
+                            <button onclick="toggleManualBetAdd()" style="background: rgba(0,200,255,0.15); color: #00c8ff; border: 1px solid rgba(0,200,255,0.3); border-radius: 4px; padding: 3px 8px; font-size: 10px; cursor: pointer;" title="Manually add a bet to parlay">+ Add Bet</button>
+                        </div>
                     </div>
-                    <div style="display: flex; gap: 6px; align-items: center; margin-left: auto;">
+                    <!-- Row 2: Sort + Book Filter + Edge Filter -->
+                    <div style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
                         <span style="font-size: 11px; color: #888;">Sort:</span>
                         <select id="filter-sort" onchange="setScanSort(this.value)" style="background: rgba(30,30,50,0.8); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 2px 6px; font-size: 10px;">
                             <option value="edge-desc" ${(scannerState.sortBy||'edge-desc')==='edge-desc'?'selected':''}>📊 Highest Edge</option>
                             <option value="diamond-desc" ${scannerState.sortBy==='diamond-desc'?'selected':''}>💎 Diamonds First</option>
                             <option value="lock-desc" ${scannerState.sortBy==='lock-desc'?'selected':''}>🔒 Locks First</option>
+                            <option value="tier-desc" ${scannerState.sortBy==='tier-desc'?'selected':''}>⭐ Best Quality</option>
                             <option value="roi-desc" ${scannerState.sortBy==='roi-desc'?'selected':''}>💰 Highest ROI</option>
+                            <option value="score-desc" ${scannerState.sortBy==='score-desc'?'selected':''}>🎯 Pre-Synth Score</option>
                             <option value="books-desc" ${scannerState.sortBy==='books-desc'?'selected':''}>📚 Most Books</option>
                             <option value="time-asc" ${scannerState.sortBy==='time-asc'?'selected':''}>⏰ Soonest Game</option>
                         </select>
-                        <button onclick="toggleMyBooks()" id="my-books-btn" style="background: rgba(255,215,0,0.1); color: #FFD700; border: 1px solid rgba(255,215,0,0.3); border-radius: 4px; padding: 2px 8px; font-size: 10px; cursor: pointer; white-space: nowrap;" title="Select your sportsbook accounts — arbs only show between books you have">📚 My Books</button>
+                        <button onclick="toggleMyBooks()" id="my-books-btn" style="background: rgba(255,215,0,0.1); color: #FFD700; border: 1px solid rgba(255,215,0,0.3); border-radius: 4px; padding: 2px 8px; font-size: 10px; cursor: pointer; white-space: nowrap;" title="Select your sportsbook accounts">📚 My Books</button>
                         <select id="filter-book-price" onchange="setScanBook(this.value)" style="background: rgba(30,30,50,0.8); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 2px 6px; font-size: 10px; max-width: 100px;" title="Show best price at this specific book">
-                            <option value="all" ${(scannerState.filters.bookFilter||'all')==='all'?'selected':''}>🏷️ Best Price</option>
+                            <option value="all" ${(scannerState.filters.bookFilter||'all')==='all'?'selected':''}>🏷️ All Books</option>
                             <option value="fanduel" ${scannerState.filters.bookFilter==='fanduel'?'selected':''}>FanDuel</option>
                             <option value="draftkings" ${scannerState.filters.bookFilter==='draftkings'?'selected':''}>DraftKings</option>
                             <option value="betmgm" ${scannerState.filters.bookFilter==='betmgm'?'selected':''}>BetMGM</option>
                             <option value="pinnacle" ${scannerState.filters.bookFilter==='pinnacle'?'selected':''}>Pinnacle</option>
-                            <option value="caesars" ${scannerState.filters.bookFilter==='caesars'?'selected':''}>Caesars</option>
                             <option value="bovada" ${scannerState.filters.bookFilter==='bovada'?'selected':''}>Bovada</option>
                             <option value="betonlineag" ${scannerState.filters.bookFilter==='betonlineag'?'selected':''}>BetOnline</option>
                             <option value="betrivers" ${scannerState.filters.bookFilter==='betrivers'?'selected':''}>BetRivers</option>
                             <option value="fanatics" ${scannerState.filters.bookFilter==='fanatics'?'selected':''}>Fanatics</option>
                             <option value="bet365" ${scannerState.filters.bookFilter==='bet365'?'selected':''}>bet365</option>
-                            <option value="hard_rock" ${scannerState.filters.bookFilter==='hard_rock'?'selected':''}>Hard Rock</option>
-                            <option value="betfair_ex_uk" ${scannerState.filters.bookFilter==='betfair_ex_uk'?'selected':''}>Betfair</option>
-                            <option value="williamhill_us" ${scannerState.filters.bookFilter==='williamhill_us'?'selected':''}>Wm Hill</option>
-                            <option value="unibet_eu" ${scannerState.filters.bookFilter==='unibet_eu'?'selected':''}>Unibet</option>
-                            <option value="betway" ${scannerState.filters.bookFilter==='betway'?'selected':''}>Betway</option>
+                            <option value="williamhill_us" ${scannerState.filters.bookFilter==='williamhill_us'?'selected':''}>Caesars</option>
                         </select>
                         <span style="font-size: 11px; color: #888;">Min Edge:</span>
                         <select id="filter-min-edge" onchange="setMinEdge(this.value)" style="background: rgba(30,30,50,0.8); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 2px 6px; font-size: 10px;">
@@ -34578,11 +34580,486 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                 showMonitor: false,
                 minEdge: 0,
                 bookFilter: 'all',
-                myBooks: scannerState.filters.myBooks || {},  // preserve My Books on reset
+                myBooks: scannerState.filters.myBooks || {},
                 hiddenIds: new Set()
             };
             scannerState.sortBy = 'edge-desc';
+            scannerState.viewMode = 'all';
             rerenderFilteredResults();
+        }
+        
+        function setViewMode(mode) {
+            scannerState.viewMode = mode;
+            rerenderFilteredResults();
+        }
+        
+        // ═══════════════════════════════════════════════════════════════════
+        // V47: PARLAY BUILDER + ANALYZER ENGINE
+        // Multi-bet selection, correlation detection, EV analysis,
+        // leg removal optimizer, and best book routing
+        // ═══════════════════════════════════════════════════════════════════
+        
+        if (!scannerState.parlaySlip) scannerState.parlaySlip = [];
+        
+        function addScannerToParlay(resultId) {
+            const result = scannerState.results.find(r => 
+                (r.id || `${r.player}_${r.market}_${r.line}`) === resultId
+            );
+            if (result) {
+                addToParlay(result);
+            } else {
+                console.warn(`🎫 Could not find result with ID: ${resultId}`);
+            }
+        }
+        
+        function addToParlay(result) {
+            const id = result.id || `${result.player}_${result.market}_${result.line}`;
+
+            // Don't add duplicates
+            if (scannerState.parlaySlip.find(r => (r.id || `${r.player}_${r.market}_${r.line}`) === id)) {
+                console.log(`🎫 Already in parlay: ${result.player}`);
+                return;
+            }
+            
+            scannerState.parlaySlip.push({
+                ...result,
+                parlayId: id,
+                addedAt: Date.now(),
+                source: result.entryPoint || (result.estimatedTier ? 'scanner' : 'manual')
+            });
+            
+            console.log(`🎫 Added to parlay: ${result.player} ${result.market} ${result.direction} ${result.line} (${scannerState.parlaySlip.length} legs)`);
+            
+            // Update parlay button count
+            updateParlayButton();
+            
+            // Flash confirmation
+            const btn = document.getElementById('parlay-toggle-btn');
+            if (btn) {
+                btn.style.animation = 'pulse 0.5s';
+                setTimeout(() => btn.style.animation = '', 500);
+            }
+        }
+        
+        function removeFromParlay(parlayId) {
+            scannerState.parlaySlip = scannerState.parlaySlip.filter(r => 
+                (r.id || `${r.player}_${r.market}_${r.line}`) !== parlayId
+            );
+            updateParlayButton();
+            renderParlayPanel();
+        }
+        
+        function updateParlayButton() {
+            const btn = document.getElementById('parlay-toggle-btn');
+            if (!btn) return;
+            const count = scannerState.parlaySlip.length;
+            btn.textContent = `🎫 Parlay${count > 0 ? ` (${count})` : ''}`;
+            btn.style.background = count > 0 ? 'linear-gradient(135deg, rgba(255,215,0,0.3), rgba(255,170,0,0.3))' : 'rgba(50,50,70,0.5)';
+            btn.style.color = count > 0 ? '#FFD700' : '#aaa';
+            btn.style.borderColor = count > 0 ? 'rgba(255,215,0,0.5)' : 'rgba(255,255,255,0.15)';
+        }
+        
+        function toggleParlayBuilder() {
+            let panel = document.getElementById('parlay-builder-panel');
+            if (panel) {
+                panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+                if (panel.style.display === 'block') renderParlayPanel();
+                return;
+            }
+            renderParlayPanel();
+        }
+        
+        function toggleManualBetAdd() {
+            let panel = document.getElementById('manual-bet-panel');
+            if (panel) {
+                panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+                return;
+            }
+            
+            const container = document.getElementById('scanner-filters') || document.getElementById('scanner-results');
+            const html = `
+                <div id="manual-bet-panel" style="background: rgba(15,15,30,0.95); border: 1px solid rgba(0,200,255,0.3); border-radius: 8px; padding: 14px; margin: 10px 0;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <span style="color: #00c8ff; font-weight: bold; font-size: 13px;">➕ Add Manual Bet to Parlay</span>
+                        <button onclick="document.getElementById('manual-bet-panel').style.display='none'" style="background: rgba(100,100,120,0.3); color: #aaa; border: none; border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 11px;">✕</button>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                        <input id="manual-player" placeholder="Player / Team" style="background: rgba(30,30,50,0.8); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 6px 8px; font-size: 11px;">
+                        <input id="manual-event" placeholder="Game (e.g. LAL vs BOS)" style="background: rgba(30,30,50,0.8); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 6px 8px; font-size: 11px;">
+                        <select id="manual-market" style="background: rgba(30,30,50,0.8); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 6px 8px; font-size: 11px;">
+                            <option value="points">Points</option><option value="rebounds">Rebounds</option><option value="assists">Assists</option>
+                            <option value="threes">3-Pointers</option><option value="steals">Steals</option><option value="blocks">Blocks</option>
+                            <option value="pra">PRA</option><option value="h2h">Moneyline</option><option value="spread">Spread</option><option value="total">Total</option>
+                        </select>
+                        <div style="display: flex; gap: 4px;">
+                            <select id="manual-direction" style="background: rgba(30,30,50,0.8); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 6px; font-size: 11px; flex: 1;">
+                                <option value="OVER">Over</option><option value="UNDER">Under</option>
+                            </select>
+                            <input id="manual-line" placeholder="Line" type="number" step="0.5" style="background: rgba(30,30,50,0.8); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 6px; font-size: 11px; flex: 1;">
+                        </div>
+                        <input id="manual-odds" placeholder="Odds (e.g. -110)" style="background: rgba(30,30,50,0.8); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 6px 8px; font-size: 11px;">
+                        <input id="manual-book" placeholder="Sportsbook" style="background: rgba(30,30,50,0.8); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 6px 8px; font-size: 11px;">
+                    </div>
+                    <div style="margin-top: 10px; text-align: right;">
+                        <button onclick="addManualBet()" style="background: linear-gradient(135deg, rgba(0,200,255,0.3), rgba(0,150,255,0.3)); color: #00c8ff; border: 1px solid rgba(0,200,255,0.4); border-radius: 4px; padding: 5px 16px; font-size: 11px; cursor: pointer; font-weight: bold;">🎫 Add to Parlay</button>
+                    </div>
+                </div>`;
+            container.insertAdjacentHTML('afterend', html);
+        }
+        
+        function addManualBet() {
+            const player = document.getElementById('manual-player')?.value?.trim();
+            const event = document.getElementById('manual-event')?.value?.trim();
+            const market = document.getElementById('manual-market')?.value;
+            const direction = document.getElementById('manual-direction')?.value;
+            const line = parseFloat(document.getElementById('manual-line')?.value) || 0;
+            const odds = parseInt(document.getElementById('manual-odds')?.value) || -110;
+            const book = document.getElementById('manual-book')?.value?.trim() || 'Manual';
+            
+            if (!player) { alert('Enter a player/team name'); return; }
+            
+            addToParlay({
+                player,
+                event: event || 'Manual Entry',
+                market,
+                direction,
+                line,
+                overOdds: direction === 'OVER' ? odds : -110,
+                underOdds: direction === 'UNDER' ? odds : -110,
+                bestOverPrice: direction === 'OVER' ? odds : -110,
+                bestUnderPrice: direction === 'UNDER' ? odds : -110,
+                bestOverBook: direction === 'OVER' ? book : '',
+                bestUnderBook: direction === 'UNDER' ? book : '',
+                estimatedTier: 'manual',
+                score: 50,
+                entryPoint: 'manual',
+                bookPrices: [{book, bookKey: book.toLowerCase().replace(/\s/g,''), line, overPrice: odds}]
+            });
+            
+            // Clear form
+            document.getElementById('manual-player').value = '';
+            document.getElementById('manual-line').value = '';
+            document.getElementById('manual-odds').value = '';
+            document.getElementById('manual-bet-panel').style.display = 'none';
+            
+            // Open parlay builder
+            toggleParlayBuilder();
+        }
+        
+        function renderParlayPanel() {
+            const slip = scannerState.parlaySlip;
+            let panel = document.getElementById('parlay-builder-panel');
+            
+            const container = document.getElementById('scanner-filters') || document.getElementById('scanner-results');
+            if (!container) return;
+            
+            if (!panel) {
+                panel = document.createElement('div');
+                panel.id = 'parlay-builder-panel';
+                container.parentElement.insertBefore(panel, container.nextSibling);
+            }
+            
+            if (slip.length === 0) {
+                panel.innerHTML = `
+                    <div style="background: rgba(15,15,30,0.95); border: 1px solid rgba(255,215,0,0.3); border-radius: 8px; padding: 14px; margin: 10px 0;">
+                        <div style="text-align: center; color: #888; font-size: 12px; padding: 20px;">
+                            🎫 No bets in parlay slip.<br>
+                            <span style="font-size: 11px; color: #666;">Click the <b style="color: #00ff88;">+ Add</b> button on any scanner card, or use <b style="color: #00c8ff;">+ Add Bet</b> to enter manually.</span>
+                        </div>
+                    </div>`;
+                return;
+            }
+            
+            // Analyze the parlay
+            const analysis = analyzeParlaySlip(slip);
+            
+            // Build legs HTML
+            let legsHtml = slip.map((leg, i) => {
+                const tierIcon = {diamond: '💎', lock: '🔒', high: '🟢', streak: '📈', manual: '✏️', monitor: '🔵'}[leg.estimatedTier] || '📊';
+                const odds = leg.direction === 'OVER' ? (leg.bestOverPrice || leg.overOdds || -110) : (leg.bestUnderPrice || leg.underOdds || -110);
+                const book = leg.direction === 'OVER' ? (leg.bestOverBook || '') : (leg.bestUnderBook || '');
+                const legProb = analysis.legProbs[i];
+                const legAnalysis = analysis.legAnalyses[i];
+                const isCorrelated = analysis.correlations.some(c => c.legA === i || c.legB === i);
+                
+                return `
+                    <div style="display: flex; align-items: center; gap: 8px; padding: 8px; background: rgba(30,30,50,0.5); border-radius: 6px; border-left: 3px solid ${isCorrelated ? '#ff6b6b' : legProb > 55 ? '#00ff88' : legProb > 45 ? '#f4c430' : '#ff6b6b'};">
+                        <span style="font-size: 14px;">${tierIcon}</span>
+                        <div style="flex: 1; min-width: 0;">
+                            <div style="font-size: 12px; font-weight: 700; color: white; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${leg.player}</div>
+                            <div style="font-size: 10px; color: #aaa;">${leg.market} ${leg.direction} ${leg.line} @ <span style="color: ${odds > 0 ? '#00ff88' : '#ccc'}">${odds > 0 ? '+' : ''}${odds}</span> ${book ? `(${book})` : ''}</div>
+                            <div style="font-size: 9px; color: #888; margin-top: 2px;">${leg.event || ''} ${isCorrelated ? '<span style="color: #ff6b6b;">⚠️ CORRELATED</span>' : ''}</div>
+                        </div>
+                        <div style="text-align: right; min-width: 60px;">
+                            <div style="font-size: 11px; font-weight: 700; color: ${legProb > 55 ? '#00ff88' : legProb > 45 ? '#f4c430' : '#ff6b6b'};">${legProb.toFixed(1)}%</div>
+                            <div style="font-size: 9px; color: #888;">win prob</div>
+                        </div>
+                        <div style="display: flex; flex-direction: column; gap: 2px;">
+                            <button onclick="removeFromParlay('${leg.parlayId || leg.id || (leg.player + '_' + leg.market + '_' + leg.line)}')" style="background: rgba(255,50,50,0.2); color: #ff6b6b; border: none; border-radius: 3px; padding: 2px 6px; font-size: 10px; cursor: pointer;">✕</button>
+                            ${legAnalysis.dropEV !== null ? `<span style="font-size: 8px; color: ${legAnalysis.dropEV > analysis.parlayEV ? '#00ff88' : '#888'};" title="EV if you drop this leg">${legAnalysis.dropEV > analysis.parlayEV ? '⬆️' : ''}${legAnalysis.dropEV.toFixed(1)}%</span>` : ''}
+                        </div>
+                    </div>`;
+            }).join('');
+            
+            // Correlations warnings
+            let corrHtml = '';
+            if (analysis.correlations.length > 0) {
+                corrHtml = `<div style="background: rgba(255,100,100,0.1); border: 1px solid rgba(255,100,100,0.3); border-radius: 6px; padding: 8px; margin-top: 8px;">
+                    <div style="font-size: 11px; font-weight: 700; color: #ff6b6b;">⚠️ Correlation Warning</div>
+                    ${analysis.correlations.map(c => `<div style="font-size: 10px; color: #ffaaaa; margin-top: 4px;">${c.reason}</div>`).join('')}
+                    <div style="font-size: 9px; color: #888; margin-top: 4px;">Correlated legs reduce true parlay probability. Some books may void correlated parlays.</div>
+                </div>`;
+            }
+            
+            // Best book routing
+            let bookRoutingHtml = '';
+            if (analysis.bestSingleBook) {
+                bookRoutingHtml = `
+                    <div style="background: rgba(0,255,136,0.08); border: 1px solid rgba(0,255,136,0.2); border-radius: 6px; padding: 8px; margin-top: 8px;">
+                        <div style="font-size: 11px; font-weight: 700; color: #00ff88;">📍 Best Book Routing</div>
+                        ${analysis.bestSingleBook.allLegs ? 
+                            `<div style="font-size: 10px; color: #aaa; margin-top: 4px;">✅ <b style="color: #00ff88;">${analysis.bestSingleBook.name}</b> has all ${slip.length} legs — place entire parlay there</div>
+                             <div style="font-size: 10px; color: #aaa;">Combined parlay odds: <b style="color: white;">${analysis.bestSingleBook.combinedOdds > 0 ? '+' : ''}${analysis.bestSingleBook.combinedOdds}</b></div>`
+                            : `<div style="font-size: 10px; color: #aaa; margin-top: 4px;">No single book has all legs. Best coverage:</div>
+                               ${analysis.bookRouting.map(r => `<div style="font-size: 10px; color: #aaa;">• <b style="color: white;">${r.book}</b>: ${r.legs.length} leg(s) — ${r.legs.map(l => l.player).join(', ')}</div>`).join('')}
+                               <div style="font-size: 9px; color: #f4c430; margin-top: 4px;">💡 Split across books for best odds, or sacrifice some odds for single-book parlay convenience</div>`
+                        }
+                    </div>`;
+            }
+            
+            // Leg removal optimizer
+            let optimizerHtml = '';
+            if (slip.length >= 3 && analysis.bestDropLeg !== null) {
+                const dropLeg = slip[analysis.bestDropLeg];
+                optimizerHtml = `
+                    <div style="background: rgba(244,196,48,0.1); border: 1px solid rgba(244,196,48,0.25); border-radius: 6px; padding: 8px; margin-top: 8px;">
+                        <div style="font-size: 11px; font-weight: 700; color: #f4c430;">🔬 Leg Optimizer</div>
+                        <div style="font-size: 10px; color: #aaa; margin-top: 4px;">
+                            Dropping <b style="color: #f4c430;">${dropLeg.player}</b> would ${analysis.bestDropDelta > 0 ? 'improve' : 'worsen'} EV by <b style="color: ${analysis.bestDropDelta > 0 ? '#00ff88' : '#ff6b6b'};">${analysis.bestDropDelta > 0 ? '+' : ''}${analysis.bestDropDelta.toFixed(2)}%</b>
+                        </div>
+                        ${analysis.straightBetsEV > analysis.parlayEV ? 
+                            `<div style="font-size: 10px; color: #00ff88; margin-top: 4px;">💡 <b>Straight bets</b> have better EV (${analysis.straightBetsEV.toFixed(1)}%) than this parlay (${analysis.parlayEV.toFixed(1)}%)</div>` : ''}
+                    </div>`;
+            }
+            
+            panel.innerHTML = `
+                <div style="background: rgba(15,15,30,0.95); border: 1px solid rgba(255,215,0,0.4); border-radius: 10px; padding: 16px; margin: 10px 0; max-height: 500px; overflow-y: auto;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <span style="color: #FFD700; font-weight: bold; font-size: 14px;">🎫 Parlay Builder (${slip.length} Legs)</span>
+                        <div style="display: flex; gap: 6px;">
+                            <button onclick="clearParlay()" style="background: rgba(255,50,50,0.15); color: #ff6b6b; border: 1px solid rgba(255,50,50,0.3); border-radius: 4px; padding: 3px 10px; font-size: 10px; cursor: pointer;">🗑 Clear All</button>
+                            <button onclick="document.getElementById('parlay-builder-panel').style.display='none'" style="background: rgba(100,100,120,0.3); color: #aaa; border: none; border-radius: 4px; padding: 3px 8px; cursor: pointer; font-size: 11px;">✕</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Parlay Summary -->
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; padding: 10px; background: rgba(0,0,0,0.3); border-radius: 8px;">
+                        <div style="text-align: center;">
+                            <div style="font-size: 9px; color: #888;">TRUE PROB</div>
+                            <div style="font-size: 16px; font-weight: 700; color: ${analysis.trueProb > 10 ? '#00ff88' : '#ff6b6b'};">${analysis.trueProb.toFixed(1)}%</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 9px; color: #888;">PARLAY ODDS</div>
+                            <div style="font-size: 16px; font-weight: 700; color: white;">${analysis.parlayOdds > 0 ? '+' : ''}${analysis.parlayOdds}</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 9px; color: #888;">PARLAY EV</div>
+                            <div style="font-size: 16px; font-weight: 700; color: ${analysis.parlayEV > 0 ? '#00ff88' : '#ff6b6b'};">${analysis.parlayEV > 0 ? '+' : ''}${analysis.parlayEV.toFixed(1)}%</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 9px; color: #888;">$100 PAYS</div>
+                            <div style="font-size: 16px; font-weight: 700; color: #FFD700;">$${analysis.payout100.toFixed(0)}</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Legs -->
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                        ${legsHtml}
+                    </div>
+                    
+                    ${corrHtml}
+                    ${bookRoutingHtml}
+                    ${optimizerHtml}
+                    
+                    <!-- Straight vs Parlay Comparison -->
+                    <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1); display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                        <div style="background: rgba(0,255,136,0.08); border: 1px solid rgba(0,255,136,0.2); border-radius: 6px; padding: 8px; text-align: center;">
+                            <div style="font-size: 9px; color: #888;">STRAIGHT BETS EV</div>
+                            <div style="font-size: 14px; font-weight: 700; color: ${analysis.straightBetsEV > 0 ? '#00ff88' : '#ff6b6b'};">${analysis.straightBetsEV > 0 ? '+' : ''}${analysis.straightBetsEV.toFixed(2)}%</div>
+                            <div style="font-size: 9px; color: #888;">avg per bet</div>
+                        </div>
+                        <div style="background: ${analysis.parlayEV > analysis.straightBetsEV ? 'rgba(0,255,136,0.08)' : 'rgba(255,100,100,0.08)'}; border: 1px solid ${analysis.parlayEV > analysis.straightBetsEV ? 'rgba(0,255,136,0.2)' : 'rgba(255,100,100,0.2)'}; border-radius: 6px; padding: 8px; text-align: center;">
+                            <div style="font-size: 9px; color: #888;">PARLAY EV</div>
+                            <div style="font-size: 14px; font-weight: 700; color: ${analysis.parlayEV > 0 ? '#00ff88' : '#ff6b6b'};">${analysis.parlayEV > 0 ? '+' : ''}${analysis.parlayEV.toFixed(2)}%</div>
+                            <div style="font-size: 9px; color: #888;">${analysis.parlayEV > analysis.straightBetsEV ? '✅ Parlay is better' : '⚠️ Straights are better'}</div>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 10px; font-size: 9px; color: #666; text-align: center;">
+                        ${slip.length >= 2 ? `Parlay confidence: ${analysis.confidenceRating}` : 'Add more legs for full analysis'}
+                    </div>
+                </div>`;
+        }
+        
+        function clearParlay() {
+            scannerState.parlaySlip = [];
+            updateParlayButton();
+            renderParlayPanel();
+        }
+        
+        // ═══ PARLAY ANALYSIS ENGINE ═══
+        function analyzeParlaySlip(slip) {
+            const legProbs = [];
+            const legAnalyses = [];
+            const legOdds = [];
+            
+            // Step 1: Calculate individual leg probabilities
+            slip.forEach(leg => {
+                const odds = leg.direction === 'OVER' ? (leg.bestOverPrice || leg.overOdds || -110) : (leg.bestUnderPrice || leg.underOdds || -110);
+                const impliedProb = oddsToProb(parseInt(odds) || -110);
+                
+                // Adjust implied prob by tier quality
+                const tierBonus = {diamond: 6, lock: 4, high: 2, streak: 1, manual: 0, monitor: -2}[leg.estimatedTier] || 0;
+                const trueProb = Math.max(10, Math.min(95, impliedProb + tierBonus));
+                
+                legProbs.push(trueProb);
+                legOdds.push(parseInt(odds) || -110);
+                legAnalyses.push({impliedProb, trueProb, odds, dropEV: null});
+            });
+            
+            // Step 2: Combined parlay probability (independent)
+            const trueProbDecimal = legProbs.reduce((acc, p) => acc * (p / 100), 1);
+            const trueProb = trueProbDecimal * 100;
+            
+            // Step 3: Calculate parlay odds
+            let parlayMultiplier = 1;
+            legOdds.forEach(o => {
+                const decimal = o > 0 ? (o / 100 + 1) : (100 / Math.abs(o) + 1);
+                parlayMultiplier *= decimal;
+            });
+            const parlayOdds = parlayMultiplier >= 2 ? Math.round((parlayMultiplier - 1) * 100) : Math.round(-100 / (parlayMultiplier - 1));
+            const payout100 = parlayMultiplier * 100;
+            
+            // Step 4: Parlay EV = (trueProb * payout) - (1 - trueProb) * stake
+            const parlayEV = (trueProbDecimal * (parlayMultiplier - 1) - (1 - trueProbDecimal)) * 100;
+            
+            // Step 5: Straight bets EV (average)
+            let totalStraightEV = 0;
+            legProbs.forEach((prob, i) => {
+                const decimal = legOdds[i] > 0 ? (legOdds[i] / 100) : (100 / Math.abs(legOdds[i]));
+                const ev = (prob / 100) * decimal - (1 - prob / 100);
+                totalStraightEV += ev;
+            });
+            const straightBetsEV = slip.length > 0 ? (totalStraightEV / slip.length) * 100 : 0;
+            
+            // Step 6: Leg removal analysis — what happens if you drop each leg?
+            let bestDropLeg = null;
+            let bestDropDelta = -Infinity;
+            
+            if (slip.length >= 3) {
+                slip.forEach((_, i) => {
+                    const remainingProbs = legProbs.filter((_, j) => j !== i);
+                    const remainingOdds = legOdds.filter((_, j) => j !== i);
+                    
+                    const dropProbDecimal = remainingProbs.reduce((acc, p) => acc * (p / 100), 1);
+                    let dropMultiplier = 1;
+                    remainingOdds.forEach(o => {
+                        const d = o > 0 ? (o / 100 + 1) : (100 / Math.abs(o) + 1);
+                        dropMultiplier *= d;
+                    });
+                    const dropEV = (dropProbDecimal * (dropMultiplier - 1) - (1 - dropProbDecimal)) * 100;
+                    
+                    legAnalyses[i].dropEV = dropEV;
+                    
+                    const delta = dropEV - parlayEV;
+                    if (delta > bestDropDelta) {
+                        bestDropDelta = delta;
+                        bestDropLeg = i;
+                    }
+                });
+            }
+            
+            // Step 7: Correlation detection — same game, same player, related markets
+            const correlations = [];
+            for (let i = 0; i < slip.length; i++) {
+                for (let j = i + 1; j < slip.length; j++) {
+                    const a = slip[i], b = slip[j];
+                    
+                    // Same event
+                    const sameEvent = a.eventId && b.eventId && a.eventId === b.eventId;
+                    const sameEventName = a.event && b.event && a.event === b.event;
+                    
+                    // Same player
+                    const samePlayer = a.player && b.player && a.player.toLowerCase() === b.player.toLowerCase();
+                    
+                    if (samePlayer) {
+                        correlations.push({
+                            legA: i, legB: j,
+                            severity: 'high',
+                            reason: `⚠️ Same player: ${a.player} appears in Leg ${i+1} (${a.market}) and Leg ${j+1} (${b.market}) — stats are heavily correlated`
+                        });
+                    } else if (sameEvent || sameEventName) {
+                        correlations.push({
+                            legA: i, legB: j,
+                            severity: 'medium',
+                            reason: `⚠️ Same game: Leg ${i+1} (${a.player}) and Leg ${j+1} (${b.player}) are in the same game — game flow creates correlation`
+                        });
+                    }
+                }
+            }
+            
+            // Step 8: Best book routing
+            const bookCoverage = {};
+            slip.forEach((leg, i) => {
+                if (leg.bookPrices) {
+                    leg.bookPrices.forEach(bp => {
+                        const bk = bp.bookKey || bp.book?.toLowerCase().replace(/\s/g, '') || 'unknown';
+                        if (!bookCoverage[bk]) bookCoverage[bk] = {book: bp.book || bk, legs: [], totalOdds: 1};
+                        bookCoverage[bk].legs.push({idx: i, player: leg.player, odds: bp.overPrice || bp.price || -110});
+                    });
+                }
+            });
+            
+            let bestSingleBook = null;
+            const bookRouting = Object.values(bookCoverage)
+                .sort((a, b) => b.legs.length - a.legs.length)
+                .slice(0, 5);
+            
+            // Find a book that has all legs
+            const fullCoverageBook = bookRouting.find(b => b.legs.length >= slip.length);
+            if (fullCoverageBook) {
+                let combinedMult = 1;
+                fullCoverageBook.legs.forEach(l => {
+                    const o = parseInt(l.odds) || -110;
+                    combinedMult *= o > 0 ? (o / 100 + 1) : (100 / Math.abs(o) + 1);
+                });
+                const combinedOdds = combinedMult >= 2 ? Math.round((combinedMult - 1) * 100) : Math.round(-100 / (combinedMult - 1));
+                bestSingleBook = {name: fullCoverageBook.book, allLegs: true, combinedOdds};
+            } else if (bookRouting.length > 0) {
+                bestSingleBook = {name: bookRouting[0].book, allLegs: false, legCount: bookRouting[0].legs.length};
+            }
+            
+            // Confidence rating
+            let confidenceRating = '⚠️ Low';
+            if (trueProb > 20 && parlayEV > 0 && correlations.length === 0) confidenceRating = '🟢 Strong';
+            else if (trueProb > 10 && parlayEV > -5) confidenceRating = '🟡 Moderate';
+            else if (correlations.length > 0) confidenceRating = '🔴 Correlated — risky';
+            
+            return {
+                legProbs,
+                legAnalyses,
+                trueProb,
+                parlayOdds,
+                parlayEV,
+                payout100,
+                straightBetsEV,
+                correlations,
+                bestSingleBook,
+                bookRouting,
+                bestDropLeg,
+                bestDropDelta: bestDropDelta === -Infinity ? 0 : bestDropDelta,
+                confidenceRating
+            };
         }
         
         function hideResult(resultId) {
@@ -36263,6 +36740,7 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                         Score: ${result.score}/100 • ${result.signals.slice(0, 2).join(' • ')}
                     </div>
                     <div style="font-size: 10px; display: flex; gap: 6px; align-items: center;">
+                        <button onclick="event.stopPropagation(); addScannerToParlay('${(result.id || (result.player + '_' + result.market + '_' + result.line)).replace(/'/g, '')}')" style="background: rgba(255,215,0,0.15); color: #FFD700; border: 1px solid rgba(255,215,0,0.3); border-radius: 3px; padding: 1px 6px; font-size: 9px; cursor: pointer; font-weight: 600;" title="Add to parlay slip">+ Parlay</button>
                         ${result.commenceTime ? `<span style="color: #aaa;">📅 ${new Date(result.commenceTime).toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'})} ${new Date(result.commenceTime).toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'})}</span>` : ''}
                         ${result.overOdds && result.underOdds && result.overOdds !== result.underOdds ? `<span style="color: #00ff88; font-weight: 600;">O${result.overOdds > 0 ? '+' : ''}${result.overOdds}</span><span style="color: #666;">/</span><span style="color: #ff6b6b; font-weight: 600;">U${result.underOdds > 0 ? '+' : ''}${result.underOdds}</span>` : result.overOdds ? `<span style="color: #f4c430; font-weight: 600;">${result.overOdds > 0 ? '+' : ''}${result.overOdds}</span>` : ''}
                     </div>
