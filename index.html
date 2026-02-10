@@ -13766,18 +13766,40 @@ Return ONLY valid JSON:
             const middles = [];
             
             // V34: BOOK WHITELIST — Only detect arbs from books in our SPORTSBOOKS registry
-            // Odds API returns books like PointsBet AU, Ladbrokes, SportsBet, etc. 
-            // that aren't in our registry → filter them out before comparison
+            // V47: Enhanced name matching with alias map for API name variants
+            const BOOK_ALIASES = {
+                'lowvig.ag': 'lowvig', 'betonline.ag': 'betonlineag', 'mybookie.ag': 'mybookieag',
+                'betanything': 'betanysports', 'gtbets': 'lowvig', 
+                'sportsbet': 'sportsbet', 'pointsbet (au)': 'pointsbetau',
+                'codere (it)': 'codere', '888sport': 'sport888',
+                'playup': 'playup', 'casumo': 'casumo', 'tabtouch': 'tabtouch',
+                'unibet (se)': 'leovegas_se', 'unibet (nl)': 'unibet_eu',
+                'grosvenor': 'grosvenor', 'leovegas (se)': 'leovegas_se',
+                'virgin bet': 'virginbet', 'livescore bet': 'livescorebet',
+                'tab': 'tab', 'ladbrokes': 'ladbrokes_uk', 'coral': 'coral',
+                'thescore bet': 'espnbet', 'caesars': 'williamhill_us',
+                'hard rock bet': 'hardrockbet', 'william hill (us)': 'williamhill_us',
+                'leovegas': 'leovegas', 'betparx': 'betparx', 'bet365': 'bet365'
+            };
             const registeredNames = new Set(Object.values(SPORTSBOOKS).map(b => b.name));
             const entries = Object.entries(lines).filter(([bookName]) => {
                 if (registeredNames.has(bookName)) return true;
-                // Also check by key match (some entries use key instead of display name)
+                // Check by key match
                 const keyMatch = Object.keys(SPORTSBOOKS).some(k => 
                     k.toLowerCase() === bookName.toLowerCase() || 
                     SPORTSBOOKS[k].name.toLowerCase() === bookName.toLowerCase()
                 );
-                if (!keyMatch) console.log(`🚫 V34 Arb filter: Skipping unregistered book "${bookName}"`);
-                return keyMatch;
+                if (keyMatch) return true;
+                // V47: Check aliases
+                const aliasKey = BOOK_ALIASES[bookName.toLowerCase()];
+                if (aliasKey && SPORTSBOOKS[aliasKey]) return true;
+                // Only log once per book name per session
+                if (!window._loggedUnreg) window._loggedUnreg = new Set();
+                if (!window._loggedUnreg.has(bookName)) {
+                    console.log(`🚫 V34 Arb filter: Skipping unregistered book "${bookName}"`);
+                    window._loggedUnreg.add(bookName);
+                }
+                return false;
             });
             
             const toProb = (americanOdds) => {
@@ -28642,6 +28664,175 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
             displayResults(results);
         }
         
+        // ═══════════════════════════════════════════════════════════════════
+        // V47: LOCAL AI ENGINE ANALYSIS FUNCTION
+        // Called when proxy is not configured OR when proxy returns errors
+        // Uses BDL data, scanner odds, mathematical models for engine votes
+        // ═══════════════════════════════════════════════════════════════════
+        function runLocalAIEngines(player, market, line, seasonAvg, l10Avg, l5Avg, hitRate, overOdds, underOdds, isHome, restDays, playerData, engines) {
+            console.log(`\n🧠 V47 LOCAL AI ANALYSIS: Using mathematical models`);
+            console.log(`   Player: ${player} | Market: ${market} | Line: ${line}`);
+            
+            // V47: Safety — ensure all stats are valid numbers
+            seasonAvg = parseFloat(seasonAvg) || line || 0;
+            l10Avg = parseFloat(l10Avg) || seasonAvg;
+            l5Avg = parseFloat(l5Avg) || l10Avg;
+            hitRate = parseFloat(hitRate) || 0.5;
+            line = parseFloat(line) || 0;
+            if (isNaN(hitRate) || hitRate <= 0 || hitRate >= 1) hitRate = 0.5;
+            
+            console.log(`   Season: ${seasonAvg}, L10: ${l10Avg}, L5: ${l5Avg}, HitRate: ${(hitRate * 100).toFixed(0)}%`);
+            
+            const hasRealData = !!playerData;
+            const overOddsNum = parseInt(overOdds) || -110;
+            const underOddsNum = parseInt(underOdds) || -110;
+            const impliedOver = oddsToProb(overOddsNum);
+            const impliedUnder = oddsToProb(underOddsNum);
+            
+            const scannerEntry = scannerState.entryPoint === 'scanner' ? scannerState.results?.find(r =>
+                r.player === player && r.market?.toLowerCase().includes(market?.toLowerCase().substring(0, 4))
+            ) : null;
+            const bookPrices = scannerEntry?.bookPrices || [];
+            const pinnacleEntry = bookPrices.find(b => b.bookKey === 'pinnacle');
+            
+            function genVote(engineId, sAvg, l10, l5, hr, ln, impl_o, impl_u) {
+                const methods = {
+                    'claude': () => {
+                        const proj = l5 * 0.45 + l10 * 0.35 + sAvg * 0.20;
+                        const diff = proj - ln;
+                        const vote = diff > 0.3 ? 'OVER' : diff < -0.3 ? 'UNDER' : (hr > 0.52 ? 'OVER' : 'UNDER');
+                        const conf = Math.min(92, Math.max(52, 55 + Math.abs(diff) * 8 + (hasRealData ? 10 : 0)));
+                        return { vote, confidence: Math.round(conf), reason: `Projection ${proj.toFixed(1)} vs line ${ln} (${diff > 0 ? '+' : ''}${diff.toFixed(1)})`, trueProb: vote === 'OVER' ? Math.min(0.88, Math.max(0.15, 0.5 + diff * 0.06)) : Math.min(0.88, Math.max(0.15, 0.5 - diff * 0.06)) };
+                    },
+                    'openai': () => {
+                        const recentProj = l5 * 0.70 + l10 * 0.30;
+                        const diff = recentProj - ln;
+                        const vote = diff > 0.2 ? 'OVER' : diff < -0.2 ? 'UNDER' : (sAvg > ln ? 'OVER' : 'UNDER');
+                        const conf = Math.min(90, Math.max(50, 54 + Math.abs(diff) * 7));
+                        return { vote, confidence: Math.round(conf), reason: `Recent trend: L5 avg ${l5.toFixed(1)}, L10 avg ${l10.toFixed(1)}`, trueProb: vote === 'OVER' ? Math.min(0.85, Math.max(0.18, 0.5 + diff * 0.055)) : Math.min(0.85, Math.max(0.18, 0.5 - diff * 0.055)) };
+                    },
+                    'perplexity': () => {
+                        const vote = hr >= 0.55 ? 'OVER' : hr <= 0.45 ? 'UNDER' : (l5 > ln ? 'OVER' : 'UNDER');
+                        let conf = Math.round(Math.max(50, Math.min(88, hr * 100 + 5)));
+                        let reason = `Hit rate: ${(hr * 100).toFixed(0)}%`;
+                        if (pinnacleEntry) { reason += ` | Pinnacle: ${pinnacleEntry.line}`; conf = Math.min(90, conf + 3); }
+                        return { vote, confidence: conf, reason, trueProb: vote === 'OVER' ? Math.min(0.85, Math.max(0.2, hr + 0.02)) : Math.min(0.85, Math.max(0.2, (1 - hr) + 0.02)) };
+                    },
+                    'cohere': () => {
+                        const modelProb = 0.5 + (sAvg - ln) * 0.04 + (hr - 0.5) * 0.3;
+                        const overEdge = modelProb - impl_o / 100;
+                        const vote = overEdge > 0.02 ? 'OVER' : overEdge < -0.02 ? 'UNDER' : (l5 > ln ? 'OVER' : 'UNDER');
+                        const conf = Math.min(87, Math.max(50, 55 + Math.abs(overEdge) * 200));
+                        return { vote, confidence: Math.round(conf), reason: `Market efficiency: ${(overEdge * 100).toFixed(1)}% edge`, trueProb: Math.min(0.85, Math.max(0.18, modelProb)) };
+                    },
+                    'youcom': () => {
+                        const momentum = l5 - l10;
+                        const vote = (momentum > 0.3 && l5 > ln) ? 'OVER' : (momentum < -0.3 && l5 < ln) ? 'UNDER' : (sAvg > ln ? 'OVER' : 'UNDER');
+                        const conf = Math.min(85, Math.max(48, 52 + Math.abs(momentum) * 6));
+                        return { vote, confidence: Math.round(conf), reason: `Momentum: ${momentum > 0 ? '📈 Up' : '📉 Down'} (${momentum > 0 ? '+' : ''}${momentum.toFixed(1)})`, trueProb: vote === 'OVER' ? Math.min(0.82, Math.max(0.2, 0.5 + momentum * 0.04)) : Math.min(0.82, Math.max(0.2, 0.5 - momentum * 0.04)) };
+                    },
+                    'deepseek': () => {
+                        const proj = sAvg * 0.30 + l10 * 0.35 + l5 * 0.35;
+                        const variance = Math.abs(l5 - l10) + Math.abs(l10 - sAvg);
+                        const diff = proj - ln;
+                        const vote = diff > 0 ? 'OVER' : 'UNDER';
+                        const conf = Math.min(89, Math.max(45, 58 + Math.abs(diff) * 6 - variance * 1.5));
+                        return { vote, confidence: Math.round(conf), reason: `Weighted proj: ${proj.toFixed(1)} (±${variance.toFixed(1)})`, trueProb: vote === 'OVER' ? Math.min(0.87, Math.max(0.15, 0.5 + diff * 0.05)) : Math.min(0.87, Math.max(0.15, 0.5 - diff * 0.05)) };
+                    },
+                    'grok': () => {
+                        const statsDir = l5 > ln ? 'OVER' : 'UNDER';
+                        const booksDir = impl_o < impl_u ? 'OVER' : 'UNDER';
+                        const disagree = statsDir !== booksDir;
+                        const vote = disagree ? statsDir : (hr > 0.5 ? 'OVER' : 'UNDER');
+                        const conf = Math.min(84, Math.max(48, disagree ? 60 + Math.abs(l5 - ln) * 4 : 55));
+                        return { vote, confidence: Math.round(conf), reason: disagree ? `⚡ Contrarian: stats=${statsDir}, books=${booksDir}` : `Aligned on ${vote}`, trueProb: vote === 'OVER' ? Math.min(0.82, Math.max(0.2, hr + 0.03)) : Math.min(0.82, Math.max(0.2, 1 - hr + 0.03)) };
+                    },
+                    'mistral': () => {
+                        if (pinnacleEntry) {
+                            const pinLine = parseFloat(pinnacleEntry.line) || ln;
+                            const pinDiff = pinLine - ln;
+                            const vote = pinDiff > 0.3 ? 'UNDER' : pinDiff < -0.3 ? 'OVER' : (l5 > ln ? 'OVER' : 'UNDER');
+                            const conf = Math.min(88, Math.max(55, 62 + Math.abs(pinDiff) * 8));
+                            return { vote, confidence: Math.round(conf), reason: `📌 Pinnacle ${pinLine} vs ${ln} (${pinDiff > 0 ? '+' : ''}${pinDiff.toFixed(1)})`, trueProb: vote === 'OVER' ? Math.min(0.85, Math.max(0.18, 0.5 - pinDiff * 0.06)) : Math.min(0.85, Math.max(0.18, 0.5 + pinDiff * 0.06)) };
+                        }
+                        const proj = l10 * 0.5 + sAvg * 0.5;
+                        const diff = proj - ln;
+                        const vote = diff > 0 ? 'OVER' : 'UNDER';
+                        return { vote, confidence: Math.min(78, Math.max(50, 55 + Math.abs(diff) * 5)), reason: `L10/season blend: ${proj.toFixed(1)}`, trueProb: vote === 'OVER' ? Math.min(0.80, Math.max(0.22, 0.5 + diff * 0.04)) : Math.min(0.80, Math.max(0.22, 0.5 - diff * 0.04)) };
+                    },
+                    'gemini': () => {
+                        let bonus = 0, reason = '';
+                        if (isHome !== undefined) { bonus = isHome ? 0.5 : -0.3; reason = isHome ? '🏠 Home' : '✈️ Away'; }
+                        if (restDays !== undefined && restDays >= 2) { bonus += 0.3; reason += ` +${restDays}d rest`; }
+                        const adj = l5 + bonus;
+                        const diff = adj - ln;
+                        const vote = diff > 0 ? 'OVER' : 'UNDER';
+                        return { vote, confidence: Math.round(Math.min(86, Math.max(50, 56 + Math.abs(diff) * 5))), reason: reason || `Adj: ${adj.toFixed(1)} vs ${ln}`, trueProb: vote === 'OVER' ? Math.min(0.84, Math.max(0.18, 0.5 + diff * 0.05)) : Math.min(0.84, Math.max(0.18, 0.5 - diff * 0.05)) };
+                    },
+                    'together': () => {
+                        const proj = l5 * 0.4 + l10 * 0.3 + sAvg * 0.3;
+                        const diff = proj - ln;
+                        const combined = diff * 0.06 + (hr - 0.5) * 0.3;
+                        const vote = combined > 0 ? 'OVER' : 'UNDER';
+                        const conf = Math.min(91, Math.max(52, 58 + Math.abs(combined) * 60));
+                        return { vote, confidence: Math.round(conf), reason: `Meta-analysis: proj ${proj.toFixed(1)}, ${bookPrices.length} books`, trueProb: vote === 'OVER' ? Math.min(0.88, Math.max(0.15, 0.5 + combined)) : Math.min(0.88, Math.max(0.15, 0.5 - combined)) };
+                    }
+                };
+                return methods[engineId] ? methods[engineId]() : { vote: 'OVER', confidence: 50, reason: 'Default', trueProb: 0.5 };
+            }
+            
+            const localEngines = {};
+            let overVotes = 0, underVotes = 0;
+            AI_ENGINES.forEach(e => {
+                try {
+                    const r = genVote(e.id, seasonAvg, l10Avg, l5Avg, hitRate, line, impliedOver, impliedUnder);
+                    localEngines[e.id] = { vote: r.vote, confidence: r.confidence, reason: `🧮 ${r.reason}`, isLive: true, isLocal: true, trueProb: r.trueProb, fairOdds: r.trueProb ? probToOdds(r.trueProb * 100) : null };
+                    if (r.vote === 'OVER') overVotes++; else underVotes++;
+                    console.log(`   ${e.icon} ${e.name}: ${r.vote} @ ${r.confidence}% — ${r.reason}`);
+                } catch (err) {
+                    localEngines[e.id] = { vote: '--', confidence: 0, reason: `⚠️ Error: ${err.message}`, isLive: false };
+                }
+            });
+            console.log(`\n🧠 V47 LOCAL: ${overVotes} OVER / ${underVotes} UNDER`);
+            Object.assign(engines, localEngines);
+            
+            setTimeout(() => {
+                if (state.lastAnalysisResult) {
+                    state.lastAnalysisResult.engines = localEngines;
+                    
+                    // Blend local trueProb into results
+                    let tpSum = 0, tpWeight = 0;
+                    AI_ENGINES.forEach(e => {
+                        const eng = localEngines[e.id];
+                        if (eng?.isLive && eng?.trueProb > 0 && eng.trueProb < 1) {
+                            tpSum += eng.trueProb * e.weight;
+                            tpWeight += e.weight;
+                        }
+                    });
+                    if (tpWeight > 0.2) {
+                        const aiProb = (tpSum / tpWeight) * 100;
+                        const calProb = parseFloat(state.lastAnalysisResult.over?.trueProb || 50);
+                        const blended = calProb * 0.60 + aiProb * 0.40;
+                        state.lastAnalysisResult.over.trueProb = blended.toFixed(1);
+                        state.lastAnalysisResult.over.feelOdds = probToOdds(blended);
+                        state.lastAnalysisResult.under.trueProb = (100 - blended).toFixed(1);
+                        state.lastAnalysisResult.under.feelOdds = probToOdds(100 - blended);
+                        state.lastAnalysisResult.blendMeta = { method: 'local_v47', calProb, aiProb: aiProb.toFixed(1), aiWeight: 0.40, calWeight: 0.60, enginesLive: Object.values(localEngines).filter(e => e.isLive).length, isLocal: true };
+                        console.log(`🧠 V47 Blend: ${blended.toFixed(1)}% OVER (cal=${calProb.toFixed(1)}, ai=${aiProb.toFixed(1)})`);
+                    }
+                    
+                    renderAIEngines(state.lastAnalysisResult);
+                    displayResults(state.lastAnalysisResult);
+                    
+                    const aiTitle = document.querySelector('.ai-panel-title');
+                    if (aiTitle) {
+                        const lc = Object.values(localEngines).filter(e => e.isLive).length;
+                        aiTitle.innerHTML = `10 AI ENGINE VOTES <span style="background: #f4c430; color: #000; padding: 2px 8px; border-radius: 4px; font-size: 10px; margin-left: 8px; font-weight: bold;">🧮 ${lc} LOCAL</span>`;
+                    }
+                }
+            }, 200);
+        }
+        
         function generateBothSidesAnalysis(player, market, line, overOdds, underOdds, playerData = null) {
             // V8: Use real data if available from playerData
             let seasonAvg, l10Avg, l5Avg, hitRate, defenseGrade, isHome, restDays, usagePct;
@@ -29376,243 +29567,24 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                                 }
                             }
                         } else {
-                            console.log('⚠️ No AI engine data returned from proxy');
+                            console.log('⚠️ No AI engine data returned from proxy — falling back to local analysis');
                             const banner = document.getElementById('ai-loading-banner');
                             if (banner) banner.remove();
+                            // V47: Fall back to local engines
+                            runLocalAIEngines(player, market, line, seasonAvg, l10Avg, l5Avg, hitRate, overOdds, underOdds, isHome, restDays, playerData, engines);
                         }
                     })
                     .catch(err => {
-                        console.log('⚠️ AI engine calls failed:', err.message);
+                        console.log('⚠️ AI engine calls failed:', err.message, '— falling back to local analysis');
                         const banner = document.getElementById('ai-loading-banner');
                         if (banner) banner.remove();
+                        // V47: Fall back to local engines
+                        runLocalAIEngines(player, market, line, seasonAvg, l10Avg, l5Avg, hitRate, overOdds, underOdds, isHome, restDays, playerData, engines);
                     });
             } else {
-                // ═══════════════════════════════════════════════════════════════════
-                // V47: LOCAL AI ENGINE ANALYSIS — No proxy required
-                // Uses real BDL data, scanner odds, mathematical models to generate
-                // data-driven engine votes instead of showing permanent "Waiting..."
-                // ═══════════════════════════════════════════════════════════════════
-                console.log(`\n🧠 V47 LOCAL AI ANALYSIS: No proxy — using mathematical models`);
-                console.log(`   Player: ${player} | Market: ${market} | Line: ${line}`);
-                console.log(`   Season: ${seasonAvg}, L10: ${l10Avg}, L5: ${l5Avg}, HitRate: ${(hitRate * 100).toFixed(0)}%`);
-                
-                // Core inputs for local analysis
-                const hasRealData = !!playerData;
-                const overOddsNum = parseInt(overOdds) || -110;
-                const underOddsNum = parseInt(underOdds) || -110;
-                const impliedOver = oddsToProb(overOddsNum);
-                const impliedUnder = oddsToProb(underOddsNum);
-                
-                // Scanner-derived data
-                const scannerEntry = scannerState.entryPoint === 'scanner' ? scannerState.results?.find(r => 
-                    r.player === player && r.market?.toLowerCase().includes(market?.toLowerCase().substring(0, 4))
-                ) : null;
-                const bookPrices = scannerEntry?.bookPrices || [];
-                const arbPct = scannerEntry?.arbPct || 0;
-                const pinnacleEntry = bookPrices.find(b => b.bookKey === 'pinnacle');
-                
-                // Helper: Generate individual engine vote based on different analysis methods
-                function generateLocalVote(engineId, sAvg, l10, l5, hr, ln, impl_o, impl_u) {
-                    const methods = {
-                        'claude': () => {
-                            // Statistical edge — compare projection vs line
-                            const proj = l5 * 0.45 + l10 * 0.35 + sAvg * 0.20;
-                            const diff = proj - ln;
-                            const vote = diff > 0.3 ? 'OVER' : diff < -0.3 ? 'UNDER' : (hr > 0.52 ? 'OVER' : 'UNDER');
-                            const conf = Math.min(92, Math.max(52, 55 + Math.abs(diff) * 8 + (hasRealData ? 10 : 0)));
-                            const trueProb = vote === 'OVER' ? Math.min(0.88, Math.max(0.15, 0.5 + diff * 0.06)) : Math.min(0.88, Math.max(0.15, 0.5 - diff * 0.06));
-                            return { vote, confidence: Math.round(conf), reason: `Projection ${proj.toFixed(1)} vs line ${ln} (${diff > 0 ? '+' : ''}${diff.toFixed(1)})`, trueProb };
-                        },
-                        'openai': () => {
-                            // Recency-weighted — heavily favor L5
-                            const recentProj = l5 * 0.70 + l10 * 0.30;
-                            const diff = recentProj - ln;
-                            const vote = diff > 0.2 ? 'OVER' : diff < -0.2 ? 'UNDER' : (sAvg > ln ? 'OVER' : 'UNDER');
-                            const conf = Math.min(90, Math.max(50, 54 + Math.abs(diff) * 7));
-                            const trueProb = vote === 'OVER' ? Math.min(0.85, Math.max(0.18, 0.5 + diff * 0.055)) : Math.min(0.85, Math.max(0.18, 0.5 - diff * 0.055));
-                            return { vote, confidence: Math.round(conf), reason: `Recent trend: L5 avg ${l5.toFixed(1)}, L10 avg ${l10.toFixed(1)}`, trueProb };
-                        },
-                        'perplexity': () => {
-                            // Hit rate + sharp alignment
-                            const vote = hr >= 0.55 ? 'OVER' : hr <= 0.45 ? 'UNDER' : (l5 > ln ? 'OVER' : 'UNDER');
-                            let conf = Math.round(Math.max(50, Math.min(88, hr * 100 + 5)));
-                            let reason = `Hit rate: ${(hr * 100).toFixed(0)}% (${Math.round(hr * 10)}/10 recent games)`;
-                            if (pinnacleEntry) {
-                                reason += ` | Pinnacle line: ${pinnacleEntry.line}`;
-                                conf = Math.min(90, conf + 3);
-                            }
-                            const trueProb = vote === 'OVER' ? Math.min(0.85, Math.max(0.2, hr + 0.02)) : Math.min(0.85, Math.max(0.2, (1 - hr) + 0.02));
-                            return { vote, confidence: conf, reason, trueProb };
-                        },
-                        'cohere': () => {
-                            // Market efficiency — compare implied probability to model
-                            const modelProb = 0.5 + (sAvg - ln) * 0.04 + (hr - 0.5) * 0.3;
-                            const overEdge = modelProb - impl_o / 100;
-                            const vote = overEdge > 0.02 ? 'OVER' : overEdge < -0.02 ? 'UNDER' : (l5 > ln ? 'OVER' : 'UNDER');
-                            const conf = Math.min(87, Math.max(50, 55 + Math.abs(overEdge) * 200));
-                            return { vote, confidence: Math.round(conf), reason: `Market efficiency: ${(overEdge * 100).toFixed(1)}% edge vs implied`, trueProb: Math.min(0.85, Math.max(0.18, modelProb)) };
-                        },
-                        'youcom': () => {
-                            // Momentum model — L5 trend direction
-                            const momentum = l5 - l10;
-                            const vote = (momentum > 0.3 && l5 > ln) ? 'OVER' : (momentum < -0.3 && l5 < ln) ? 'UNDER' : (sAvg > ln ? 'OVER' : 'UNDER');
-                            const conf = Math.min(85, Math.max(48, 52 + Math.abs(momentum) * 6));
-                            return { vote, confidence: Math.round(conf), reason: `Momentum: ${momentum > 0 ? '📈 Trending up' : '📉 Trending down'} (L5-L10: ${momentum > 0 ? '+' : ''}${momentum.toFixed(1)})`, trueProb: vote === 'OVER' ? Math.min(0.82, Math.max(0.2, 0.5 + momentum * 0.04)) : Math.min(0.82, Math.max(0.2, 0.5 - momentum * 0.04)) };
-                        },
-                        'deepseek': () => {
-                            // Statistical model — weighted projection with variance
-                            const proj = sAvg * 0.30 + l10 * 0.35 + l5 * 0.35;
-                            const variance = Math.abs(l5 - l10) + Math.abs(l10 - sAvg);
-                            const diff = proj - ln;
-                            const vote = diff > 0 ? 'OVER' : 'UNDER';
-                            const conf = Math.min(89, Math.max(45, 58 + Math.abs(diff) * 6 - variance * 1.5));
-                            return { vote, confidence: Math.round(conf), reason: `Weighted proj: ${proj.toFixed(1)} (±${variance.toFixed(1)} variance)`, trueProb: vote === 'OVER' ? Math.min(0.87, Math.max(0.15, 0.5 + diff * 0.05)) : Math.min(0.87, Math.max(0.15, 0.5 - diff * 0.05)) };
-                        },
-                        'grok': () => {
-                            // Contrarian signal — when books and stats disagree
-                            const statsDir = l5 > ln ? 'OVER' : 'UNDER';
-                            const booksDir = impl_o < impl_u ? 'OVER' : 'UNDER';
-                            const disagree = statsDir !== booksDir;
-                            const vote = disagree ? statsDir : (hr > 0.5 ? 'OVER' : 'UNDER');
-                            const conf = Math.min(84, Math.max(48, disagree ? 60 + Math.abs(l5 - ln) * 4 : 55));
-                            return { vote, confidence: Math.round(conf), reason: disagree ? `⚡ Contrarian: stats say ${statsDir} but books imply ${booksDir}` : `Stats & books aligned on ${vote}`, trueProb: vote === 'OVER' ? Math.min(0.82, Math.max(0.2, hr + 0.03)) : Math.min(0.82, Math.max(0.2, 1 - hr + 0.03)) };
-                        },
-                        'mistral': () => {
-                            // Sharp money model — Pinnacle reference
-                            if (pinnacleEntry) {
-                                const pinLine = parseFloat(pinnacleEntry.line) || ln;
-                                const pinDiff = pinLine - ln;
-                                const vote = pinDiff > 0.3 ? 'UNDER' : pinDiff < -0.3 ? 'OVER' : (l5 > ln ? 'OVER' : 'UNDER');
-                                const conf = Math.min(88, Math.max(55, 62 + Math.abs(pinDiff) * 8));
-                                return { vote, confidence: Math.round(conf), reason: `📌 Pinnacle line ${pinLine} vs consensus ${ln} (${pinDiff > 0 ? '+' : ''}${pinDiff.toFixed(1)})`, trueProb: vote === 'OVER' ? Math.min(0.85, Math.max(0.18, 0.5 - pinDiff * 0.06)) : Math.min(0.85, Math.max(0.18, 0.5 + pinDiff * 0.06)) };
-                            }
-                            const proj = l10 * 0.5 + sAvg * 0.5;
-                            const diff = proj - ln;
-                            const vote = diff > 0 ? 'OVER' : 'UNDER';
-                            return { vote, confidence: Math.min(78, Math.max(50, 55 + Math.abs(diff) * 5)), reason: `No Pinnacle data — using L10/season blend: ${proj.toFixed(1)}`, trueProb: vote === 'OVER' ? Math.min(0.80, Math.max(0.22, 0.5 + diff * 0.04)) : Math.min(0.80, Math.max(0.22, 0.5 - diff * 0.04)) };
-                        },
-                        'gemini': () => {
-                            // Matchup + home/away context
-                            let bonus = 0;
-                            let reason = '';
-                            if (isHome !== undefined) {
-                                bonus = isHome ? 0.5 : -0.3;
-                                reason = isHome ? '🏠 Home advantage' : '✈️ Away game';
-                            }
-                            if (restDays !== undefined && restDays >= 2) {
-                                bonus += 0.3;
-                                reason += (reason ? ' + ' : '') + `${restDays} rest days`;
-                            }
-                            const adj = l5 + bonus;
-                            const diff = adj - ln;
-                            const vote = diff > 0 ? 'OVER' : 'UNDER';
-                            const conf = Math.min(86, Math.max(50, 56 + Math.abs(diff) * 5));
-                            return { vote, confidence: Math.round(conf), reason: reason || `Context-adjusted: ${adj.toFixed(1)} vs line ${ln}`, trueProb: vote === 'OVER' ? Math.min(0.84, Math.max(0.18, 0.5 + diff * 0.05)) : Math.min(0.84, Math.max(0.18, 0.5 - diff * 0.05)) };
-                        },
-                        'together': () => {
-                            // Meta-aggregator — average of all signals
-                            const proj = l5 * 0.4 + l10 * 0.3 + sAvg * 0.3;
-                            const diff = proj - ln;
-                            const hrSignal = hr - 0.5;
-                            const combined = diff * 0.06 + hrSignal * 0.3;
-                            const vote = combined > 0 ? 'OVER' : 'UNDER';
-                            const conf = Math.min(91, Math.max(52, 58 + Math.abs(combined) * 60));
-                            return { vote, confidence: Math.round(conf), reason: `Meta-analysis: ${bookPrices.length} books scanned, proj ${proj.toFixed(1)}`, trueProb: vote === 'OVER' ? Math.min(0.88, Math.max(0.15, 0.5 + combined)) : Math.min(0.88, Math.max(0.15, 0.5 - combined)) };
-                        }
-                    };
-                    
-                    return methods[engineId] ? methods[engineId]() : { vote: 'OVER', confidence: 50, reason: 'Default model', trueProb: 0.5 };
-                }
-                
-                // Generate votes for all engines
-                const localEngines = {};
-                let localOverVotes = 0, localUnderVotes = 0;
-                
-                AI_ENGINES.forEach(e => {
-                    try {
-                        const result = generateLocalVote(e.id, seasonAvg, l10Avg, l5Avg, hitRate, line, impliedOver, impliedUnder);
-                        localEngines[e.id] = {
-                            vote: result.vote,
-                            confidence: result.confidence,
-                            reason: `🧮 ${result.reason}`,
-                            isLive: true,
-                            isLocal: true,
-                            trueProb: result.trueProb,
-                            fairOdds: result.trueProb ? probToOdds(result.trueProb * 100) : null
-                        };
-                        if (result.vote === 'OVER') localOverVotes++;
-                        else localUnderVotes++;
-                        console.log(`   ${e.icon} ${e.name}: ${result.vote} @ ${result.confidence}% — ${result.reason}`);
-                    } catch (err) {
-                        localEngines[e.id] = {
-                            vote: '--',
-                            confidence: 0,
-                            reason: `⚠️ Local analysis error: ${err.message}`,
-                            isLive: false
-                        };
-                    }
-                });
-                
-                console.log(`\n🧠 V47 LOCAL CONSENSUS: ${localOverVotes} OVER / ${localUnderVotes} UNDER`);
-                
-                // Apply local engine results to the analysis
-                Object.assign(engines, localEngines);
-                
-                // Calculate local trueProb blend
-                let localTpSum = 0, localTpWeight = 0;
-                AI_ENGINES.forEach(e => {
-                    const eng = localEngines[e.id];
-                    if (eng?.isLive && eng?.trueProb && eng.trueProb > 0 && eng.trueProb < 1) {
-                        localTpSum += eng.trueProb * e.weight;
-                        localTpWeight += e.weight;
-                    }
-                });
-                
-                if (localTpWeight > 0.2) {
-                    const localAiTrueProb = (localTpSum / localTpWeight) * 100;
-                    const currentOverProb = overProb;
-                    // Blend: 60% calibrated, 40% local AI
-                    const blended = currentOverProb * 0.60 + localAiTrueProb * 0.40;
-                    
-                    overProb = parseFloat(blended.toFixed(1));
-                    underProb = parseFloat((100 - blended).toFixed(1));
-                    
-                    recommended = overProb >= underProb ? 'OVER' : 'UNDER';
-                    overEdge = (overProb - impliedOver).toFixed(2);
-                    underEdge = (underProb - impliedUnder).toFixed(2);
-                    
-                    console.log(`🧠 V47 Blended trueProb: ${blended.toFixed(1)}% OVER (cal=${currentOverProb.toFixed(1)}%, localAI=${localAiTrueProb.toFixed(1)}%)`);
-                }
-                
-                // Schedule render update after analysis completes
-                setTimeout(() => {
-                    if (state.lastAnalysisResult) {
-                        // Inject local engine data
-                        state.lastAnalysisResult.engines = localEngines;
-                        state.lastAnalysisResult.blendMeta = {
-                            method: 'local_v47',
-                            calProb: overProb,
-                            aiProb: localTpWeight > 0 ? (localTpSum / localTpWeight * 100).toFixed(1) : null,
-                            aiWeight: 0.40,
-                            calWeight: 0.60,
-                            enginesLive: Object.values(localEngines).filter(e => e.isLive).length,
-                            isLocal: true
-                        };
-                        
-                        // Re-render with local engine data
-                        renderAIEngines(state.lastAnalysisResult);
-                        displayResults(state.lastAnalysisResult);
-                        
-                        // Add "LOCAL" badge
-                        const aiTitle = document.querySelector('.ai-panel-title');
-                        if (aiTitle) {
-                            const liveCount = Object.values(localEngines).filter(e => e.isLive).length;
-                            aiTitle.innerHTML = `10 AI ENGINE VOTES <span style="background: #f4c430; color: #000; padding: 2px 8px; border-radius: 4px; font-size: 10px; margin-left: 8px; font-weight: bold;">🧮 ${liveCount} LOCAL</span>`;
-                        }
-                    }
-                }, 200);
+                // V47: No proxy configured — use local analysis
+                runLocalAIEngines(player, market, line, seasonAvg, l10Avg, l5Avg, hitRate, overOdds, underOdds, isHome, restDays, playerData, engines);
             }
-            
             // Calculate stakes
             const kelly = Math.max(0, (parseFloat(recEdge) / 100) * (recProb / 100) * 100).toFixed(1);
             
@@ -37015,11 +36987,11 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
             // Step 8: Fetch ALL BOOKS for this exact event+market to find best odds
             (async () => {
                 try {
-                    const sportKey = result.sportKey || '';
+                    const sportKey = result.sport || result.sportKey || '';
                     const eventId = result.eventId || '';
                     const apiMarket = result.apiMarket || result.market || '';
                     
-                    if (!eventId || !apiMarket) {
+                    if (!eventId || !apiMarket || !sportKey) {
                         document.getElementById('best-odds-panel').innerHTML = '⚠️ Missing event data for odds lookup';
                         return;
                     }
