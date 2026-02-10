@@ -12566,7 +12566,11 @@ Return ONLY valid JSON:
             const espnMap = {
                 nba: 'basketball/nba', ncaab: 'basketball/mens-college-basketball',
                 wnba: 'basketball/wnba', nfl: 'football/nfl', ncaaf: 'football/college-football',
-                mlb: 'baseball/mlb', nhl: 'hockey/nhl', soccer: 'soccer/eng.1', mma: 'mma/ufc'
+                mlb: 'baseball/mlb', nhl: 'hockey/nhl',
+                soccer_epl: 'soccer/eng.1', soccer_laliga: 'soccer/esp.1',
+                soccer_seriea: 'soccer/ita.1', soccer_bundesliga: 'soccer/ger.1',
+                soccer_mls: 'soccer/usa.1', soccer_ucl: 'soccer/uefa.champions',
+                soccer_ligue1: 'soccer/fra.1', mma: 'mma/ufc'
             };
             const path = espnMap[sport];
             if (!path) return;
@@ -16968,7 +16972,13 @@ Return ONLY valid JSON:
                 ncaaf: 'football/college-football',
                 mlb: 'baseball/mlb',
                 nhl: 'hockey/nhl',
-                soccer: 'soccer/eng.1',
+                soccer_epl: 'soccer/eng.1',
+                soccer_laliga: 'soccer/esp.1',
+                soccer_seriea: 'soccer/ita.1',
+                soccer_bundesliga: 'soccer/ger.1',
+                soccer_mls: 'soccer/usa.1',
+                soccer_ucl: 'soccer/uefa.champions',
+                soccer_ligue1: 'soccer/fra.1',
                 mma: 'mma/ufc'
             };
             
@@ -17097,6 +17107,94 @@ Return ONLY valid JSON:
         // ═══════════════════════════════════════════════════════════════════════════
         
         // ESPN Team ID mapping - NBA
+        // ═══════════════════════════════════════════════════════════════════════════
+        // V47 FIX: Universal ESPN Team ID Resolver
+        // Replaces hardcoded team IDs — works for ALL sports by fetching from ESPN API
+        // Caches team lists per sport to avoid repeated calls
+        // ═══════════════════════════════════════════════════════════════════════════
+        const ESPN_TEAM_CACHE = {};
+        
+        async function resolveESPNTeamId(teamName, sport) {
+            const sportPath = ESPN_SPORT_PATHS[sport];
+            if (!sportPath) return null;
+            
+            // Check hardcoded IDs first (fast path for NBA/NHL)
+            if (sport === 'nhl' && ESPN_NHL_TEAM_IDS[teamName]) return ESPN_NHL_TEAM_IDS[teamName];
+            if (!sport.startsWith('soccer_') && sport !== 'mma' && sport !== 'boxing' && ESPN_TEAM_IDS[teamName]) return ESPN_TEAM_IDS[teamName];
+            
+            // Check cache
+            if (!ESPN_TEAM_CACHE[sport]) {
+                try {
+                    console.log(`🏟️ ESPN: Loading ${sport} team directory...`);
+                    const url = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams?limit=100`;
+                    const res = await fetch(url);
+                    if (!res.ok) {
+                        console.log(`⚠️ ESPN team fetch failed for ${sport}: ${res.status}`);
+                        ESPN_TEAM_CACHE[sport] = {};
+                        return null;
+                    }
+                    const data = await res.json();
+                    
+                    // Build name → ID map with multiple name variants
+                    const teamMap = {};
+                    const teams = data.sports?.[0]?.leagues?.[0]?.teams || data.teams || [];
+                    teams.forEach(t => {
+                        const team = t.team || t;
+                        const id = team.id;
+                        if (!id) return;
+                        
+                        // Index by all name variants (lowercase for matching)
+                        const names = [
+                            team.displayName,
+                            team.shortDisplayName, 
+                            team.name,
+                            team.abbreviation,
+                            team.nickname,
+                            team.location
+                        ].filter(Boolean);
+                        
+                        names.forEach(n => {
+                            teamMap[n.toLowerCase()] = id;
+                            // Also store without common suffixes
+                            const clean = n.replace(/\s*(FC|CF|SC|AFC|United|City)$/i, '').trim();
+                            if (clean) teamMap[clean.toLowerCase()] = id;
+                        });
+                    });
+                    
+                    ESPN_TEAM_CACHE[sport] = teamMap;
+                    console.log(`✅ ESPN: Cached ${Object.keys(teamMap).length} name variants for ${sport} (${teams.length} teams)`);
+                } catch (e) {
+                    console.log(`⚠️ ESPN team cache error for ${sport}: ${e.message}`);
+                    ESPN_TEAM_CACHE[sport] = {};
+                    return null;
+                }
+            }
+            
+            // Fuzzy match against cache
+            const cache = ESPN_TEAM_CACHE[sport];
+            const searchName = teamName.toLowerCase();
+            
+            // Exact match
+            if (cache[searchName]) return cache[searchName];
+            
+            // Partial match — team name contains search or vice versa
+            for (const [name, id] of Object.entries(cache)) {
+                if (name.includes(searchName) || searchName.includes(name)) return id;
+            }
+            
+            // Word overlap match (e.g. "Trail Blazers" matches "Portland Trail Blazers")
+            const searchWords = searchName.split(/\s+/);
+            for (const [name, id] of Object.entries(cache)) {
+                const nameWords = name.split(/\s+/);
+                const overlap = searchWords.filter(w => nameWords.includes(w) && w.length > 2);
+                if (overlap.length >= 1) return id;
+            }
+            
+            console.log(`⚠️ ESPN: No team match for "${teamName}" in ${sport}`);
+            return null;
+        }
+        
+        // Legacy hardcoded IDs (kept for fast NBA/NHL lookups)
         const ESPN_TEAM_IDS = {
             // NBA Teams
             'Lakers': '13', 'Celtics': '2', 'Warriors': '9', 'Suns': '21', 'Bucks': '15',
@@ -17127,20 +17225,32 @@ Return ONLY valid JSON:
             nfl: 'football/nfl',
             ncaaf: 'football/college-football',
             mlb: 'baseball/mlb',
-            nhl: 'hockey/nhl'
+            nhl: 'hockey/nhl',
+            // Soccer — ESPN uses soccer/eng.1 format
+            soccer_epl: 'soccer/eng.1',
+            soccer_laliga: 'soccer/esp.1',
+            soccer_seriea: 'soccer/ita.1',
+            soccer_bundesliga: 'soccer/ger.1',
+            soccer_mls: 'soccer/usa.1',
+            soccer_ucl: 'soccer/uefa.champions',
+            soccer_ligue1: 'soccer/fra.1',
+            // MMA — ESPN uses mma/ufc format
+            mma: 'mma/ufc'
         };
         
         // Fetch LIVE roster from ESPN API - supports multiple sports
         async function fetchESPNRoster(teamName, sport = 'nba') {
-            // Get correct team ID based on sport
-            let teamId;
-            let sportPath = ESPN_SPORT_PATHS[sport] || 'basketball/nba';
+            // Get correct sport path
+            let sportPath = ESPN_SPORT_PATHS[sport];
             
-            if (sport === 'nhl') {
-                teamId = ESPN_NHL_TEAM_IDS[teamName];
-            } else {
-                teamId = ESPN_TEAM_IDS[teamName];
+            // CRITICAL: If no sport path exists, do NOT fall back to NBA
+            if (!sportPath) {
+                console.log(`⚠️ ESPN: No sport path for "${sport}" — skipping roster fetch (prevents cross-sport contamination)`);
+                return null;
             }
+            
+            // V47: Use universal team ID resolver (works for ALL sports)
+            let teamId = await resolveESPNTeamId(teamName, sport);
             
             if (!teamId) {
                 console.log(`⚠️ No ESPN team ID for: ${teamName} (${sport}), trying alternate names...`);
@@ -17207,7 +17317,11 @@ Return ONLY valid JSON:
         
         // Fetch individual player stats from ESPN
         async function fetchESPNPlayerSeasonStats(playerId, sport = 'nba') {
-            const sportPath = ESPN_SPORT_PATHS[sport] || 'basketball/nba';
+            const sportPath = ESPN_SPORT_PATHS[sport];
+            if (!sportPath) {
+                console.log(`⚠️ ESPN stats: No sport path for "${sport}" — skipping`);
+                return null;
+            }
             
             try {
                 // Try the statistics endpoint first
@@ -24363,11 +24477,21 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                     nhl: 'hockey/nhl',
                     ncaab: 'basketball/mens-college-basketball',
                     ncaaf: 'football/college-football',
-                    soccer: 'soccer/usa.1'
+                    soccer_epl: 'soccer/eng.1',
+                    soccer_laliga: 'soccer/esp.1',
+                    soccer_seriea: 'soccer/ita.1',
+                    soccer_bundesliga: 'soccer/ger.1',
+                    soccer_mls: 'soccer/usa.1',
+                    soccer_ucl: 'soccer/uefa.champions',
+                    soccer_ligue1: 'soccer/fra.1'
                 };
                 
                 try {
-                    const espnSport = sportMap[sport] || 'basketball/nba';
+                    const espnSport = sportMap[sport];
+                    if (!espnSport) {
+                        console.log(`⚠️ ESPN Live: No mapping for sport "${sport}"`);
+                        return null;
+                    }
                     const response = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${espnSport}/scoreboard`);
                     if (!response.ok) return null;
                     
@@ -24418,8 +24542,8 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
             
             async getNews(sport = 'nba') {
                 try {
-                    const sportMap = { nba: 'basketball/nba', nfl: 'football/nfl', mlb: 'baseball/mlb', nhl: 'hockey/nhl' };
-                    const espnSport = sportMap[sport] || 'basketball/nba';
+                    const espnSport = ESPN_SPORT_PATHS[sport];
+                    if (!espnSport) return null;
                     const response = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${espnSport}/news?limit=10`);
                     if (!response.ok) return null;
                     
@@ -28687,21 +28811,38 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
         
         // Main function to fetch players with LIVE stats
         async function fetchPlayersForEvent(sport, eventId, selectedEvent) {
-            // Helper to add calculated combo stats
+            // Helper to add calculated combo stats (sport-aware)
             function addComboStats(players, teamName) {
-                return players.map(p => ({
-                    ...p,
-                    team: teamName || p.team,
-                    // V25: Calculate all combo stats (prop registry compatible)
-                    pra: parseFloat(((p.pts || 0) + (p.reb || 0) + (p.ast || 0)).toFixed(1)),
-                    ptsreb: parseFloat(((p.pts || 0) + (p.reb || 0)).toFixed(1)),
-                    ptsast: parseFloat(((p.pts || 0) + (p.ast || 0)).toFixed(1)),
-                    rebast: parseFloat(((p.reb || 0) + (p.ast || 0)).toFixed(1)),
-                    blkstl: parseFloat(((p.blk || 0) + (p.stl || 0)).toFixed(1)),
-                    tov: p.to || p.tov || p.turnovers || 0,
-                    fg3m: p.threes || p.fg3m || 0,
-                    avg: p.pts || 0
-                }));
+                const isSoccer = sport && sport.startsWith('soccer_');
+                const isMMA = sport === 'mma' || sport === 'boxing';
+                
+                return players.map(p => {
+                    const base = {
+                        ...p,
+                        team: teamName || p.team
+                    };
+                    
+                    // Only add basketball/football combo stats for relevant sports
+                    if (!isSoccer && !isMMA) {
+                        base.pra = parseFloat(((p.pts || 0) + (p.reb || 0) + (p.ast || 0)).toFixed(1));
+                        base.ptsreb = parseFloat(((p.pts || 0) + (p.reb || 0)).toFixed(1));
+                        base.ptsast = parseFloat(((p.pts || 0) + (p.ast || 0)).toFixed(1));
+                        base.rebast = parseFloat(((p.reb || 0) + (p.ast || 0)).toFixed(1));
+                        base.blkstl = parseFloat(((p.blk || 0) + (p.stl || 0)).toFixed(1));
+                        base.tov = p.to || p.tov || p.turnovers || 0;
+                        base.fg3m = p.threes || p.fg3m || 0;
+                        base.avg = p.pts || 0;
+                    } else if (isSoccer) {
+                        // Soccer-specific stats
+                        base.goals = p.goals || 0;
+                        base.assists = p.assists || 0;
+                        base.shots = p.shots || 0;
+                        base.tackles = p.tackles || 0;
+                        base.avg = p.goals || 0;
+                    }
+                    
+                    return base;
+                });
             }
             
             // PRIORITY 1: Try to get live game data with stats from ESPN
@@ -28767,8 +28908,8 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             }
             
             // PRIORITY 3: Fallback to static rosters for BOTH teams
-            console.log('⚠️ Using fallback static rosters (may be outdated)');
-            state.dataSource = 'Static (Outdated)';
+            console.log('⚠️ Using fallback static rosters (2023-24 data — may have wrong players/teams!)');
+            state.dataSource = 'Static (Outdated 2023-24)';
             
             if (selectedEvent) {
                 const homeTeamName = selectedEvent.homeTeam?.shortDisplayName || '';
@@ -29007,8 +29148,9 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             return events[sport] || [{ id: 'demo1', name: 'Home @ Away', time: 'Today' }];
         }
         
-        // Complete NBA Team Rosters with FULL STATS (8-10 players per team like DraftKings)
-        // Each player has: pts, reb, ast, threes, stl, blk, to (for all market types)
+        // ⚠️ LEGACY STATIC ROSTERS — 2023-24 SEASON DATA (may have wrong teams/players)
+        // Only used as LAST RESORT when ESPN API and BDL both fail
+        // Players may have been traded — prefer live ESPN roster data
         const TEAM_ROSTERS = {
             'Lakers': [
                 { name: 'LeBron James', position: 'SF', pts: 28.3, reb: 8.2, ast: 8.5, threes: 2.1, stl: 1.2, blk: 0.6, to: 3.8 },
@@ -29179,9 +29321,41 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     { name: 'Connor McDavid', avg: 1.8, team: 'Oilers' },
                     { name: 'Auston Matthews', avg: 1.5, team: 'Maple Leafs' },
                     { name: 'Nathan MacKinnon', avg: 1.6, team: 'Avalanche' }
+                ],
+                soccer_epl: [
+                    { name: 'Erling Haaland', avg: 1.2, team: 'Man City' },
+                    { name: 'Mohamed Salah', avg: 0.9, team: 'Liverpool' },
+                    { name: 'Cole Palmer', avg: 0.8, team: 'Chelsea' }
+                ],
+                soccer_laliga: [
+                    { name: 'Robert Lewandowski', avg: 0.9, team: 'Barcelona' },
+                    { name: 'Kylian Mbappé', avg: 0.8, team: 'Real Madrid' },
+                    { name: 'Vinícius Júnior', avg: 0.7, team: 'Real Madrid' }
+                ],
+                soccer_seriea: [
+                    { name: 'Lautaro Martínez', avg: 0.8, team: 'Inter Milan' },
+                    { name: 'Dusan Vlahovic', avg: 0.7, team: 'Juventus' }
+                ],
+                soccer_bundesliga: [
+                    { name: 'Harry Kane', avg: 1.1, team: 'Bayern Munich' },
+                    { name: 'Florian Wirtz', avg: 0.6, team: 'Bayer Leverkusen' }
+                ],
+                soccer_mls: [
+                    { name: 'Lionel Messi', avg: 0.8, team: 'Inter Miami' },
+                    { name: 'Lorenzo Insigne', avg: 0.4, team: 'Toronto FC' }
+                ],
+                soccer_ucl: [
+                    { name: 'Erling Haaland', avg: 1.0, team: 'Man City' },
+                    { name: 'Kylian Mbappé', avg: 0.9, team: 'Real Madrid' }
+                ],
+                ncaab: [
+                    { name: 'Cooper Flagg', avg: 18.5, team: 'Duke' },
+                    { name: 'Dylan Harper', avg: 22.1, team: 'Rutgers' }
                 ]
             };
-            return players[sport] || players.nba;
+            // CRITICAL: Do NOT fall back to NBA for non-NBA sports
+            // Return empty array if no demo players for this sport
+            return players[sport] || [];
         }
         
         // ═══════════════════════════════════════════════════════════════════════════
@@ -37791,15 +37965,21 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                 'basketball_nba': 'nba', 'basketball_ncaab': 'ncaab', 'basketball_wnba': 'wnba',
                 'americanfootball_nfl': 'nfl', 'americanfootball_ncaaf': 'ncaaf',
                 'baseball_mlb': 'mlb', 'icehockey_nhl': 'nhl',
-                'soccer_epl': 'epl', 'soccer_spain_la_liga': 'laliga',
-                'soccer_italy_serie_a': 'seriea', 'soccer_germany_bundesliga': 'bundesliga',
-                'soccer_usa_mls': 'mls', 'soccer_uefa_champs_league': 'ucl'
+                'soccer_epl': 'soccer_epl', 'soccer_spain_la_liga': 'soccer_laliga',
+                'soccer_italy_serie_a': 'soccer_seriea', 'soccer_germany_bundesliga': 'soccer_bundesliga',
+                'soccer_usa_mls': 'soccer_mls', 'soccer_uefa_champs_league': 'soccer_ucl',
+                'soccer_france_ligue_one': 'soccer_ligue1',
+                'soccer_portugal_primeira_liga': 'soccer_ligapt',
+                'soccer_netherlands_eredivisie': 'soccer_eredivisie',
+                'mma_mixed_martial_arts': 'mma', 'boxing_boxing': 'boxing'
             };
             const labelToSport = {
                 'NBA': 'nba', 'NCAAB': 'ncaab', 'WNBA': 'wnba',
                 'NFL': 'nfl', 'NCAAF': 'ncaaf', 'MLB': 'mlb', 'NHL': 'nhl',
-                'EPL': 'epl', 'LaLiga': 'laliga', 'SerieA': 'seriea',
-                'Bundesliga': 'bundesliga', 'MLS': 'mls', 'UCL': 'ucl'
+                'EPL': 'soccer_epl', 'LaLiga': 'soccer_laliga', 'SerieA': 'soccer_seriea',
+                'Bundesliga': 'soccer_bundesliga', 'MLS': 'soccer_mls', 'UCL': 'soccer_ucl',
+                'Ligue1': 'soccer_ligue1', 'LigaPT': 'soccer_ligapt', 'Eredivisie': 'soccer_eredivisie',
+                'UFC': 'mma', 'Boxing': 'boxing', 'Soccer': 'soccer_epl'
             };
             
             const targetSport = sportMap[result.sport] || labelToSport[result.sportLabel] || 'nba';
