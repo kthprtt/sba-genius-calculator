@@ -34214,17 +34214,22 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
         function applyFilters(results) {
             const f = scannerState.filters;
             const viewMode = scannerState.viewMode || 'all';
+            const scanMode = scannerState.scanMode || 'all';
             
             let filtered = results.filter(r => {
                 const isArb = r.arbPct && r.arbPct > 0;
                 const isQuality = r.estimatedTier === 'diamond' || r.estimatedTier === 'lock' || r.estimatedTier === 'high';
                 
-                // View mode filter
+                // Scanner mode filter (from top buttons: Diamond Only, Locks & Above, All)
+                if (scanMode === 'diamond' && r.estimatedTier !== 'diamond') return false;
+                if (scanMode === 'lock' && !['diamond', 'lock'].includes(r.estimatedTier)) return false;
+                
+                // View mode filter (from inline view buttons: Quality, Arbs, All)
                 if (viewMode === 'quality' && !isQuality) return false;
                 if (viewMode === 'arbs' && !isArb) return false;
                 
-                // For 'all' mode, apply individual tier checkboxes
-                if (viewMode === 'all') {
+                // For 'all' view mode, apply individual tier checkboxes
+                if (viewMode === 'all' && scanMode === 'all') {
                     if (r.estimatedTier === 'diamond' && !f.showDiamonds) return false;
                     if (r.estimatedTier === 'lock' && !f.showLocks) return false;
                     if (r.estimatedTier === 'high' && !f.showHigh) return false;
@@ -35062,18 +35067,38 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
             resultsEl.innerHTML = '';
             
             // Add filter controls
-            const filtersHtml = renderFilterControls();
-            resultsEl.insertAdjacentHTML('beforeend', filtersHtml);
+            resultsEl.insertAdjacentHTML('beforeend', renderFilterControls());
             
-            // Add count
+            // Add count summary with tier breakdown
+            const total = scannerState.results.length;
+            const diamondCount = scannerState.results.filter(r => r.estimatedTier === 'diamond').length;
+            const lockCount = scannerState.results.filter(r => r.estimatedTier === 'lock').length;
+            const arbCount = scannerState.results.filter(r => r.arbPct && r.arbPct > 0).length;
+            const highCount = scannerState.results.filter(r => r.estimatedTier === 'high').length;
+            const scanMode = scannerState.scanMode || 'all';
+            const modeLabel = scanMode === 'diamond' ? '💎 Diamond Mode' : scanMode === 'lock' ? '🔒 Lock+ Mode' : '';
+            
             resultsEl.insertAdjacentHTML('beforeend', `
-                <div style="text-align: center; color: #888; font-size: 11px; margin-bottom: 8px;">
-                    Showing ${filtered.length} of ${scannerState.results.length} results
+                <div style="display: flex; justify-content: center; gap: 12px; margin-bottom: 8px; font-size: 10px; flex-wrap: wrap;">
+                    ${modeLabel ? `<span style="color: #FFD700; font-weight: 700; background: rgba(255,215,0,0.1); padding: 1px 8px; border-radius: 3px;">${modeLabel}</span>` : ''}
+                    <span style="color: #b98fff;">💎 ${diamondCount}</span>
+                    <span style="color: #FFD700;">🔒 ${lockCount}</span>
+                    <span style="color: #00ff88;">💰 ${arbCount} Arbs</span>
+                    <span style="color: #00ff88;">🟢 ${highCount}</span>
+                    <span style="color: #888;">📊 ${filtered.length}/${total} shown</span>
                 </div>
             `);
             
             // Render filtered cards
-            filtered.forEach(r => renderScannerCard(r));
+            if (filtered.length === 0) {
+                resultsEl.insertAdjacentHTML('beforeend', `
+                    <div style="text-align: center; color: #888; font-size: 12px; padding: 20px;">
+                        No results match current filters. Try ${scanMode !== 'all' ? 'switching to "All Markets"' : 'adjusting filters'}.
+                    </div>
+                `);
+            } else {
+                filtered.forEach(r => renderScannerCard(r));
+            }
         }
         
         // ═══════════════════════════════════════════════════════════════════════════
