@@ -2555,6 +2555,13 @@
                 <h3 class="ai-panel-title">10 AI ENGINE VOTES</h3>
                 <div class="ai-engines" id="ai-engines"></div>
                 
+                <!-- V47: Confidence Gates Panel (from ULTIMATE V5.5.1) -->
+                <div class="confidence-gates-section" id="confidence-gates-section" style="display: none; margin-top: 12px;">
+                    <h4 style="font-size: 12px; color: var(--gold); text-transform: uppercase; margin-bottom: 8px; font-weight: 700; letter-spacing: 0.5px;">🔒 CONFIDENCE GATES</h4>
+                    <div id="confidence-gates-grid" style="display: grid; gap: 4px;"></div>
+                    <div id="confidence-gates-verdict" style="text-align: center; padding: 8px; margin-top: 8px; border-radius: 6px; font-size: 12px; font-weight: 600;"></div>
+                </div>
+                
                 <div class="data-section">
                     <h4 class="data-title">📊 DATA SOURCES</h4>
                     <div class="data-list" id="data-sources"></div>
@@ -12214,6 +12221,145 @@ Return ONLY valid JSON:
             document.getElementById('data-sources').innerHTML = DATA_SOURCES.map(s => 
                 `<span class="data-item ${active.includes(s) ? 'active' : ''}">${s}</span>`
             ).join('');
+        }
+        
+        // ═══════════════════════════════════════════════════════════════════════════
+        // V47: CONFIDENCE GATES — Ported from ULTIMATE V5.5.1 coachK
+        // 7 quality gates that must pass before recommending a bet
+        // Critical gates (G1, G2, G3, G7) can force NO BET verdict
+        // ═══════════════════════════════════════════════════════════════════════════
+        function calculateConfidenceGates(engines = {}, projection = null, playerData = null) {
+            const gates = [];
+            const liveEngines = Object.values(engines).filter(e => e.isLive);
+            const overVotes = liveEngines.filter(e => e.vote === 'OVER').length;
+            const underVotes = liveEngines.filter(e => e.vote === 'UNDER').length;
+            const passVotes = liveEngines.filter(e => e.vote === 'PASS' || e.vote === '--').length;
+            const validEngines = overVotes + underVotes + passVotes;
+            const consensusRatio = validEngines > 0 ? Math.max(overVotes, underVotes) / validEngines : 0;
+            const consensusDir = overVotes >= underVotes ? 'OVER' : 'UNDER';
+            
+            // Get data quality from accuracy dashboard factors
+            const market = state.analysisMarket || state.currentMarket || 'Points';
+            const line = parseFloat(document.getElementById('line-input')?.value) || 0;
+            
+            // G1: Player Active (not OUT/injured)
+            const injuries = state.injuries || [];
+            const playerName = state.lastPlayerName || state.currentPlayer || '';
+            const playerLast = playerName.split(' ').pop()?.toLowerCase() || '';
+            const playerInjury = playerLast.length > 1 ? injuries.find(i => 
+                (i.playerName || i.name || i.athlete?.displayName || '').toLowerCase().includes(playerLast) &&
+                (i.status === 'OUT' || i.status === 'Out')
+            ) : null;
+            const g1 = !playerInjury;
+            gates.push({ name: 'G1: Player Active', pass: g1, detail: g1 ? 'ACTIVE' : `OUT — ${playerInjury?.status || 'Injured'}`, critical: true });
+            
+            // G2: Data Quality ≥ 70% (based on available data sources)
+            let dataQualityScore = 50; // Start at baseline
+            if (projection) {
+                if (projection.l5Avg > 0) dataQualityScore += 10;
+                if (projection.l10Avg > 0) dataQualityScore += 5;
+                if (projection.seasonAvg > 0) dataQualityScore += 5;
+                if (projection.hitRate) dataQualityScore += 5;
+                if (projection.defensiveMatchup) dataQualityScore += 5;
+                if (projection.h2hData?.games > 0) dataQualityScore += 5;
+                if (projection.projectedMinutes > 0) dataQualityScore += 5;
+            }
+            if (state.liveOdds && Object.keys(state.liveOdds.lines || {}).length > 0) dataQualityScore += 10;
+            if (state.betburgerSharp?.signalCount > 0) dataQualityScore += 5;
+            if (state.gameLines?.spread) dataQualityScore += 3;
+            if (liveEngines.length >= 5) dataQualityScore += 5;
+            dataQualityScore = Math.min(100, dataQualityScore);
+            const g2 = dataQualityScore >= 70;
+            gates.push({ name: 'G2: Data Quality ≥70', pass: g2, detail: `Score: ${dataQualityScore}/100`, critical: true });
+            
+            // G3: AI Consensus ≥ 60%
+            const g3 = liveEngines.length === 0 || consensusRatio >= 0.60;
+            gates.push({ name: 'G3: AI Consensus ≥60%', pass: g3, detail: liveEngines.length > 0 ? `${Math.round(consensusRatio * 100)}% (${Math.max(overVotes, underVotes)}/${validEngines})` : 'Pending', critical: true });
+            
+            // G4: < 3 PASS/Error votes
+            const g4 = passVotes < 3;
+            gates.push({ name: 'G4: <3 PASS Votes', pass: g4, detail: `${passVotes} engines passed`, critical: false });
+            
+            // G5: Stats Pattern Normal (L5 not too low vs season)
+            let g5 = true;
+            let g5Detail = 'OK';
+            if (projection && projection.l5Avg > 0 && projection.seasonAvg > 0) {
+                g5 = projection.l5Avg >= projection.seasonAvg * 0.40;
+                if (!g5) g5Detail = `L5 (${projection.l5Avg.toFixed(1)}) too low vs season (${projection.seasonAvg.toFixed(1)})`;
+            }
+            gates.push({ name: 'G5: Stats Pattern Normal', pass: g5, detail: g5Detail, critical: false });
+            
+            // G6: Data Validated (have real stats source)
+            const g6 = !!(playerData || projection?.seasonAvg > 0);
+            gates.push({ name: 'G6: Data Validated', pass: g6, detail: g6 ? (playerData?.source || 'BDL') : 'No player data', critical: false });
+            
+            // G7: Stats Sanity Check — AI direction shouldn't contradict ALL stats by 3+ points
+            let g7 = true;
+            let g7Detail = 'OK';
+            if (projection && line > 0 && liveEngines.length > 0) {
+                const l5 = projection.l5Avg || 0;
+                const l10 = projection.l10Avg || 0;
+                const season = projection.seasonAvg || 0;
+                
+                const allBelow = l5 > 0 && l10 > 0 && season > 0 && l5 < line - 3 && l10 < line - 3 && season < line - 3;
+                const allAbove = l5 > 0 && l10 > 0 && season > 0 && l5 > line + 3 && l10 > line + 3 && season > line + 3;
+                
+                if (allBelow && consensusDir === 'OVER') {
+                    g7 = false;
+                    g7Detail = `AI says OVER but stats 3+ below line (L5=${l5.toFixed(1)}, Season=${season.toFixed(1)} vs Line=${line})`;
+                } else if (allAbove && consensusDir === 'UNDER') {
+                    g7 = false;
+                    g7Detail = `AI says UNDER but stats 3+ above line (L5=${l5.toFixed(1)}, Season=${season.toFixed(1)} vs Line=${line})`;
+                }
+            }
+            gates.push({ name: 'G7: Stats Sanity Check', pass: g7, detail: g7Detail, critical: true });
+            
+            // Calculate overall result
+            const allPass = gates.every(g => g.pass);
+            const criticalFail = gates.some(g => !g.pass && g.critical);
+            const failedGates = gates.filter(g => !g.pass);
+            
+            console.log(`\n🔒 V47 CONFIDENCE GATES: ${allPass ? '✅ ALL PASSED' : criticalFail ? '🔴 CRITICAL FAIL' : '🟡 NON-CRITICAL FAIL'}`);
+            gates.forEach(g => console.log(`   ${g.pass ? '✅' : '❌'} ${g.name} | ${g.detail}`));
+            
+            return { gates, allPass, criticalFail, failedGates, dataQualityScore, consensusRatio, consensusDir };
+        }
+        
+        function renderConfidenceGates(gateResult) {
+            const section = document.getElementById('confidence-gates-section');
+            const grid = document.getElementById('confidence-gates-grid');
+            const verdict = document.getElementById('confidence-gates-verdict');
+            if (!section || !grid || !verdict) return;
+            
+            section.style.display = 'block';
+            
+            grid.innerHTML = gateResult.gates.map(g => `
+                <div style="display: flex; align-items: center; gap: 8px; padding: 5px 8px; background: ${g.pass ? 'rgba(0,255,136,0.06)' : 'rgba(255,68,68,0.08)'}; border-radius: 4px; border-left: 3px solid ${g.pass ? '#00ff88' : '#ff4444'};">
+                    <span style="font-size: 12px; width: 18px; text-align: center;">${g.pass ? '✅' : '❌'}</span>
+                    <span style="font-size: 10px; color: ${g.pass ? '#00ff88' : '#ff6b6b'}; font-weight: 600; white-space: nowrap;">${g.name}</span>
+                    <span style="font-size: 9px; color: var(--text-muted); margin-left: auto; text-align: right; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${g.detail}">${g.detail}</span>
+                </div>
+            `).join('');
+            
+            if (gateResult.allPass) {
+                verdict.style.background = 'rgba(0,255,136,0.1)';
+                verdict.style.border = '1px solid rgba(0,255,136,0.3)';
+                verdict.style.color = '#00ff88';
+                verdict.textContent = '🟢 ALL 7 GATES PASSED — Analysis is high confidence';
+            } else if (gateResult.criticalFail) {
+                verdict.style.background = 'rgba(255,68,68,0.1)';
+                verdict.style.border = '1px solid rgba(255,68,68,0.3)';
+                verdict.style.color = '#ff6b6b';
+                verdict.textContent = `🔴 CRITICAL GATE FAILED: ${gateResult.failedGates.filter(g => g.critical).map(g => g.name.split(':')[0]).join(', ')} — Proceed with caution`;
+            } else {
+                verdict.style.background = 'rgba(244,196,48,0.1)';
+                verdict.style.border = '1px solid rgba(244,196,48,0.3)';
+                verdict.style.color = '#f4c430';
+                verdict.textContent = `🟡 ${gateResult.failedGates.length} gate(s) failed — Reduced confidence`;
+            }
+            
+            // Store for other components
+            state.lastConfidenceGates = gateResult;
         }
         
         function renderMarketTabs() {
@@ -24433,6 +24579,219 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
         window.BETBURGER = BETBURGER_V46;
         window.GROK = GROK_V46;
         window.YOUCOM = YOUCOM_V46;
+        
+        // ═══════════════════════════════════════════════════════════════════════════
+        // V47: REDDIT & TWITTER SENTIMENT — Ported from ULTIMATE V5.5.1
+        // ═══════════════════════════════════════════════════════════════════════════
+        
+        // Helper: extract text from various proxy response formats
+        function extractProxyText(data) {
+            if (typeof data === 'string') return data;
+            if (data?.result?.raw) return data.result.raw;
+            if (data?.result?.parsed?.reasoning) return data.result.parsed.reasoning;
+            if (data?.result) return typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
+            if (data?.content) return typeof data.content === 'string' ? data.content : JSON.stringify(data.content);
+            if (data?.text) return typeof data.text === 'string' ? data.text : JSON.stringify(data.text);
+            return JSON.stringify(data);
+        }
+        
+        function parseRedditResult(text) {
+            if (typeof text !== 'string') text = JSON.stringify(text);
+            const sentiment = text.match(/SENTIMENT:\s*(BULLISH|BEARISH|MIXED|NEUTRAL)/i);
+            const lean = text.match(/LEAN:\s*(OVER|UNDER|SPLIT)/i);
+            const conf = text.match(/CONFIDENCE:\s*(HIGH|MEDIUM|LOW)/i);
+            const posts = text.match(/POSTS_FOUND:\s*(\d+)/i);
+            const found = text.match(/FOUND:\s*(YES|NO)/i);
+            const summary = text.match(/(?:SUMMARY|KEY_TAKES):\s*(.+?)(?:\n|$)/i);
+            const sharp = text.match(/SHARP_PICKS:\s*(.+?)(?:\n|$)/i);
+            const postsFound = posts ? parseInt(posts[1]) : (found?.[1] === 'YES' ? 1 : 0);
+            const summaryText = summary ? summary[1].trim() : null;
+            const noData = !summaryText || /no.*found|no.*posts|no.*discussion|no.*recent/i.test(summaryText);
+            return {
+                sentiment: sentiment ? sentiment[1].toUpperCase() : 'NEUTRAL',
+                lean: lean ? lean[1].toUpperCase() : 'SPLIT',
+                confidence: conf ? conf[1].toUpperCase() : 'LOW',
+                postsFound, hasRealData: postsFound > 0 && !noData,
+                summary: summaryText,
+                sharpPicks: sharp ? sharp[1].trim() : null
+            };
+        }
+        
+        function parseTwitterResult(text) {
+            if (typeof text !== 'string') text = JSON.stringify(text);
+            const sentiment = text.match(/SENTIMENT:\s*(BULLISH|BEARISH|MIXED|NEUTRAL)/i);
+            const lean = text.match(/LEAN:\s*(OVER|UNDER|SPLIT)/i);
+            const sharp = text.match(/SHARP_MONEY:\s*(OVER|UNDER|UNKNOWN)/i);
+            const pub = text.match(/PUBLIC_LEAN:\s*(OVER|UNDER|SPLIT)/i);
+            const tweets = text.match(/TWEETS_FOUND:\s*(\d+)/i);
+            const handles = text.match(/HANDLES:\s*(.+?)(?:\n|$)/i);
+            const summary = text.match(/SUMMARY:\s*(.+?)(?:\n|$)/i);
+            const tweetsFound = tweets ? parseInt(tweets[1]) : 0;
+            const summaryText = summary ? summary[1].trim() : null;
+            const noData = !summaryText || /no.*found|no.*tweets|no.*posts|no.*discussion/i.test(summaryText);
+            return {
+                sentiment: sentiment ? sentiment[1].toUpperCase() : 'NEUTRAL',
+                lean: lean ? lean[1].toUpperCase() : 'SPLIT',
+                sharpMoney: sharp ? sharp[1].toUpperCase() : 'UNKNOWN',
+                publicLean: pub ? pub[1].toUpperCase() : 'SPLIT',
+                tweetsFound, hasRealData: tweetsFound > 0 && !noData,
+                handles: handles ? handles[1].trim() : null,
+                summary: summaryText
+            };
+        }
+        
+        async function getRedditSentiment(player, opponent, sport = 'nba', market = 'Points') {
+            if (!isAIProxyConfigured()) return { found: false, adjustment: 0 };
+            
+            const statDisplay = market.replace('player_', '').replace(/_/g, ' ');
+            const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            const sportSubs = { nba: 'sportsbook', nfl: 'sportsbook', mlb: 'sportsbook', nhl: 'sportsbook' };
+            const sub = sportSubs[sport] || 'sportsbook';
+            
+            console.log(`\n📱 V47 Reddit Sentiment: ${player} ${statDisplay} vs ${opponent}`);
+            
+            // Source 1: Perplexity
+            let p1 = null;
+            try {
+                const res = await fetch(`${CONFIG.aiProxy}/api/ai/perplexity`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prompt: `Search the web for Reddit discussions about ${player} ${statDisplay} prop bet vs ${opponent} today (${today}). Look for posts on r/sportsbook POTD thread, r/${sub}. If you find REAL posts, quote key opinions. If NONE exist, say so honestly. Reply EXACTLY:\nPOSTS_FOUND: [number, 0 if none]\nSENTIMENT: [BULLISH/BEARISH/MIXED/NEUTRAL]\nLEAN: [OVER/UNDER/SPLIT]\nCONFIDENCE: [HIGH/MEDIUM/LOW]\nKEY_TAKES: [Actual user opinions or "No posts found"]\nSHARP_PICKS: [Any POTD picks mentioning this player, or "None"]`,
+                        maxTokens: 400
+                    })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const text = extractProxyText(data);
+                    if (text) p1 = parseRedditResult(text);
+                }
+            } catch(e) { console.log(`[V47] Reddit/Perplexity error: ${e.message}`); }
+            
+            // Source 2: You.com backup
+            let p2 = null;
+            try {
+                const res = await fetch(`${CONFIG.aiProxy}/api/ai/youcom`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prompt: `Search for Reddit betting posts about "${player} ${statDisplay}" OR "${player} prop" vs ${opponent}. What are bettors saying? Reply EXACTLY:\nFOUND: [YES/NO]\nSENTIMENT: [BULLISH/BEARISH/MIXED/NEUTRAL]\nLEAN: [OVER/UNDER/SPLIT]\nSUMMARY: [What bettors are saying, or "No discussion found"]`,
+                        maxTokens: 300
+                    })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const text = extractProxyText(data);
+                    if (text) p2 = parseRedditResult(text);
+                }
+            } catch(e) { console.log(`[V47] Reddit/You.com error: ${e.message}`); }
+            
+            // Triangulate
+            let best = p1;
+            if (!p1?.hasRealData && p2?.hasRealData) best = p2;
+            if (p1?.hasRealData && p2?.hasRealData && p1.lean === p2.lean) best = { ...p1, confidence: 'HIGH' };
+            
+            if (!best) return { found: false, adjustment: 0 };
+            
+            let adjustment = 0;
+            if (best.hasRealData) {
+                const w = best.confidence === 'HIGH' ? 0.02 : best.confidence === 'MEDIUM' ? 0.015 : 0.005;
+                adjustment = best.lean === 'OVER' ? w : best.lean === 'UNDER' ? -w : 0;
+            }
+            
+            const icon = best.lean === 'OVER' ? '🟢' : best.lean === 'UNDER' ? '🔴' : '⚪';
+            const realTag = best.hasRealData ? '📌 REAL' : '🤖 AI-INFERRED';
+            console.log(`   ${icon} Reddit: ${best.sentiment} - Lean ${best.lean} | ${realTag}`);
+            if (best.summary) console.log(`   └─ "${best.summary.substring(0, 80)}..."`);
+            
+            return {
+                found: true, sentiment: best.sentiment, lean: best.lean,
+                confidence: best.hasRealData ? best.confidence : 'LOW',
+                summary: best.summary, sharpPicks: best.sharpPicks,
+                postsFound: best.postsFound, hasRealData: best.hasRealData,
+                adjustment,
+                sources: [p1 ? 'perplexity' : null, p2 ? 'youcom' : null].filter(Boolean)
+            };
+        }
+        
+        async function getTwitterSentiment(player, opponent, sport = 'nba', market = 'Points') {
+            if (!isAIProxyConfigured()) return { found: false, adjustment: 0 };
+            
+            const statDisplay = market.replace('player_', '').replace(/_/g, ' ');
+            const lastName = player.split(' ').pop();
+            
+            console.log(`\n🐦 V47 Twitter/X Sentiment: ${player} ${statDisplay} vs ${opponent}`);
+            
+            // Source 1: Grok (native X access)
+            let g1 = null;
+            try {
+                const res = await fetch(`${CONFIG.aiProxy}/api/ai/grok`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prompt: `Search X/Twitter right now for posts about ${player} prop bets tonight vs ${opponent}. Search for: "${lastName} over" OR "${lastName} under" OR "${lastName} points" OR "${lastName} prop" OR "#${sport.toUpperCase()}Picks" OR "#PlayerProps"\n\nFind REAL tweets from today. Report what actual bettors are posting.\n\nReply EXACTLY:\nTWEETS_FOUND: [number of relevant tweets, 0 if none]\nSENTIMENT: [BULLISH/BEARISH/MIXED/NEUTRAL]\nLEAN: [OVER/UNDER/SPLIT]\nSHARP_MONEY: [OVER/UNDER/UNKNOWN - any sharp/tout accounts posting picks]\nPUBLIC_LEAN: [OVER/UNDER/SPLIT - what casual bettors are saying]\nHANDLES: [List 1-3 notable accounts posting about this, or "None"]\nSUMMARY: [2-3 sentences about what X is saying about this prop]`,
+                        maxTokens: 400
+                    })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const text = extractProxyText(data);
+                    if (text) g1 = parseTwitterResult(text);
+                }
+            } catch(e) { console.log(`[V47] Twitter/Grok error: ${e.message}`); }
+            
+            // Source 2: Perplexity backup
+            let p1 = null;
+            try {
+                const res = await fetch(`${CONFIG.aiProxy}/api/ai/perplexity`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prompt: `Search the web for Twitter/X posts about ${player} betting props vs ${opponent} tonight. Look for handicapper picks, sharp money alerts, or trending betting opinions. Reply EXACTLY:\nTWEETS_FOUND: [number, 0 if none]\nSENTIMENT: [BULLISH/BEARISH/MIXED/NEUTRAL]\nLEAN: [OVER/UNDER/SPLIT]\nSHARP_MONEY: [OVER/UNDER/UNKNOWN]\nSUMMARY: [What the betting community on Twitter is saying]`,
+                        maxTokens: 300
+                    })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const text = extractProxyText(data);
+                    if (text) p1 = parseTwitterResult(text);
+                }
+            } catch(e) { console.log(`[V47] Twitter/Perplexity error: ${e.message}`); }
+            
+            // Prefer Grok (native X access)
+            let best = g1;
+            if (!g1?.hasRealData && p1?.hasRealData) best = p1;
+            if (g1?.hasRealData && p1?.hasRealData && g1.sharpMoney !== 'UNKNOWN' && g1.sharpMoney === p1.sharpMoney) {
+                best = { ...g1, confidence: 'HIGH' };
+            }
+            
+            if (!best) return { found: false, adjustment: 0 };
+            
+            let adjustment = 0;
+            if (best.hasRealData) {
+                if (best.sharpMoney === 'OVER') adjustment = 0.025;
+                else if (best.sharpMoney === 'UNDER') adjustment = -0.025;
+                else if (best.lean === 'OVER') adjustment = 0.01;
+                else if (best.lean === 'UNDER') adjustment = -0.01;
+            }
+            
+            const icon = best.lean === 'OVER' ? '🟢' : best.lean === 'UNDER' ? '🔴' : '⚪';
+            const realTag = best.hasRealData ? '📌 REAL' : '🤖 AI-INFERRED';
+            const sharpText = best.sharpMoney !== 'UNKNOWN' ? ` | 💰 Sharp: ${best.sharpMoney}` : '';
+            console.log(`   ${icon} Twitter: ${best.sentiment} - Lean ${best.lean}${sharpText} | ${realTag}`);
+            if (best.summary) console.log(`   └─ "${best.summary.substring(0, 80)}..."`);
+            
+            return {
+                found: true, sentiment: best.sentiment, lean: best.lean,
+                sharpMoney: best.sharpMoney, publicLean: best.publicLean,
+                summary: best.summary, handles: best.handles,
+                tweetsFound: best.tweetsFound, hasRealData: best.hasRealData,
+                adjustment,
+                sources: [g1 ? 'grok' : null, p1 ? 'perplexity' : null].filter(Boolean)
+            };
+        }
+        
+        console.log('🏆 V47: Reddit + Twitter Sentiment functions loaded');
         console.log(`   📊 Direct AI Keys: ${REAL_AI_ENGINES_V45.getConfiguredCount()}/6 configured`);
         
         // ═══════════════════════════════════════════════════════════════════════════
@@ -29084,6 +29443,18 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     renderAIEngines(state.lastAnalysisResult);
                     displayResults(state.lastAnalysisResult);
                     
+                    // V47: Confidence Gates for local engines
+                    try {
+                        const gateResult = calculateConfidenceGates(
+                            localEngines,
+                            state.lastProjection,
+                            state.playerStats || null
+                        );
+                        renderConfidenceGates(gateResult);
+                    } catch(gateErr) {
+                        console.warn('⚠️ Local Confidence Gates error (non-fatal):', gateErr.message);
+                    }
+                    
                     const aiTitle = document.querySelector('.ai-panel-title');
                     if (aiTitle) {
                         const lc = Object.values(localEngines).filter(e => e.isLive).length;
@@ -29575,16 +29946,18 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                             AI_ENGINES.forEach(e => {
                                 const proxyResult = aiData.engines[e.id];
                                 if (proxyResult?.result?.pick) {
+                                    // V47 FIX: parseProxyAIResponse returns 'reasoning' not 'reason'
+                                    const explanation = proxyResult.result.reasoning || proxyResult.result.reason || `${e.name} analysis via AI Proxy`;
                                     liveEngines[e.id] = {
                                         vote: proxyResult.result.pick,
                                         confidence: proxyResult.result.confidence || 65,
-                                        reason: proxyResult.result.reason || `${e.name} analysis via AI Proxy`,
+                                        reason: explanation,
                                         isLive: true,
                                         trueProb: proxyResult.result.trueProb || null,
                                         fairOdds: proxyResult.result.fairOdds || null
                                     };
                                     liveCount++;
-                                    console.log(`   ${e.icon} ${e.name}: ${proxyResult.result.pick} @ ${proxyResult.result.confidence}% - "${(proxyResult.result.reason || '').substring(0, 60)}..."`);
+                                    console.log(`   ${e.icon} ${e.name}: ${proxyResult.result.pick} @ ${proxyResult.result.confidence}% - "${explanation.substring(0, 60)}..."`);
                                 } else {
                                     // Engine timed out or errored — show TIMEOUT, never SIM
                                     const errMsg = proxyResult?.error || 'No response';
@@ -29734,7 +30107,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                                     liveEngines[engine.id] = {
                                                         vote: retryResult.result.pick,
                                                         confidence: retryResult.result.confidence || 65,
-                                                        reason: retryResult.result.reason || `${engine.name} analysis (retry)`,
+                                                        reason: retryResult.result.reasoning || retryResult.result.reason || `${engine.name} analysis (retry)`,
                                                         isLive: true,
                                                         isRetry: true,
                                                         trueProb: retryResult.result.trueProb || null,
@@ -29821,6 +30194,18 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                 // Re-render the AI engines panel with live data
                                 renderAIEngines(state.lastAnalysisResult);
                                 
+                                // V47: Calculate and render Confidence Gates
+                                try {
+                                    const gateResult = calculateConfidenceGates(
+                                        liveEngines,
+                                        state.lastProjection,
+                                        state.playerStats || state.players?.find(p => p.name === player)
+                                    );
+                                    renderConfidenceGates(gateResult);
+                                } catch(gateErr) {
+                                    console.warn('⚠️ Confidence Gates error (non-fatal):', gateErr.message);
+                                }
+                                
                                 // V18: Re-render Both Sides panel with blended Feel-Like Odds
                                 displayResults(state.lastAnalysisResult);
                                 
@@ -29833,6 +30218,88 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                 if (aiTitle && liveCount > 0) {
                                     aiTitle.innerHTML = `10 AI ENGINE VOTES <span style="background: #00ff88; color: #000; padding: 2px 8px; border-radius: 4px; font-size: 10px; margin-left: 8px; font-weight: bold;">🟢 ${liveCount} LIVE</span>`;
                                 }
+                                
+                                // V47: Fire Reddit + Twitter Sentiment in background (non-blocking)
+                                (async () => {
+                                    try {
+                                        const opponent = state.event?.awayTeam?.shortDisplayName || state.event?.homeTeam?.shortDisplayName || 'opponent';
+                                        const sport = state.sport || 'nba';
+                                        
+                                        const [redditData, twitterData] = await Promise.allSettled([
+                                            getRedditSentiment(player, opponent, sport, market),
+                                            getTwitterSentiment(player, opponent, sport, market)
+                                        ]);
+                                        
+                                        const reddit = redditData.status === 'fulfilled' ? redditData.value : null;
+                                        const twitter = twitterData.status === 'fulfilled' ? twitterData.value : null;
+                                        
+                                        // Store for other components
+                                        state.lastRedditSentiment = reddit;
+                                        state.lastTwitterSentiment = twitter;
+                                        
+                                        // Update research panel with Reddit + Twitter findings
+                                        const researchGrid = document.getElementById('research-grid');
+                                        if (researchGrid) {
+                                            let extraCards = '';
+                                            
+                                            if (reddit?.found) {
+                                                const rIcon = reddit.lean === 'OVER' ? '🟢' : reddit.lean === 'UNDER' ? '🔴' : '⚪';
+                                                const rReal = reddit.hasRealData ? '📌 REAL DATA' : '🤖 AI-Inferred';
+                                                extraCards += `
+                                                    <div class="research-card" style="border-left: 3px solid ${reddit.lean === 'OVER' ? '#00ff88' : reddit.lean === 'UNDER' ? '#ff4444' : '#888'};">
+                                                        <div class="research-card-header">
+                                                            <span class="research-card-icon">📱</span>
+                                                            <span class="research-card-name">Reddit Sentiment</span>
+                                                            <span style="font-size:9px;background:rgba(0,200,255,0.2);color:#00c8ff;padding:1px 6px;border-radius:3px;margin-left:auto;">LIVE</span>
+                                                        </div>
+                                                        <div class="research-card-finding">${rIcon} ${reddit.sentiment} — Lean <strong>${reddit.lean}</strong> | ${rReal}${reddit.postsFound > 0 ? ` (${reddit.postsFound} posts)` : ''}</div>
+                                                        ${reddit.summary ? `<div style="font-size:11px;color:#aaa;margin-top:4px;font-style:italic;">"${reddit.summary.substring(0, 120)}${reddit.summary.length > 120 ? '...' : ''}"</div>` : ''}
+                                                        ${reddit.sharpPicks && !/none/i.test(reddit.sharpPicks) ? `<div style="font-size:11px;color:#f4c430;margin-top:4px;">🎯 POTD/Sharp: ${reddit.sharpPicks.substring(0, 80)}</div>` : ''}
+                                                        <div class="research-card-meta">
+                                                            <span class="research-meta-tag ${reddit.lean === 'OVER' ? 'positive' : reddit.lean === 'UNDER' ? 'negative' : ''}">${reddit.lean}</span>
+                                                            <span class="research-meta-tag">${reddit.confidence} conf</span>
+                                                        </div>
+                                                    </div>`;
+                                            }
+                                            
+                                            if (twitter?.found) {
+                                                const tIcon = twitter.lean === 'OVER' ? '🟢' : twitter.lean === 'UNDER' ? '🔴' : '⚪';
+                                                const tReal = twitter.hasRealData ? '📌 REAL DATA' : '🤖 AI-Inferred';
+                                                const sharpBadge = twitter.sharpMoney !== 'UNKNOWN' ? ` | 💰 Sharp: <strong>${twitter.sharpMoney}</strong>` : '';
+                                                extraCards += `
+                                                    <div class="research-card" style="border-left: 3px solid ${twitter.lean === 'OVER' ? '#00ff88' : twitter.lean === 'UNDER' ? '#ff4444' : '#888'};">
+                                                        <div class="research-card-header">
+                                                            <span class="research-card-icon">🐦</span>
+                                                            <span class="research-card-name">Twitter/X Sentiment</span>
+                                                            <span style="font-size:9px;background:rgba(0,200,255,0.2);color:#00c8ff;padding:1px 6px;border-radius:3px;margin-left:auto;">LIVE</span>
+                                                        </div>
+                                                        <div class="research-card-finding">${tIcon} ${twitter.sentiment} — Lean <strong>${twitter.lean}</strong>${sharpBadge} | ${tReal}${twitter.tweetsFound > 0 ? ` (${twitter.tweetsFound} tweets)` : ''}</div>
+                                                        ${twitter.summary ? `<div style="font-size:11px;color:#aaa;margin-top:4px;font-style:italic;">"${twitter.summary.substring(0, 120)}${twitter.summary.length > 120 ? '...' : ''}"</div>` : ''}
+                                                        ${twitter.handles && !/none/i.test(twitter.handles) ? `<div style="font-size:11px;color:#00c8ff;margin-top:4px;">📢 Notable: ${twitter.handles.substring(0, 60)}</div>` : ''}
+                                                        <div class="research-card-meta">
+                                                            <span class="research-meta-tag ${twitter.lean === 'OVER' ? 'positive' : twitter.lean === 'UNDER' ? 'negative' : ''}">${twitter.lean}</span>
+                                                            ${twitter.sharpMoney !== 'UNKNOWN' ? `<span class="research-meta-tag">💰 Sharp ${twitter.sharpMoney}</span>` : ''}
+                                                        </div>
+                                                    </div>`;
+                                            }
+                                            
+                                            if (extraCards) {
+                                                researchGrid.insertAdjacentHTML('afterbegin', extraCards);
+                                                // Update research count
+                                                const countEl = document.getElementById('research-count');
+                                                if (countEl) {
+                                                    const existing = parseInt(countEl.textContent) || 0;
+                                                    const added = (reddit?.found ? 1 : 0) + (twitter?.found ? 1 : 0);
+                                                    countEl.textContent = `${existing + added} sources checked`;
+                                                }
+                                            }
+                                        }
+                                        
+                                        console.log(`✅ V47 Social Sentiment: Reddit=${reddit?.found ? reddit.lean : 'N/A'}, Twitter=${twitter?.found ? twitter.lean : 'N/A'}`);
+                                    } catch(e) {
+                                        console.log('⚠️ V47 Social Sentiment error (non-fatal):', e.message);
+                                    }
+                                })();
                             }
                         } else {
                             console.log('⚠️ No AI engine data returned from proxy — falling back to local analysis');
