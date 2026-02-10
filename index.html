@@ -28726,6 +28726,13 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
         // Called when proxy is not configured OR when proxy returns errors
         // Uses BDL data, scanner odds, mathematical models for engine votes
         // ═══════════════════════════════════════════════════════════════════
+        // V47: Utility — convert American odds to implied probability (0-1 decimal)
+        function oddsToProb(odds) {
+            if (!odds || odds === 0) return 0.5;
+            if (odds > 0) return 100 / (odds + 100);
+            return Math.abs(odds) / (Math.abs(odds) + 100);
+        }
+        
         function runLocalAIEngines(player, market, line, seasonAvg, l10Avg, l5Avg, hitRate, overOdds, underOdds, isHome, restDays, playerData, engines) {
             console.log(`\n🧠 V47 LOCAL AI ANALYSIS: Using mathematical models`);
             console.log(`   Player: ${player} | Market: ${market} | Line: ${line}`);
