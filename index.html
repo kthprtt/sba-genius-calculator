@@ -12082,7 +12082,10 @@ Return ONLY valid JSON:
         }
         
         async function refreshOdds() {
-            console.log('🔄 Refreshing odds data...');
+            // V48: Suppress noisy logging during active analysis
+            if (!state._analysisRunning) {
+                console.log('🔄 Refreshing odds data...');
+            }
             updateDataTimestamp('odds');
             updateDataTimestamp('sharp'); // BetBurger updates with odds
             // In production, this would fetch fresh odds from The Odds API
@@ -20488,13 +20491,31 @@ Return ONLY valid JSON:
                     if (selectedEvent) {
                         const homeName = selectedEvent.homeTeam?.shortDisplayName || '';
                         const awayName = selectedEvent.awayTeam?.shortDisplayName || '';
-                        const homeStanding = standings.byAbbr[resolveBDLTeamId(homeName)] || 
-                                             Object.values(standings.byAbbr).find(s => homeName.toLowerCase().includes(s.abbr?.toLowerCase()));
-                        const awayStanding = standings.byAbbr[resolveBDLTeamId(awayName)] ||
-                                             Object.values(standings.byAbbr).find(s => awayName.toLowerCase().includes(s.abbr?.toLowerCase()));
+                        const homeAbbr = selectedEvent.homeTeam?.abbreviation || '';
+                        const awayAbbr = selectedEvent.awayTeam?.abbreviation || '';
+                        const homeBdlId = resolveBDLTeamId(homeName);
+                        const awayBdlId = resolveBDLTeamId(awayName);
+                        
+                        // V48: Fix standings lookup — try abbreviation first, then BDL ID, then fuzzy name match
+                        const findStanding = (name, abbr, bdlId) => {
+                            // 1. Direct abbreviation match (NYK, IND, etc)
+                            if (abbr && standings.byAbbr[abbr]) return standings.byAbbr[abbr];
+                            // 2. BDL team ID match
+                            if (bdlId && standings.byId[bdlId]) return standings.byId[bdlId];
+                            // 3. Fuzzy: team full_name contains our name
+                            const lower = name.toLowerCase();
+                            return Object.values(standings.byAbbr).find(s => 
+                                s.teamName?.toLowerCase().includes(lower) || 
+                                lower.includes(s.teamName?.toLowerCase().split(' ').pop()) ||
+                                lower.includes(s.abbr?.toLowerCase())
+                            );
+                        };
+                        
+                        const homeStanding = findStanding(homeName, homeAbbr, homeBdlId);
+                        const awayStanding = findStanding(awayName, awayAbbr, awayBdlId);
                         state.homeStanding = homeStanding;
                         state.awayStanding = awayStanding;
-                        console.log(`✅ V29 Standings: Home=${homeStanding?.tier || 'N/A'} (${homeStanding?.wins}-${homeStanding?.losses}), Away=${awayStanding?.tier || 'N/A'} (${awayStanding?.wins}-${awayStanding?.losses})`);
+                        console.log(`✅ V29 Standings: Home=${homeStanding?.tier || 'N/A'} (${homeStanding?.wins ?? '?'}-${homeStanding?.losses ?? '?'}), Away=${awayStanding?.tier || 'N/A'} (${awayStanding?.wins ?? '?'}-${awayStanding?.losses ?? '?'})`);
                     }
                 }
                 if (shootingRange) {
@@ -25847,6 +25868,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             
             // CHANGE 2: Get empirical hit rate from game logs
             const hitRateData = getActualHitRate(market, bookLine);
+            state._cachedHitRate = hitRateData; // V48: Cache to avoid duplicate computation on re-render
             
             // V28c: Get situational H2H intelligence
             const situational = computeSituationalH2H(market, bookLine);
@@ -29371,6 +29393,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
         // ═══════════════════════════════════════════════════════════════════════════
         
         async function runAnalysis() {
+            state._analysisRunning = true; // V48: Suppress noisy logs during analysis
             const player = document.getElementById('player-select').value;
             const market = document.getElementById('market-type').value;
             const lineInput = document.getElementById('line-input');
@@ -30155,6 +30178,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                             });
                             
                             console.log(`\n🎯 ${liveCount}/${AI_ENGINES.length} engines returned REAL votes`);
+                            state._analysisRunning = false; // V48: Analysis complete, allow refresh logs
                             
                             // V18: Blend AI engine trueProb into Feel-Like Odds
                             // This is the key: 10 engines each return a trueProb, we weight-average them
@@ -33694,11 +33718,11 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             const underProb = 100 - overProb;
             
             // V28b: Get empirical hit rate and blend
-            const hitRateData = getActualHitRate(currentMarket, bookLine);
+            const hitRateData = state._cachedHitRate || getActualHitRate(currentMarket, bookLine);
             let rawModelProb = modelSide === sideA ? overProb : modelSide === sideB ? underProb : Math.max(overProb, underProb);
             
-            // V28c: Get situational context for the blend
-            const sitPreCalc = computeSituationalH2H(currentMarket, bookLine);
+            // V28c: Get situational context for the blend (use cached if available)
+            const sitPreCalc = state.situationalH2H || computeSituationalH2H(currentMarket, bookLine);
             const empProb = hitRateData ? (modelSide === sideA ? hitRateData.hitRate : (1 - hitRateData.hitRate)) * 100 : null;
             const sitProb = sitPreCalc ? (modelSide === sideA ? sitPreCalc.situationalHitRate : (1 - sitPreCalc.situationalHitRate)) * 100 : null;
             
