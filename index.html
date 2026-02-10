@@ -35551,10 +35551,11 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                             <div style="font-size: 12px; font-weight: 700; color: white; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${leg.player}</div>
                             <div style="font-size: 10px; color: #aaa;">${leg.market} ${leg.direction} ${leg.line} @ <span style="color: ${odds > 0 ? '#00ff88' : '#ccc'}">${odds > 0 ? '+' : ''}${odds}</span> ${book ? `(${book})` : ''}</div>
                             <div style="font-size: 9px; color: #888; margin-top: 2px;">${leg.event || ''} ${isCorrelated ? '<span style="color: #ff6b6b;">⚠️ CORRELATED</span>' : ''}</div>
+                            ${leg.aiReasoning ? `<div style="font-size: 9px; color: #b98fff; margin-top: 2px; font-style: italic; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${(leg.aiReasoning || '').replace(/"/g, '&quot;')}">${leg.aiPick === leg.direction ? '✅' : '⚠️'} ${leg.aiReasoning.substring(0, 60)}...</div>` : ''}
                         </div>
                         <div style="text-align: right; min-width: 60px;">
                             <div style="font-size: 11px; font-weight: 700; color: ${legProb > 55 ? '#00ff88' : legProb > 45 ? '#f4c430' : '#ff6b6b'};">${legProb.toFixed(1)}%</div>
-                            <div style="font-size: 9px; color: #888;">win prob</div>
+                            <div style="font-size: 9px; color: ${legAnalysis.probSource === 'ai_synthesis' ? '#00ff88' : legAnalysis.probSource === 'no_vig' ? '#00c8ff' : '#888'};">${legAnalysis.probSource === 'ai_synthesis' ? '🤖 AI' : legAnalysis.probSource === 'no_vig' ? '📊 Fair' : '📈 Implied'}</div>
                         </div>
                         <div style="display: flex; flex-direction: column; gap: 2px;">
                             <button onclick="removeFromParlay('${leg.parlayId || leg.id || (leg.player + '_' + leg.market + '_' + leg.line)}')" style="background: rgba(255,50,50,0.2); color: #ff6b6b; border: none; border-radius: 3px; padding: 2px 6px; font-size: 10px; cursor: pointer;">✕</button>
@@ -35609,7 +35610,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                         <span style="color: #FFD700; font-weight: bold; font-size: 14px;">🎫 SGP Parlay Analyzer (${slip.length} Legs)</span>
                         <div style="display: flex; gap: 6px;">
-                            <button onclick="SBA_V47.analyze(); renderParlayPanel();" style="background: linear-gradient(135deg, rgba(185,143,255,0.3), rgba(130,80,255,0.3)); color: #b98fff; border: 1px solid rgba(185,143,255,0.4); border-radius: 4px; padding: 3px 10px; font-size: 10px; cursor: pointer; font-weight: 700;">🔮 Analyze SGP</button>
+                            <button onclick="analyzeParlaySGPWithAI()" style="background: linear-gradient(135deg, rgba(185,143,255,0.3), rgba(130,80,255,0.3)); color: #b98fff; border: 1px solid rgba(185,143,255,0.4); border-radius: 4px; padding: 3px 10px; font-size: 10px; cursor: pointer; font-weight: 700;">🔮 Analyze SGP</button>
                             <button onclick="clearParlay()" style="background: rgba(255,50,50,0.15); color: #ff6b6b; border: 1px solid rgba(255,50,50,0.3); border-radius: 4px; padding: 3px 10px; font-size: 10px; cursor: pointer;">🗑 Clear</button>
                             <button onclick="document.getElementById('parlay-builder-panel').style.display='none'" style="background: rgba(100,100,120,0.3); color: #aaa; border: none; border-radius: 4px; padding: 3px 8px; cursor: pointer; font-size: 11px;">✕</button>
                         </div>
@@ -35670,6 +35671,137 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             renderParlayPanel();
         }
         
+        // ═══════════════════════════════════════════════════════════════════════════
+        // V47: AI-POWERED SGP ANALYSIS
+        // Sends each parlay leg to the AI proxy for true probability estimation
+        // Uses the same 10-engine synthesis as the main analysis
+        // ═══════════════════════════════════════════════════════════════════════════
+        async function analyzeParlaySGPWithAI() {
+            const slip = scannerState.parlaySlip || [];
+            if (slip.length < 1) {
+                console.log('⚠️ Add at least 1 leg to analyze.');
+                return;
+            }
+            
+            console.log(`\n🔮 AI SGP ANALYSIS: Analyzing ${slip.length} legs with AI synthesis...`);
+            
+            // Show loading state on the button
+            const panel = document.getElementById('parlay-builder-panel');
+            const analyzeBtn = panel?.querySelector('button[onclick*="analyzeParlay"]');
+            if (analyzeBtn) {
+                analyzeBtn.disabled = true;
+                analyzeBtn.innerHTML = '⏳ AI Analyzing...';
+            }
+            
+            // For each leg, send to AI proxy for true probability estimation
+            for (let i = 0; i < slip.length; i++) {
+                const leg = slip[i];
+                console.log(`   🤖 Leg ${i + 1}: ${leg.player} ${leg.market} ${leg.direction} ${leg.line}...`);
+                
+                // Build context for the AI
+                const isGameLevel = leg.isGameLevel || ['Alt Game Total', 'Alt Team Total', 'Spread', 'Moneyline', 'Game Total', 'Team Total'].some(t => (leg.market || '').includes(t));
+                const overOdds = leg.overOdds || leg.bestOverPrice || -110;
+                const underOdds = leg.underOdds || leg.bestUnderPrice || -110;
+                const overImpl = (oddsToProb(parseInt(overOdds) || -110) * 100).toFixed(1);
+                const underImpl = (oddsToProb(parseInt(underOdds) || -110) * 100).toFixed(1);
+                
+                let contextStr = '';
+                if (isGameLevel) {
+                    contextStr = `GAME MARKET: ${leg.player} | ${leg.market} | Line: ${leg.line} | Books: ${leg.bookCount || leg.allBooksCount || '?'} | Over odds: ${overOdds} (${overImpl}% implied) | Under odds: ${underOdds} (${underImpl}% implied)`;
+                    if (leg.event) contextStr += ` | Event: ${leg.event}`;
+                    if (leg.sportLabel) contextStr += ` | Sport: ${leg.sportLabel}`;
+                } else {
+                    contextStr = `PLAYER PROP: ${leg.player} | ${leg.market} | Line: ${leg.line} | Direction: ${leg.direction}`;
+                    if (leg.seasonAvg) contextStr += ` | Season avg: ${leg.seasonAvg}`;
+                    contextStr += ` | Over odds: ${overOdds} (${overImpl}% implied) | Under odds: ${underOdds} (${underImpl}% implied)`;
+                    if (leg.event) contextStr += ` | Event: ${leg.event}`;
+                }
+                
+                // Try AI proxy for true probability
+                if (isAIProxyConfigured()) {
+                    try {
+                        const prompt = `You are a sports betting analyst. Estimate the TRUE probability for this bet.
+
+${contextStr}
+
+The bettor wants: ${leg.direction} ${leg.line}
+
+Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-1, your TRUE probability for the pick side), "confidence": 50-95, "reasoning": "brief explanation"}`;
+                        
+                        const proxyUrl = CONFIG.aiProxy.url;
+                        const response = await Promise.race([
+                            fetch(proxyUrl, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    model: 'perplexity',
+                                    messages: [{ role: 'user', content: prompt }]
+                                })
+                            }),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 12000))
+                        ]);
+                        
+                        const data = await response.json();
+                        const parsed = parseProxyAIResponse(data, 'sgp-analyzer');
+                        
+                        if (parsed && parsed.pick && parsed.trueProb) {
+                            // trueProb from AI is for the PICK side. If pick matches direction, use it directly.
+                            let probForDirection = parsed.trueProb;
+                            if (typeof probForDirection === 'number' && probForDirection > 0 && probForDirection < 1) {
+                                probForDirection *= 100; // Convert 0-1 → 0-100
+                            }
+                            
+                            // If AI pick doesn't match our direction, flip the probability
+                            if (parsed.pick !== leg.direction) {
+                                probForDirection = 100 - probForDirection;
+                            }
+                            
+                            // Clamp to reasonable range
+                            probForDirection = Math.max(10, Math.min(90, probForDirection));
+                            
+                            // Store AI probability on the leg
+                            slip[i].trueProb = probForDirection;
+                            slip[i].aiPick = parsed.pick;
+                            slip[i].aiConfidence = parsed.confidence;
+                            slip[i].aiReasoning = parsed.reasoning || '';
+                            slip[i].probSource = 'ai_synthesis';
+                            
+                            console.log(`   ✅ AI: ${parsed.pick} @ ${probForDirection.toFixed(1)}% (conf: ${parsed.confidence}%) — ${(parsed.reasoning || '').substring(0, 80)}`);
+                        } else {
+                            console.log(`   ⚠️ AI parse failed, using odds-based probability`);
+                            slip[i].trueProb = parseFloat(leg.direction === 'OVER' ? overImpl : underImpl);
+                            slip[i].probSource = 'implied';
+                        }
+                    } catch (err) {
+                        console.log(`   ⚠️ AI call failed: ${err.message}, using odds-based probability`);
+                        slip[i].trueProb = parseFloat(leg.direction === 'OVER' ? overImpl : underImpl);
+                        slip[i].probSource = 'implied';
+                    }
+                } else {
+                    // No proxy — use implied prob with no-vig adjustment
+                    const totalImpl = parseFloat(overImpl) + parseFloat(underImpl);
+                    const noVigOver = (parseFloat(overImpl) / totalImpl * 100);
+                    const noVigUnder = (parseFloat(underImpl) / totalImpl * 100);
+                    slip[i].trueProb = leg.direction === 'OVER' ? noVigOver : noVigUnder;
+                    slip[i].probSource = 'no_vig';
+                    console.log(`   📊 No-vig: ${slip[i].trueProb.toFixed(1)}% (no AI proxy configured)`);
+                }
+                
+                // Small delay between legs to not overload proxy
+                if (i < slip.length - 1) await new Promise(r => setTimeout(r, 500));
+            }
+            
+            // Re-render with AI probabilities
+            console.log(`\n✅ AI SGP Analysis complete — all ${slip.length} legs evaluated`);
+            renderParlayPanel();
+            
+            // Restore button
+            if (analyzeBtn) {
+                analyzeBtn.disabled = false;
+                analyzeBtn.innerHTML = '🔮 Analyze SGP';
+            }
+        }
+        
         // ═══ PARLAY ANALYSIS ENGINE ═══
         function analyzeParlaySlip(slip) {
             const legProbs = [];
@@ -35677,17 +35809,41 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             const legOdds = [];
             
             // Step 1: Calculate individual leg probabilities
+            // V47 FIX: Use AI synthesis true probabilities when available, not just raw implied
             slip.forEach(leg => {
                 const odds = leg.direction === 'OVER' ? (leg.bestOverPrice || leg.overOdds || -110) : (leg.bestUnderPrice || leg.underOdds || -110);
-                const impliedProb = oddsToProb(parseInt(odds) || -110);
+                const rawImplied = oddsToProb(parseInt(odds) || -110) * 100; // Convert 0-1 → 0-100
                 
-                // Adjust implied prob by tier quality
+                // Priority 1: Use AI synthesis trueProb from full analysis (most accurate)
+                // Priority 2: Use scanner tier-adjusted probability
+                // Priority 3: Use no-vig fair probability from book data
+                // Priority 4: Use implied prob from best odds
+                let trueProb = rawImplied;
+                let probSource = 'implied';
+                
+                // Check if this leg has AI analysis data from main analysis or scanner
+                if (leg.trueProb && leg.trueProb > 5 && leg.trueProb < 98) {
+                    trueProb = typeof leg.trueProb === 'string' ? parseFloat(leg.trueProb) : leg.trueProb;
+                    // trueProb might be 0-1 decimal from scanner
+                    if (trueProb > 0 && trueProb < 1) trueProb *= 100;
+                    probSource = 'ai_synthesis';
+                } else if (leg.noVigProb && leg.noVigProb > 5 && leg.noVigProb < 98) {
+                    trueProb = leg.noVigProb;
+                    probSource = 'no_vig';
+                } else if (leg.fairProb && leg.fairProb > 0.05 && leg.fairProb < 0.98) {
+                    trueProb = leg.fairProb * 100;
+                    probSource = 'fair_prob';
+                }
+                
+                // Tier-based adjustment (from Diamond Scanner classification)
                 const tierBonus = {diamond: 6, lock: 4, high: 2, streak: 1, manual: 0, monitor: -2}[leg.estimatedTier] || 0;
-                const trueProb = Math.max(10, Math.min(95, impliedProb + tierBonus));
+                trueProb = Math.max(5, Math.min(95, trueProb + tierBonus));
+                
+                console.log(`   🎫 Leg: ${leg.player} ${leg.market} ${leg.direction} ${leg.line} | Prob: ${trueProb.toFixed(1)}% (${probSource}) | Odds: ${odds}`);
                 
                 legProbs.push(trueProb);
                 legOdds.push(parseInt(odds) || -110);
-                legAnalyses.push({impliedProb, trueProb, odds, dropEV: null});
+                legAnalyses.push({impliedProb: rawImplied, trueProb, odds, probSource, dropEV: null});
             });
             
             // Step 2: Combined parlay probability (independent)
@@ -38339,3 +38495,4 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
     </script>
 </body>
 </html>
+
