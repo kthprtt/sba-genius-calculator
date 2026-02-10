@@ -34217,7 +34217,7 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
             
             let filtered = results.filter(r => {
                 const isArb = r.arbPct && r.arbPct > 0;
-                const isQuality = r.estimatedTier === 'diamond' || r.estimatedTier === 'lock';
+                const isQuality = r.estimatedTier === 'diamond' || r.estimatedTier === 'lock' || r.estimatedTier === 'high';
                 
                 // View mode filter
                 if (viewMode === 'quality' && !isQuality) return false;
@@ -34310,18 +34310,28 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
             const viewMode = scannerState.viewMode || 'all';
             return `
                 <div id="scanner-filters" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; padding: 10px; background: rgba(20,20,40,0.6); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
-                    <!-- Row 1: View Mode + Tier Filters -->
+                    <!-- Row 1: View Mode + Parlay -->
                     <div style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
                         <span style="font-size: 11px; color: #888; margin-right: 2px;">View:</span>
-                        <button onclick="setViewMode('all')" class="view-mode-btn" style="background: ${viewMode === 'all' ? 'rgba(185,143,255,0.3)' : 'rgba(50,50,70,0.5)'}; color: ${viewMode === 'all' ? '#b98fff' : '#888'}; border: 1px solid ${viewMode === 'all' ? 'rgba(185,143,255,0.5)' : 'rgba(255,255,255,0.1)'}; border-radius: 4px; padding: 3px 8px; font-size: 10px; cursor: pointer; font-weight: ${viewMode === 'all' ? '700' : '400'};">📋 All</button>
-                        <button onclick="setViewMode('quality')" class="view-mode-btn" style="background: ${viewMode === 'quality' ? 'rgba(255,215,0,0.2)' : 'rgba(50,50,70,0.5)'}; color: ${viewMode === 'quality' ? '#FFD700' : '#888'}; border: 1px solid ${viewMode === 'quality' ? 'rgba(255,215,0,0.4)' : 'rgba(255,255,255,0.1)'}; border-radius: 4px; padding: 3px 8px; font-size: 10px; cursor: pointer; font-weight: ${viewMode === 'quality' ? '700' : '400'};">💎🔒 Quality Only</button>
-                        <button onclick="setViewMode('arbs')" class="view-mode-btn" style="background: ${viewMode === 'arbs' ? 'rgba(0,255,136,0.2)' : 'rgba(50,50,70,0.5)'}; color: ${viewMode === 'arbs' ? '#00ff88' : '#888'}; border: 1px solid ${viewMode === 'arbs' ? 'rgba(0,255,136,0.4)' : 'rgba(255,255,255,0.1)'}; border-radius: 4px; padding: 3px 8px; font-size: 10px; cursor: pointer; font-weight: ${viewMode === 'arbs' ? '700' : '400'};">💰 Arbs Only</button>
+                        <button onclick="setViewMode('all')" style="background: ${viewMode === 'all' ? 'rgba(185,143,255,0.3)' : 'rgba(50,50,70,0.5)'}; color: ${viewMode === 'all' ? '#b98fff' : '#888'}; border: 1px solid ${viewMode === 'all' ? 'rgba(185,143,255,0.5)' : 'rgba(255,255,255,0.1)'}; border-radius: 4px; padding: 3px 8px; font-size: 10px; cursor: pointer; font-weight: ${viewMode === 'all' ? '700' : '400'};">📋 All</button>
+                        <button onclick="setViewMode('quality')" style="background: ${viewMode === 'quality' ? 'rgba(255,215,0,0.2)' : 'rgba(50,50,70,0.5)'}; color: ${viewMode === 'quality' ? '#FFD700' : '#888'}; border: 1px solid ${viewMode === 'quality' ? 'rgba(255,215,0,0.4)' : 'rgba(255,255,255,0.1)'}; border-radius: 4px; padding: 3px 8px; font-size: 10px; cursor: pointer; font-weight: ${viewMode === 'quality' ? '700' : '400'};">💎🔒 Quality</button>
+                        <button onclick="setViewMode('arbs')" style="background: ${viewMode === 'arbs' ? 'rgba(0,255,136,0.2)' : 'rgba(50,50,70,0.5)'}; color: ${viewMode === 'arbs' ? '#00ff88' : '#888'}; border: 1px solid ${viewMode === 'arbs' ? 'rgba(0,255,136,0.4)' : 'rgba(255,255,255,0.1)'}; border-radius: 4px; padding: 3px 8px; font-size: 10px; cursor: pointer; font-weight: ${viewMode === 'arbs' ? '700' : '400'};">💰 Arbs</button>
                         <div style="margin-left: auto; display: flex; gap: 6px; align-items: center;">
-                            <button onclick="toggleParlayBuilder()" id="parlay-toggle-btn" style="background: ${parlayCount > 0 ? 'linear-gradient(135deg, rgba(255,215,0,0.3), rgba(255,170,0,0.3))' : 'rgba(50,50,70,0.5)'}; color: ${parlayCount > 0 ? '#FFD700' : '#aaa'}; border: 1px solid ${parlayCount > 0 ? 'rgba(255,215,0,0.5)' : 'rgba(255,255,255,0.15)'}; border-radius: 4px; padding: 3px 10px; font-size: 10px; cursor: pointer; font-weight: 700; position: relative;">🎫 Parlay${parlayCount > 0 ? ` (${parlayCount})` : ''}</button>
+                            <button onclick="toggleParlayBuilder()" id="parlay-toggle-btn" style="background: ${parlayCount > 0 ? 'linear-gradient(135deg, rgba(255,215,0,0.3), rgba(255,170,0,0.3))' : 'rgba(50,50,70,0.5)'}; color: ${parlayCount > 0 ? '#FFD700' : '#aaa'}; border: 1px solid ${parlayCount > 0 ? 'rgba(255,215,0,0.5)' : 'rgba(255,255,255,0.15)'}; border-radius: 4px; padding: 3px 10px; font-size: 10px; cursor: pointer; font-weight: 700;">🎫 Parlay${parlayCount > 0 ? ` (${parlayCount})` : ''}</button>
                             <button onclick="toggleManualBetAdd()" style="background: rgba(0,200,255,0.15); color: #00c8ff; border: 1px solid rgba(0,200,255,0.3); border-radius: 4px; padding: 3px 8px; font-size: 10px; cursor: pointer;" title="Manually add a bet to parlay">+ Add Bet</button>
                         </div>
                     </div>
-                    <!-- Row 2: Sort + Book Filter + Edge Filter -->
+                    <!-- Row 2: Tier Toggles (in All mode) -->
+                    ${viewMode === 'all' ? `<div style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+                        <span style="font-size: 10px; color: #666;">Show:</span>
+                        <label style="display: flex; align-items: center; gap: 3px; cursor: pointer; font-size: 10px;"><input type="checkbox" ${f.showDiamonds ? 'checked' : ''} onchange="toggleFilter('showDiamonds')"><span style="color: #b98fff;">💎</span></label>
+                        <label style="display: flex; align-items: center; gap: 3px; cursor: pointer; font-size: 10px;"><input type="checkbox" ${f.showLocks ? 'checked' : ''} onchange="toggleFilter('showLocks')"><span style="color: #FFD700;">🔒</span></label>
+                        <label style="display: flex; align-items: center; gap: 3px; cursor: pointer; font-size: 10px;"><input type="checkbox" ${f.showArbs ? 'checked' : ''} onchange="toggleFilter('showArbs')"><span style="color: #00ff88;">💰 Arbs</span></label>
+                        <label style="display: flex; align-items: center; gap: 3px; cursor: pointer; font-size: 10px;"><input type="checkbox" ${f.showHigh ? 'checked' : ''} onchange="toggleFilter('showHigh')"><span style="color: #00ff88;">🟢 High</span></label>
+                        <label style="display: flex; align-items: center; gap: 3px; cursor: pointer; font-size: 10px;"><input type="checkbox" ${f.showStreak ? 'checked' : ''} onchange="toggleFilter('showStreak')"><span style="color: #00c8ff;">📈 Streak</span></label>
+                        <label style="display: flex; align-items: center; gap: 3px; cursor: pointer; font-size: 10px;"><input type="checkbox" ${f.showMonitor ? 'checked' : ''} onchange="toggleFilter('showMonitor')"><span style="color: #888;">🔵 Monitor</span></label>
+                    </div>` : ''}
+                    <!-- Row 3: Sort + Book Filter + Edge -->
                     <div style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
                         <span style="font-size: 11px; color: #888;">Sort:</span>
                         <select id="filter-sort" onchange="setScanSort(this.value)" style="background: rgba(30,30,50,0.8); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 2px 6px; font-size: 10px;">
@@ -34334,19 +34344,19 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                             <option value="books-desc" ${scannerState.sortBy==='books-desc'?'selected':''}>📚 Most Books</option>
                             <option value="time-asc" ${scannerState.sortBy==='time-asc'?'selected':''}>⏰ Soonest Game</option>
                         </select>
-                        <button onclick="toggleMyBooks()" id="my-books-btn" style="background: rgba(255,215,0,0.1); color: #FFD700; border: 1px solid rgba(255,215,0,0.3); border-radius: 4px; padding: 2px 8px; font-size: 10px; cursor: pointer; white-space: nowrap;" title="Select your sportsbook accounts">📚 My Books</button>
-                        <select id="filter-book-price" onchange="setScanBook(this.value)" style="background: rgba(30,30,50,0.8); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 2px 6px; font-size: 10px; max-width: 100px;" title="Show best price at this specific book">
-                            <option value="all" ${(scannerState.filters.bookFilter||'all')==='all'?'selected':''}>🏷️ All Books</option>
-                            <option value="fanduel" ${scannerState.filters.bookFilter==='fanduel'?'selected':''}>FanDuel</option>
-                            <option value="draftkings" ${scannerState.filters.bookFilter==='draftkings'?'selected':''}>DraftKings</option>
-                            <option value="betmgm" ${scannerState.filters.bookFilter==='betmgm'?'selected':''}>BetMGM</option>
-                            <option value="pinnacle" ${scannerState.filters.bookFilter==='pinnacle'?'selected':''}>Pinnacle</option>
-                            <option value="bovada" ${scannerState.filters.bookFilter==='bovada'?'selected':''}>Bovada</option>
-                            <option value="betonlineag" ${scannerState.filters.bookFilter==='betonlineag'?'selected':''}>BetOnline</option>
-                            <option value="betrivers" ${scannerState.filters.bookFilter==='betrivers'?'selected':''}>BetRivers</option>
-                            <option value="fanatics" ${scannerState.filters.bookFilter==='fanatics'?'selected':''}>Fanatics</option>
-                            <option value="bet365" ${scannerState.filters.bookFilter==='bet365'?'selected':''}>bet365</option>
-                            <option value="williamhill_us" ${scannerState.filters.bookFilter==='williamhill_us'?'selected':''}>Caesars</option>
+                        <button onclick="toggleMyBooks()" style="background: rgba(255,215,0,0.1); color: #FFD700; border: 1px solid rgba(255,215,0,0.3); border-radius: 4px; padding: 2px 8px; font-size: 10px; cursor: pointer; white-space: nowrap;">📚 My Books</button>
+                        <select id="filter-book-price" onchange="setScanBook(this.value)" style="background: rgba(30,30,50,0.8); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 2px 6px; font-size: 10px; max-width: 100px;">
+                            <option value="all" ${(f.bookFilter||'all')==='all'?'selected':''}>🏷️ All Books</option>
+                            <option value="fanduel" ${f.bookFilter==='fanduel'?'selected':''}>FanDuel</option>
+                            <option value="draftkings" ${f.bookFilter==='draftkings'?'selected':''}>DraftKings</option>
+                            <option value="betmgm" ${f.bookFilter==='betmgm'?'selected':''}>BetMGM</option>
+                            <option value="pinnacle" ${f.bookFilter==='pinnacle'?'selected':''}>Pinnacle</option>
+                            <option value="bovada" ${f.bookFilter==='bovada'?'selected':''}>Bovada</option>
+                            <option value="betonlineag" ${f.bookFilter==='betonlineag'?'selected':''}>BetOnline</option>
+                            <option value="betrivers" ${f.bookFilter==='betrivers'?'selected':''}>BetRivers</option>
+                            <option value="fanatics" ${f.bookFilter==='fanatics'?'selected':''}>Fanatics</option>
+                            <option value="bet365" ${f.bookFilter==='bet365'?'selected':''}>bet365</option>
+                            <option value="williamhill_us" ${f.bookFilter==='williamhill_us'?'selected':''}>Caesars</option>
                         </select>
                         <span style="font-size: 11px; color: #888;">Min Edge:</span>
                         <select id="filter-min-edge" onchange="setMinEdge(this.value)" style="background: rgba(30,30,50,0.8); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 2px 6px; font-size: 10px;">
@@ -34359,7 +34369,13 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                         <button onclick="resetFilters()" style="background: rgba(100,100,120,0.3); color: #aaa; border: none; border-radius: 4px; padding: 3px 8px; font-size: 10px; cursor: pointer;">Reset</button>
                     </div>
                 </div>
+                ${parlayCount > 0 ? `<div id="parlay-floating-strip" style="background: linear-gradient(135deg, rgba(255,215,0,0.15), rgba(255,170,0,0.1)); border: 1px solid rgba(255,215,0,0.3); border-radius: 6px; padding: 6px 12px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; cursor: pointer;" onclick="toggleParlayBuilder()">
+                    <span style="font-size: 11px; color: #FFD700; font-weight: 700;">🎫 ${parlayCount} Leg${parlayCount > 1 ? 's' : ''} in Parlay</span>
+                    <span style="font-size: 10px; color: #aaa;">${scannerState.parlaySlip.map(l => l.player?.split(' ').pop()).join(' • ')}</span>
+                    <span style="font-size: 10px; color: #FFD700;">▼ View SGP Analyzer</span>
+                </div>` : ''}
             `;
+        }
         }
         
         function toggleFilter(filterName) {
@@ -37250,6 +37266,255 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
         // Backwards compatibility
         window.V45_TEST = window.V46_TEST;
         window.V44_TEST = window.V46_TEST;
+        
+        // ═══════════════════════════════════════════════════════════════════
+        // V47: SBA GLOBAL API — SGP Analyzer + Parlay Builder
+        // Usage: SBA_V47.analyzeSGP([{player, market, line, opponent}], "nba")
+        // ═══════════════════════════════════════════════════════════════════
+        window.SBA_V47 = {
+            version: '47.0',
+            
+            // ═══ ADD LEG TO PARLAY ═══
+            addLeg: function(player, market, direction, line, odds, book) {
+                addToParlay({
+                    player, market, direction: direction || 'OVER', line: parseFloat(line) || 0,
+                    overOdds: direction === 'OVER' ? (parseInt(odds) || -110) : -110,
+                    underOdds: direction === 'UNDER' ? (parseInt(odds) || -110) : -110,
+                    bestOverPrice: direction === 'OVER' ? (parseInt(odds) || -110) : -110,
+                    bestUnderPrice: direction === 'UNDER' ? (parseInt(odds) || -110) : -110,
+                    bestOverBook: direction === 'OVER' ? (book || 'Manual') : '',
+                    bestUnderBook: direction === 'UNDER' ? (book || 'Manual') : '',
+                    estimatedTier: 'manual', score: 50, entryPoint: 'manual',
+                    bookPrices: [{book: book || 'Manual', bookKey: (book || 'manual').toLowerCase().replace(/\s/g,''), line: parseFloat(line), overPrice: parseInt(odds) || -110}]
+                });
+                console.log(`🎫 SBA_V47.addLeg: ${player} ${market} ${direction} ${line} @ ${odds}`);
+            },
+            
+            // ═══ VIEW PARLAY ═══
+            getParlay: function() {
+                return scannerState.parlaySlip || [];
+            },
+            
+            // ═══ CLEAR PARLAY ═══
+            clearParlay: function() {
+                clearParlay();
+            },
+            
+            // ═══ ANALYZE CURRENT PARLAY ═══
+            analyze: function() {
+                const slip = scannerState.parlaySlip || [];
+                if (slip.length < 2) {
+                    console.log('⚠️ Need at least 2 legs to analyze. Use SBA_V47.addLeg() to add bets.');
+                    return null;
+                }
+                const analysis = analyzeParlaySlip(slip);
+                console.log('\n' + '═'.repeat(60));
+                console.log('🎫 SBA V47 PARLAY ANALYSIS');
+                console.log('═'.repeat(60));
+                slip.forEach((leg, i) => {
+                    console.log(`   Leg ${i+1}: ${leg.player} | ${leg.market} ${leg.direction} ${leg.line} @ ${leg.direction === 'OVER' ? leg.bestOverPrice || leg.overOdds : leg.bestUnderPrice || leg.underOdds}`);
+                    console.log(`          Win Prob: ${analysis.legProbs[i].toFixed(1)}%${analysis.legAnalyses[i].dropEV !== null ? ` | Drop EV: ${analysis.legAnalyses[i].dropEV.toFixed(2)}%` : ''}`);
+                });
+                console.log('─'.repeat(60));
+                console.log(`   Combined True Prob: ${analysis.trueProb.toFixed(2)}%`);
+                console.log(`   Parlay Odds: ${analysis.parlayOdds > 0 ? '+' : ''}${analysis.parlayOdds}`);
+                console.log(`   Parlay EV: ${analysis.parlayEV > 0 ? '+' : ''}${analysis.parlayEV.toFixed(2)}%`);
+                console.log(`   $100 Payout: $${analysis.payout100.toFixed(0)}`);
+                console.log(`   Straight Bets EV: ${analysis.straightBetsEV > 0 ? '+' : ''}${analysis.straightBetsEV.toFixed(2)}%`);
+                console.log(`   Verdict: ${analysis.parlayEV > analysis.straightBetsEV ? '✅ PARLAY IS BETTER' : '⚠️ STRAIGHT BETS ARE BETTER'}`);
+                if (analysis.correlations.length > 0) {
+                    console.log(`   ⚠️ CORRELATIONS: ${analysis.correlations.map(c => c.reason).join('; ')}`);
+                }
+                if (analysis.bestDropLeg !== null) {
+                    console.log(`   🔬 OPTIMIZER: Drop "${slip[analysis.bestDropLeg].player}" to ${analysis.bestDropDelta > 0 ? 'improve' : 'worsen'} EV by ${analysis.bestDropDelta.toFixed(2)}%`);
+                }
+                if (analysis.bestSingleBook) {
+                    console.log(`   📍 BEST BOOK: ${analysis.bestSingleBook.name} ${analysis.bestSingleBook.allLegs ? '(has all legs)' : `(${analysis.bestSingleBook.legCount} legs)`}`);
+                }
+                console.log('═'.repeat(60) + '\n');
+                return analysis;
+            },
+            
+            // ═══ SGP ANALYZER — Same-Game Parlay with full BDL integration ═══
+            analyzeSGP: async function(legs, sport) {
+                sport = sport || 'nba';
+                console.log('\n' + '═'.repeat(60));
+                console.log(`🎰 SBA V47 SGP ANALYZER — ${legs.length} Legs (${sport.toUpperCase()})`);
+                console.log('═'.repeat(60));
+                
+                // Step 1: Clear existing parlay
+                scannerState.parlaySlip = [];
+                
+                // Step 2: Fetch BDL stats for each player
+                const enrichedLegs = [];
+                for (const leg of legs) {
+                    console.log(`\n📊 Fetching stats: ${leg.player}...`);
+                    let bdlStats = null;
+                    try {
+                        const lastName = leg.player.split(' ').pop();
+                        const searchRes = await fetch(`https://api.balldontlie.io/v1/players?last_name=${encodeURIComponent(lastName)}`, {
+                            headers: { 'Authorization': CONFIG.keys.bdl || '' }
+                        });
+                        const searchData = await searchRes.json();
+                        const players = searchData.data || [];
+                        const match = players.find(p => `${p.first_name} ${p.last_name}`.toLowerCase() === leg.player.toLowerCase()) || players[0];
+                        
+                        if (match) {
+                            const statsRes = await fetch(`https://api.balldontlie.io/nba/v1/season_averages/general?season=2025&season_type=regular&type=base&player_ids[]=${match.id}`, {
+                                headers: { 'Authorization': CONFIG.keys.bdl || '' }
+                            });
+                            const statsData = await statsRes.json();
+                            bdlStats = statsData.data?.[0] || null;
+                            if (bdlStats) {
+                                console.log(`   ✅ ${match.first_name} ${match.last_name}: ${bdlStats.pts} PPG, ${bdlStats.reb} RPG, ${bdlStats.ast} APG, ${bdlStats.gp} GP`);
+                            }
+                        }
+                    } catch (e) {
+                        console.log(`   ⚠️ BDL fetch failed: ${e.message}`);
+                    }
+                    
+                    // Map market to stat
+                    const statMap = {
+                        'player_points': 'pts', 'points': 'pts',
+                        'player_rebounds': 'reb', 'rebounds': 'reb',
+                        'player_assists': 'ast', 'assists': 'ast',
+                        'player_threes': 'fg3m', 'threes': 'fg3m',
+                        'player_steals': 'stl', 'steals': 'stl',
+                        'player_blocks': 'blk', 'blocks': 'blk',
+                        'player_points_rebounds_assists': 'pra', 'pra': 'pra'
+                    };
+                    const statKey = statMap[leg.market] || 'pts';
+                    let seasonAvg = 0;
+                    if (bdlStats) {
+                        if (statKey === 'pra') seasonAvg = (bdlStats.pts || 0) + (bdlStats.reb || 0) + (bdlStats.ast || 0);
+                        else seasonAvg = bdlStats[statKey] || 0;
+                    }
+                    
+                    const line = parseFloat(leg.line) || 0;
+                    const diff = seasonAvg - line;
+                    const direction = leg.direction || (diff > 0 ? 'OVER' : 'UNDER');
+                    
+                    // Calculate win probability from stats
+                    const hitRate = Math.max(0.2, Math.min(0.85, 0.5 + diff * 0.04));
+                    const odds = leg.odds || -110;
+                    
+                    enrichedLegs.push({
+                        player: leg.player,
+                        market: leg.market,
+                        direction,
+                        line,
+                        seasonAvg,
+                        statKey,
+                        diff: diff.toFixed(1),
+                        hitRate,
+                        winProb: (hitRate * 100).toFixed(1),
+                        odds: parseInt(odds) || -110,
+                        opponent: leg.opponent || '',
+                        overOdds: direction === 'OVER' ? (parseInt(odds) || -110) : -110,
+                        underOdds: direction === 'UNDER' ? (parseInt(odds) || -110) : -110,
+                        bestOverPrice: direction === 'OVER' ? (parseInt(odds) || -110) : -110,
+                        bestUnderPrice: direction === 'UNDER' ? (parseInt(odds) || -110) : -110,
+                        bestOverBook: leg.book || 'SGP',
+                        bestUnderBook: leg.book || 'SGP',
+                        estimatedTier: hitRate > 0.65 ? 'diamond' : hitRate > 0.55 ? 'lock' : hitRate > 0.48 ? 'high' : 'streak',
+                        score: Math.round(hitRate * 100),
+                        entryPoint: 'sgp',
+                        event: leg.opponent ? `vs ${leg.opponent}` : '',
+                        eventId: leg.eventId || '',
+                        sport: sport === 'nba' ? 'basketball_nba' : sport === 'nfl' ? 'americanfootball_nfl' : sport,
+                        bookPrices: []
+                    });
+                    
+                    // Add to parlay slip
+                    addToParlay(enrichedLegs[enrichedLegs.length - 1]);
+                }
+                
+                // Step 3: Correlation analysis (SGP-specific)
+                console.log('\n─── SGP CORRELATION MATRIX ───');
+                const sameGame = enrichedLegs.every((l, i, arr) => 
+                    i === 0 || l.opponent === arr[0].opponent || !l.opponent
+                );
+                
+                if (sameGame && enrichedLegs.length >= 2) {
+                    console.log('   ⚠️ ALL LEGS IN SAME GAME — correlation is significant');
+                    
+                    // Player stat correlations
+                    for (let i = 0; i < enrichedLegs.length; i++) {
+                        for (let j = i + 1; j < enrichedLegs.length; j++) {
+                            const a = enrichedLegs[i], b = enrichedLegs[j];
+                            const samePlayer = a.player === b.player;
+                            const bothOffensive = ['pts', 'ast', 'fg3m', 'pra'].includes(a.statKey) && ['pts', 'ast', 'fg3m', 'pra'].includes(b.statKey);
+                            
+                            if (samePlayer) {
+                                console.log(`   🔴 SAME PLAYER: ${a.player} — ${a.market} + ${b.market} are highly correlated`);
+                            } else if (bothOffensive) {
+                                // Teammates' offensive stats correlate with game pace
+                                console.log(`   🟡 PACE CORRELATION: ${a.player} ${a.statKey} & ${b.player} ${b.statKey} both depend on game pace/flow`);
+                            }
+                        }
+                    }
+                }
+                
+                // Step 4: Run full analysis
+                console.log('\n─── SGP LEG ANALYSIS ───');
+                enrichedLegs.forEach((leg, i) => {
+                    const tierIcon = {diamond: '💎', lock: '🔒', high: '🟢', streak: '📈'}[leg.estimatedTier] || '📊';
+                    console.log(`   ${tierIcon} Leg ${i+1}: ${leg.player} | ${leg.market.replace('player_', '')} ${leg.direction} ${leg.line}`);
+                    console.log(`      Season avg: ${leg.seasonAvg} | Diff: ${leg.diff > 0 ? '+' : ''}${leg.diff} | Win: ${leg.winProb}%`);
+                });
+                
+                // Step 5: Combined analysis using parlay engine
+                const analysis = analyzeParlaySlip(scannerState.parlaySlip);
+                
+                // Step 6: SGP-specific adjustments
+                // True SGP probability must account for correlation (reduce by 5-15%)
+                const correlationPenalty = sameGame ? 0.85 : 1.0; // 15% penalty for same-game
+                const adjTrueProb = analysis.trueProb * correlationPenalty;
+                const adjParlayMultiplier = analysis.payout100 / 100;
+                const adjEV = ((adjTrueProb / 100) * (adjParlayMultiplier - 1) - (1 - adjTrueProb / 100)) * 100;
+                
+                console.log('\n─── SGP VERDICT ───');
+                console.log(`   Raw Combined Prob: ${analysis.trueProb.toFixed(2)}%`);
+                console.log(`   Correlation-Adj Prob: ${adjTrueProb.toFixed(2)}% ${sameGame ? '(⚠️ -15% same-game penalty)' : ''}`);
+                console.log(`   SGP Odds: ${analysis.parlayOdds > 0 ? '+' : ''}${analysis.parlayOdds}`);
+                console.log(`   SGP EV: ${adjEV > 0 ? '+' : ''}${adjEV.toFixed(2)}%`);
+                console.log(`   $100 Payout: $${analysis.payout100.toFixed(0)}`);
+                console.log(`   Verdict: ${adjEV > 0 ? '✅ +EV SGP' : '❌ -EV SGP'}`);
+                
+                if (analysis.bestDropLeg !== null) {
+                    const dl = scannerState.parlaySlip[analysis.bestDropLeg];
+                    console.log(`   🔬 Weakest leg: "${dl.player}" — dropping improves EV by ${analysis.bestDropDelta > 0 ? '+' : ''}${analysis.bestDropDelta.toFixed(2)}%`);
+                }
+                
+                console.log('═'.repeat(60) + '\n');
+                
+                // Open the parlay panel in UI
+                toggleParlayBuilder();
+                
+                return {
+                    legs: enrichedLegs,
+                    combinedProb: analysis.trueProb,
+                    adjProb: adjTrueProb,
+                    parlayOdds: analysis.parlayOdds,
+                    parlayEV: adjEV,
+                    rawEV: analysis.parlayEV,
+                    payout100: analysis.payout100,
+                    correlations: analysis.correlations,
+                    sameGame,
+                    bestDropLeg: analysis.bestDropLeg !== null ? {
+                        index: analysis.bestDropLeg,
+                        player: scannerState.parlaySlip[analysis.bestDropLeg]?.player,
+                        evDelta: analysis.bestDropDelta
+                    } : null,
+                    bestBook: analysis.bestSingleBook,
+                    straightBetsEV: analysis.straightBetsEV,
+                    verdict: adjEV > 0 ? 'TAKE' : 'PASS'
+                };
+            }
+        };
+        
+        // Short alias
+        window.SBA = window.SBA_V47;
     </script>
 </body>
 </html>
