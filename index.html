@@ -25088,7 +25088,7 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
 Player: ${player}
 Market: ${market} OVER/UNDER ${line}
 Context: Season=${context?.seasonAvg || 'N/A'}, L5=${context?.l5Avg || 'N/A'}, L10=${context?.l10Avg || 'N/A'}
-Home/Away: ${context?.isHome ? 'HOME' : 'AWAY'}
+Home/Away: ${context?.isHome ? 'HOME' : 'AWAY'}${context?.blowoutWarning ? `\n⚠️ ${context.blowoutWarning}` : ''}
 Analyze this prop. Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueProb":0.55,"reasoning":"explanation"}`;
                 
                 const response = await fetch(`${CONFIG.aiProxy}/api/ai/${engineId}`, {
@@ -25152,7 +25152,7 @@ H2H vs opponent: ${context.h2h?.avg || 'N/A'} (${context.h2h?.games || 0}g)
 Home/Away: ${context.isHome ? 'HOME' : 'AWAY'}, Rest: ${context.restDays || 'N/A'} days
 Injuries: ${context.injuries?.summary || 'N/A'}
 Defense: ${context.defenseRank || 'N/A'}
-Team Intel: ${context.teamIntel ? `ProjTotal=${context.teamIntel.projectedTotal}, HomePPG=${context.teamIntel.homePPG}, AwayPPG=${context.teamIntel.awayPPG}` : 'N/A'}
+Team Intel: ${context.teamIntel ? `ProjTotal=${context.teamIntel.projectedTotal}, HomePPG=${context.teamIntel.homePPG}, AwayPPG=${context.teamIntel.awayPPG}` : 'N/A'}${context.blowoutWarning ? `\n⚠️ ${context.blowoutWarning}` : ''}
 
 Analyze this prop. Should bettor take OVER or UNDER?
 Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueProb":0.55,"reasoning":"explanation"}`;
@@ -29953,13 +29953,15 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     // V39: Tell proxy which market this seasonAvg represents
                     seasonAvgMarket: market || 'Points',
                     seasonAvgLabel: getStatLabel(market || 'Points'),
-                    l10Avg: (projData.l10Avg != null && projData.l10Avg > 0) ? projData.l10Avg : l10Avg,
-                    l5Avg: (projData.l5Avg != null && projData.l5Avg > 0) ? projData.l5Avg : l5Avg,
-                    // V48: Provide blowout-cleaned values so AI engines aren't misled by DNP games
-                    l5AvgClean: projData.engines?.recentFormClean || null,
-                    l10AvgClean: projData.engines?.l10AvgClean || null,
+                    l10Avg: (projData.blowoutGamesInL5 > 0 && projData.engines?.l10AvgClean) 
+                        ? projData.engines.l10AvgClean 
+                        : ((projData.l10Avg != null && projData.l10Avg > 0) ? projData.l10Avg : l10Avg),
+                    l5Avg: (projData.blowoutGamesInL5 > 0 && projData.engines?.recentFormClean) 
+                        ? projData.engines.recentFormClean 
+                        : ((projData.l5Avg != null && projData.l5Avg > 0) ? projData.l5Avg : l5Avg),
+                    // V48: Blowout context for AI engines
                     blowoutWarning: (projData.blowoutGamesInL5 > 0) ? 
-                        `WARNING: ${projData.blowoutGamesInL5} of last 5 games are blowout/DNP with <78% minutes. Raw L5 is misleadingly low. Clean L5=${projData.engines?.recentFormClean?.toFixed(1)}` : null,
+                        `WARNING: ${projData.blowoutGamesInL5} of last 5 games are blowout/DNP with <78% minutes. Raw L5 was ${projData.l5Avg?.toFixed(1)}, cleaned to ${projData.engines?.recentFormClean?.toFixed(1)}. Weight season avg and clean L5 heavily.` : null,
                     hitRate: projData.hitRate?.hitRate ?? (typeof projData.hitRate === 'number' ? projData.hitRate : hitRate),
                     isHome,
                     restDays,
@@ -30753,10 +30755,11 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             const weather = WEATHER_SPORTS.includes(state.sport) ? generateWeather() : null;
             
             // Get L5/L3 avg from projection or player data
-            const projL5 = state.lastProjection?.l5Avg;
+            // V48: Use blowout-cleaned L5 when available
+            const projL5 = state.lastProjection?.smartL5 || state.lastProjection?.l5Avg;
             const l5Avg = (projL5 != null && projL5 > 0) ? projL5 : (playerData?.l5?.pts || null);
             const l3Avg = state.lastProjection?.l3Avg || null;
-            console.log('🔍 Factors debug:', {l5Avg, l3Avg, variance: state.lastProjection?.playerConsistency});
+            console.log('🔍 Factors debug:', {l5Avg, l3Avg, variance: state.lastProjection?.playerConsistency, blowoutCleaned: !!state.lastProjection?.smartL5});
             
             // Real line movement from Odds API
             const hasLineMovement = !!(state.liveOdds?.lineMovement);
