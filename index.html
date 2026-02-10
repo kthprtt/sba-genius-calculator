@@ -2228,6 +2228,13 @@
                         <button class="scanner-btn" onclick="startDiamondScan('diamond')" id="scan-diamond-btn">💎 Diamonds Only</button>
                         <button class="scanner-btn" onclick="startDiamondScan('lock')" id="scan-lock-btn">🔒 Locks & Above</button>
                         <button class="scanner-btn" onclick="stopDiamondScan()" id="scan-stop-btn" style="display:none; border-color: rgba(255,68,68,0.4); color: #ff6b6b;">⏹ Stop</button>
+                        <button class="scanner-btn" onclick="forceRescan()" id="scan-rescan-btn" style="border-color: rgba(0,200,255,0.3); color: #00c8ff;" title="Clear cache and fetch fresh odds from API">🔄 Re-Scan</button>
+                        <select class="scanner-filter" id="scanner-books-preset" onchange="setScanBookPreset(this.value)" title="Which sportsbooks to pull odds from — fewer books = fewer credits" style="background: #1a1a2e; color: #e0e0e0; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 4px 6px; font-size: 11px; max-width: 130px;">
+                            <option value="full" selected>📚 Full (38 books)</option>
+                            <option value="us-all">🇺🇸 US All (22)</option>
+                            <option value="us-core">🇺🇸 US Core (12)</option>
+                            <option value="sharp-only">📌 Sharp Only (6)</option>
+                        </select>
                         <select class="scanner-filter" id="scanner-book-filter" title="Priority book — highlight arbs involving this book" style="background: #1a1a2e; color: #e0e0e0; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 4px 6px; font-size: 11px; max-width: 110px;">
                             <option value="all" selected>📚 All Books</option>
                             <option value="pinnacle">📌 Pinnacle</option>
@@ -33439,6 +33446,36 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
         // Level 3: FULL SYNTHESIS — Adds AI engines + research (8-15 sec)
         // ═══════════════════════════════════════════════════════════════════════════
         
+        // ═══ SCANNER BOOKMAKERS — controls which books to pull + credit cost ═══
+        // Using &bookmakers= instead of &regions= = MASSIVE credit savings
+        // Only pays for books that return data, not entire regions
+        const SCANNER_BOOKMAKERS_DEFAULT = 'fanduel,draftkings,betmgm,williamhill_us,betrivers,fanatics,espnbet,hardrockbet,bovada,betonlineag,betparx,ballybet,fliff,mybookieag,betus,rebet,betanysports,lowvig,pinnacle,bet365,coolbet,betsson,onexbet,williamhill,novig,betopenly,prophetx,kalshi,polymarket,betfair_ex_uk,prizepicks,underdog,betr_us_dfs,pick6,matchbook,marathonbet,betfair_ex_eu,smarkets';
+        
+        // Preset configs for the dropdown
+        const SCANNER_BOOK_PRESETS = {
+            'us-core': { 
+                label: '🇺🇸 US Core (12)', 
+                books: 'fanduel,draftkings,betmgm,williamhill_us,betrivers,fanatics,espnbet,hardrockbet,bovada,betonlineag,pinnacle,bet365'
+            },
+            'us-all': { 
+                label: '🇺🇸 US All (22)', 
+                books: 'fanduel,draftkings,betmgm,williamhill_us,betrivers,fanatics,espnbet,hardrockbet,bovada,betonlineag,betparx,ballybet,fliff,mybookieag,betus,rebet,betanysports,lowvig,pinnacle,bet365,novig,betopenly'
+            },
+            'full': { 
+                label: '📚 Full (38)', 
+                books: SCANNER_BOOKMAKERS_DEFAULT
+            },
+            'sharp-only': { 
+                label: '📌 Sharp Only (6)', 
+                books: 'pinnacle,bet365,betfair_ex_uk,matchbook,marathonbet,smarkets'
+            }
+        };
+        
+        let scannerBookmakers = SCANNER_BOOKMAKERS_DEFAULT;
+        let scannerRegions = 'us,us2'; // kept as fallback
+        try { scannerBookmakers = localStorage.getItem('sba_scan_bookmakers') || SCANNER_BOOKMAKERS_DEFAULT; } catch(e) {}
+        try { scannerRegions = localStorage.getItem('sba_scan_regions') || 'us,us2'; } catch(e) {}
+        
         let scannerState = {
             isScanning: false,
             scanMode: 'all', // 'all', 'diamond', 'lock'
@@ -34320,8 +34357,22 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                 return;
             }
             
+            // ═══ CACHE CHECK: If we already have scan data, just re-filter — NO API cost ═══
+            if (scannerState.results && scannerState.results.length > 0 && scannerState._scanComplete) {
+                console.log(`💎 Scanner: Re-filtering ${scannerState.results.length} cached results (mode: ${mode}) — 0 API calls`);
+                scannerState.scanMode = mode;
+                
+                // Highlight active button
+                document.querySelectorAll('.scanner-btn').forEach(b => b.classList.remove('active'));
+                document.getElementById(`scan-${mode === 'all' ? 'all' : mode === 'diamond' ? 'diamond' : 'lock'}-btn`)?.classList.add('active');
+                
+                rerenderFilteredResults();
+                return;
+            }
+            
             scannerState.isScanning = true;
             scannerState.scanMode = mode;
+            scannerState._scanComplete = false;
             scannerState.bookFilter = document.getElementById('scanner-book-filter')?.value || 'all';
             scannerState.windowHrs = parseInt(document.getElementById('scanner-window-filter')?.value || '48');
             scannerState.results = [];
@@ -34629,9 +34680,9 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                                 // V42: Pass apiKey to proxy so it uses the current key
                                 let propsUrl;
                                 if (CONFIG.aiProxy) {
-                                    propsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${CONFIG.keys.odds}&regions=us,us2,us_dfs,us_ex,eu,uk,au&markets=${propMarkets}&oddsFormat=american`;
+                                    propsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${CONFIG.keys.odds}&bookmakers=${scannerBookmakers}&markets=${propMarkets}&oddsFormat=american`;
                                 } else {
-                                    propsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${CONFIG.keys.odds}&regions=us,us2,us_dfs,us_ex,eu,uk,au&markets=${propMarkets}&oddsFormat=american`;
+                                    propsUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${CONFIG.keys.odds}&bookmakers=${scannerBookmakers}&markets=${propMarkets}&oddsFormat=american`;
                                 }
                                 
                                 const propsRes = await fetch(propsUrl, { signal: scannerState.abortController.signal });
@@ -34711,9 +34762,9 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                                     let gameUrl;
                                     // V42: Pass apiKey to proxy so it uses the current key
                                     if (CONFIG.aiProxy) {
-                                        gameUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${CONFIG.keys.odds}&regions=us,us2,us_dfs,us_ex,eu,uk,au&markets=${gameMarkets}&oddsFormat=american`;
+                                        gameUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${CONFIG.keys.odds}&bookmakers=${scannerBookmakers}&markets=${gameMarkets}&oddsFormat=american`;
                                     } else {
-                                        gameUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${CONFIG.keys.odds}&regions=us,us2,us_dfs,us_ex,eu,uk,au&markets=${gameMarkets}&oddsFormat=american`;
+                                        gameUrl = `https://api.the-odds-api.com/v4/sports/${sport}/events/${event.id}/odds?apiKey=${CONFIG.keys.odds}&bookmakers=${scannerBookmakers}&markets=${gameMarkets}&oddsFormat=american`;
                                     }
                                     const gameRes = await fetch(gameUrl, { signal: scannerState.abortController.signal });
                                     
@@ -35434,6 +35485,8 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                 progressBar.style.width = '100%';
                 statusEl.className = 'scanner-status found';
                 statusEl.textContent = `${scannerState.results.length} FOUND`;
+                scannerState._scanComplete = true;
+                console.log(`💎 Scan cached — switching modes costs 0 API calls. Click "🔄 Re-Scan" for fresh data.`);
                 
             } catch (e) {
                 if (e.name === 'AbortError') {
@@ -35983,9 +36036,9 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                     let allBooksUrl;
                     // V42: Pass apiKey to proxy so it uses the current key
                     if (CONFIG.aiProxy) {
-                        allBooksUrl = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${eventId}/odds?apiKey=${CONFIG.keys.odds}&regions=us,us2,us_dfs,us_ex,eu,uk,au&markets=${apiMarket}&oddsFormat=american`;
+                        allBooksUrl = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${eventId}/odds?apiKey=${CONFIG.keys.odds}&bookmakers=${scannerBookmakers}&markets=${apiMarket}&oddsFormat=american`;
                     } else {
-                        allBooksUrl = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${eventId}/odds?apiKey=${CONFIG.keys.odds}&regions=us,us2,us_dfs,us_ex,eu,uk,au&markets=${apiMarket}&oddsFormat=american`;
+                        allBooksUrl = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${eventId}/odds?apiKey=${CONFIG.keys.odds}&bookmakers=${scannerBookmakers}&markets=${apiMarket}&oddsFormat=american`;
                     }
                     
                     console.log(`💎 Best odds fetch: ${allBooksUrl}`);
@@ -36083,6 +36136,35 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
             })();
             
             setTimeout(() => notification.remove(), 12000);
+        }
+        
+        function forceRescan(mode = 'all') {
+            scannerState._scanComplete = false;
+            scannerState.results = [];
+            scannerState._skippedSports = new Set();
+            console.log('💎 Cache cleared — forcing fresh API scan');
+            startDiamondScan(mode);
+        }
+        
+        function setScanRegions(value) {
+            scannerRegions = value;
+            try { localStorage.setItem('sba_scan_regions', value); } catch(e) {}
+            scannerState._scanComplete = false;
+            scannerState.results = [];
+            const regionCount = value.split(',').length;
+            console.log(`💎 Scanner regions set to: ${value} (${regionCount} regions — ${regionCount}x credit cost)`);
+        }
+        
+        function setScanBookPreset(presetKey) {
+            const preset = SCANNER_BOOK_PRESETS[presetKey];
+            if (!preset) return;
+            scannerBookmakers = preset.books;
+            try { localStorage.setItem('sba_scan_bookmakers', scannerBookmakers); } catch(e) {}
+            // Clear cache so next scan uses new books
+            scannerState._scanComplete = false;
+            scannerState.results = [];
+            const bookCount = scannerBookmakers.split(',').length;
+            console.log(`💎 Scanner books set to: ${preset.label} (${bookCount} books)`);
         }
         
         function stopDiamondScan() {
