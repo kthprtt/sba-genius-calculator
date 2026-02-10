@@ -2307,6 +2307,14 @@
                             <option value="UCL">⚽ Champions League</option>
                             <option value="UFC">🥊 UFC/MMA</option>
                             <option value="Boxing">🥊 Boxing</option>
+                            <option value="ATP">🎾 Tennis ATP</option>
+                            <option value="WTA">🎾 Tennis WTA</option>
+                            <option value="CricketIPL">🏏 Cricket IPL</option>
+                            <option value="CricketT20I">🏏 Cricket T20I</option>
+                            <option value="CricketODI">🏏 Cricket ODI</option>
+                            <option value="CricketTest">🏏 Cricket Test</option>
+                            <option value="CricketBBL">🏏 Cricket BBL</option>
+                            <option value="AFL">🏉 Aussie Rules</option>
                         </select>
                     </div>
                     <div class="scanner-progress" id="scanner-progress" style="display: none;">
@@ -35131,31 +35139,29 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             
             let filtered = results.filter(r => {
                 const isArb = r.arbPct && r.arbPct > 0;
-                const isQuality = r.estimatedTier === 'diamond' || r.estimatedTier === 'lock' || r.estimatedTier === 'high';
+                const isQuality = r.estimatedTier === 'high' || r.score >= 65;
                 
                 // Live vs Pre-game filter
                 if (liveFilter === 'pregame') {
                     const commence = r.commenceTime ? new Date(r.commenceTime) : null;
-                    if (commence && commence <= new Date()) return false; // Game already started
+                    if (commence && commence <= new Date()) return false;
                 }
                 if (liveFilter === 'live') {
                     const commence = r.commenceTime ? new Date(r.commenceTime) : null;
-                    if (!commence || commence > new Date()) return false; // Game hasn't started
+                    if (!commence || commence > new Date()) return false;
                 }
                 
-                // Scanner mode filter (from top buttons: Diamond Only, Locks & Above, All)
-                if (scanMode === 'diamond' && r.estimatedTier !== 'diamond') return false;
-                if (scanMode === 'lock' && !['diamond', 'lock'].includes(r.estimatedTier)) return false;
+                // Scanner mode filter — V48: "diamond" mode = highest edge, "lock" = high edge+
+                if (scanMode === 'diamond' && r.score < 82) return false;
+                if (scanMode === 'lock' && r.score < 65) return false;
                 
-                // View mode filter (from inline view buttons: Quality, Arbs, All)
+                // View mode filter
                 if (viewMode === 'quality' && !isQuality) return false;
                 if (viewMode === 'arbs' && !isArb) return false;
                 
-                // For 'all' view mode, apply individual tier checkboxes
+                // Individual tier checkboxes
                 if (viewMode === 'all' && scanMode === 'all') {
-                    if (r.estimatedTier === 'diamond' && !f.showDiamonds) return false;
-                    if (r.estimatedTier === 'lock' && !f.showLocks) return false;
-                    if (r.estimatedTier === 'high' && !f.showHigh) return false;
+                    if (r.estimatedTier === 'high' && !f.showDiamonds && !f.showLocks && !f.showHigh) return false;
                     if (r.estimatedTier === 'streak' && !f.showStreak) return false;
                     if (r.estimatedTier === 'none' && !f.showMonitor) return false;
                     if (isArb && !f.showArbs) return false;
@@ -35205,12 +35211,12 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     case 'edge-desc':
                         return (b.arbPct || b.edgePct || 0) - (a.arbPct || a.edgePct || 0);
                     case 'diamond-desc':
-                        if (a.estimatedTier === 'diamond' && b.estimatedTier !== 'diamond') return -1;
-                        if (b.estimatedTier === 'diamond' && a.estimatedTier !== 'diamond') return 1;
+                        if (a.estimatedTier === 'high' && a.score >= 82 && !(b.estimatedTier === 'high' && b.score >= 82)) return -1;
+                        if (b.estimatedTier === 'high' && b.score >= 82 && !(a.estimatedTier === 'high' && a.score >= 82)) return 1;
                         return (tierRank[b.estimatedTier] || 0) - (tierRank[a.estimatedTier] || 0) || (b.score || 0) - (a.score || 0);
                     case 'lock-desc':
-                        if (a.estimatedTier === 'lock' && b.estimatedTier !== 'lock') return -1;
-                        if (b.estimatedTier === 'lock' && a.estimatedTier !== 'lock') return 1;
+                        if (a.score >= 65 && b.score < 65) return -1;
+                        if (b.score >= 65 && a.score < 65) return 1;
                         return (tierRank[b.estimatedTier] || 0) - (tierRank[a.estimatedTier] || 0) || (b.score || 0) - (a.score || 0);
                     case 'tier-desc':
                         return (tierRank[b.estimatedTier] || 0) - (tierRank[a.estimatedTier] || 0) || (b.score || 0) - (a.score || 0);
@@ -35264,11 +35270,11 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                         <span style="font-size: 11px; color: #888;">Sort:</span>
                         <select id="filter-sort" onchange="setScanSort(this.value)" style="background: rgba(30,30,50,0.8); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 2px 6px; font-size: 10px;">
                             <option value="edge-desc" ${(scannerState.sortBy||'edge-desc')==='edge-desc'?'selected':''}>📊 Highest Edge</option>
-                            <option value="diamond-desc" ${scannerState.sortBy==='diamond-desc'?'selected':''}>💎 Diamonds First</option>
-                            <option value="lock-desc" ${scannerState.sortBy==='lock-desc'?'selected':''}>🔒 Locks First</option>
+                            <option value="diamond-desc" ${scannerState.sortBy==='diamond-desc'?'selected':''}>⚡ High Edge First</option>
+                            <option value="lock-desc" ${scannerState.sortBy==='lock-desc'?'selected':''}>🟢 Good Edge First</option>
                             <option value="tier-desc" ${scannerState.sortBy==='tier-desc'?'selected':''}>⭐ Best Quality</option>
                             <option value="roi-desc" ${scannerState.sortBy==='roi-desc'?'selected':''}>💰 Highest ROI</option>
-                            <option value="score-desc" ${scannerState.sortBy==='score-desc'?'selected':''}>🎯 Pre-Synth Score</option>
+                            <option value="score-desc" ${scannerState.sortBy==='score-desc'?'selected':''}>🎯 Edge Score</option>
                             <option value="books-desc" ${scannerState.sortBy==='books-desc'?'selected':''}>📚 Most Books</option>
                             <option value="time-asc" ${scannerState.sortBy==='time-asc'?'selected':''}>⏰ Soonest Game</option>
                         </select>
@@ -36222,21 +36228,22 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
             
             // Add count summary with tier breakdown
             const total = scannerState.results.length;
-            const diamondCount = scannerState.results.filter(r => r.estimatedTier === 'diamond').length;
-            const lockCount = scannerState.results.filter(r => r.estimatedTier === 'lock').length;
+            const highEdgeCount = scannerState.results.filter(r => r.score >= 82).length;
+            const goodEdgeCount = scannerState.results.filter(r => r.score >= 65 && r.score < 82).length;
             const arbCount = scannerState.results.filter(r => r.arbPct && r.arbPct > 0).length;
-            const highCount = scannerState.results.filter(r => r.estimatedTier === 'high').length;
+            const moderateCount = scannerState.results.filter(r => r.estimatedTier === 'streak').length;
             const scanMode = scannerState.scanMode || 'all';
-            const modeLabel = scanMode === 'diamond' ? '💎 Diamond Mode' : scanMode === 'lock' ? '🔒 Lock+ Mode' : '';
+            const modeLabel = scanMode === 'diamond' ? '⚡ High Edge Mode' : scanMode === 'lock' ? '🟢 Good Edge+ Mode' : '';
             
             resultsEl.insertAdjacentHTML('beforeend', `
                 <div style="display: flex; justify-content: center; gap: 12px; margin-bottom: 8px; font-size: 10px; flex-wrap: wrap;">
                     ${modeLabel ? `<span style="color: #FFD700; font-weight: 700; background: rgba(255,215,0,0.1); padding: 1px 8px; border-radius: 3px;">${modeLabel}</span>` : ''}
-                    <span style="color: #b98fff;">💎 ${diamondCount}</span>
-                    <span style="color: #FFD700;">🔒 ${lockCount}</span>
+                    <span style="color: #FFD700;">⚡ ${highEdgeCount} High Edge</span>
+                    <span style="color: #00ff88;">🟢 ${goodEdgeCount} Good Edge</span>
                     <span style="color: #00ff88;">💰 ${arbCount} Arbs</span>
-                    <span style="color: #00ff88;">🟢 ${highCount}</span>
-                    <span style="color: #888;">📊 ${filtered.length}/${total} shown</span>
+                    <span style="color: #00c8ff;">📊 ${moderateCount} Moderate</span>
+                    <span style="color: #888;">📋 ${filtered.length}/${total} shown</span>
+                    <span style="color: #b98fff; font-size: 9px;">🔒💎 = AI synthesis only</span>
                 </div>
             `);
             
@@ -36516,11 +36523,68 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                     'Bundesliga': 'soccer_germany_bundesliga', 'MLS': 'soccer_usa_mls', 'UCL': 'soccer_uefa_champs_league',
                     'Ligue1': 'soccer_france_ligue_one', 'LigaPT': 'soccer_portugal_primeira_liga',
                     'Eredivisie': 'soccer_netherlands_eredivisie',
-                    'UFC': 'mma_mixed_martial_arts', 'Boxing': 'boxing_boxing'
+                    'UFC': 'mma_mixed_martial_arts', 'Boxing': 'boxing_boxing',
+                    'ATP': 'tennis_atp_french_open', 'WTA': 'tennis_wta_french_open',
+                    'CricketIPL': 'cricket_ipl', 'CricketT20I': 'cricket_international_t20',
+                    'CricketODI': 'cricket_odi', 'CricketTest': 'cricket_test_match',
+                    'CricketBBL': 'cricket_big_bash',
+                    'AFL': 'aussierules_afl'
                 };
-                const sportsToScan = sportFilter === 'all' 
-                    ? Object.values(allSportKeys)
+                
+                // V48: Dynamic sport discovery — Tennis tournaments change, cricket/AFL may have regional keys
+                // Query /v4/sports to find ALL active sport keys, then match to our categories
+                let dynamicSportKeys = [];
+                try {
+                    const activeSportsUrl = `https://api.the-odds-api.com/v4/sports?apiKey=${CONFIG.keys.odds}`;
+                    const activeSportsRes = await fetch(activeSportsUrl, { signal: scannerState.abortController.signal });
+                    if (activeSportsRes.ok) {
+                        const activeSports = await activeSportsRes.json();
+                        if (Array.isArray(activeSports)) {
+                            // Find active tennis tournaments
+                            const atpKeys = activeSports.filter(s => s.key?.startsWith('tennis_atp') && s.active).map(s => s.key);
+                            const wtaKeys = activeSports.filter(s => s.key?.startsWith('tennis_wta') && s.active).map(s => s.key);
+                            // Find active cricket
+                            const cricketKeys = activeSports.filter(s => s.key?.startsWith('cricket') && s.active).map(s => s.key);
+                            // Find active AFL
+                            const aflKeys = activeSports.filter(s => s.key?.startsWith('aussierules') && s.active).map(s => s.key);
+                            
+                            // Replace static keys with active ones
+                            if (atpKeys.length > 0) allSportKeys['ATP'] = atpKeys[0];
+                            if (wtaKeys.length > 0) allSportKeys['WTA'] = wtaKeys[0];
+                            
+                            // Add ALL active tennis tournaments to scan
+                            atpKeys.forEach((k, i) => { if (i > 0) dynamicSportKeys.push(k); });
+                            wtaKeys.forEach((k, i) => { if (i > 0) dynamicSportKeys.push(k); });
+                            
+                            // Add ALL active cricket tournaments
+                            cricketKeys.forEach(k => {
+                                if (!Object.values(allSportKeys).includes(k)) dynamicSportKeys.push(k);
+                            });
+                            // Add ALL active AFL tournaments  
+                            aflKeys.forEach(k => {
+                                if (!Object.values(allSportKeys).includes(k)) dynamicSportKeys.push(k);
+                            });
+                            
+                            console.log(`💎 V48: Active sports discovered — ATP: ${atpKeys.length}, WTA: ${wtaKeys.length}, Cricket: ${cricketKeys.length}, AFL: ${aflKeys.length}`);
+                            if (atpKeys.length > 0) console.log(`   🎾 ATP active: ${atpKeys.join(', ')}`);
+                            if (wtaKeys.length > 0) console.log(`   🎾 WTA active: ${wtaKeys.join(', ')}`);
+                            if (cricketKeys.length > 0) console.log(`   🏏 Cricket active: ${cricketKeys.join(', ')}`);
+                            if (aflKeys.length > 0) console.log(`   🏉 AFL active: ${aflKeys.join(', ')}`);
+                        }
+                    }
+                } catch (e) {
+                    console.warn('💎 V48: Dynamic sport discovery failed, using static keys:', e.message);
+                }
+                
+                let sportsToScan = sportFilter === 'all' 
+                    ? [...Object.values(allSportKeys), ...dynamicSportKeys]
+                    : sportFilter === 'ATP' ? [allSportKeys['ATP'], ...dynamicSportKeys.filter(k => k.startsWith('tennis_atp'))]
+                    : sportFilter === 'WTA' ? [allSportKeys['WTA'], ...dynamicSportKeys.filter(k => k.startsWith('tennis_wta'))]
+                    : sportFilter.startsWith('Cricket') ? [allSportKeys[sportFilter], ...dynamicSportKeys.filter(k => k.startsWith('cricket'))]
+                    : sportFilter === 'AFL' ? [allSportKeys['AFL'], ...dynamicSportKeys.filter(k => k.startsWith('aussierules'))]
                     : [allSportKeys[sportFilter] || currentSportKey];
+                // Deduplicate
+                sportsToScan = [...new Set(sportsToScan)];
                 
                 let allProps = [];
                 
@@ -36612,10 +36676,13 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                                 // V40 PHASE 4: COMPLETE 274-KEY SCANNER — every market the API supports
                                 let propMarkets, gameMarkets;
                                 const sportType = sport.includes('basketball') ? 'basketball' :
-                                    sport.includes('football') ? 'football' :
+                                    sport.includes('football') && !sport.includes('aussie') ? 'football' :
                                     sport.includes('baseball') ? 'baseball' :
                                     sport.includes('hockey') ? 'hockey' :
-                                    (sport.includes('mma') || sport.includes('boxing')) ? 'combat' : 'soccer';
+                                    (sport.includes('mma') || sport.includes('boxing')) ? 'combat' :
+                                    sport.includes('tennis') ? 'tennis' :
+                                    sport.includes('cricket') ? 'cricket' :
+                                    sport.includes('aussie') ? 'aussierules' : 'soccer';
                                 
                                 if (sportType === 'basketball') {
                                     // 36 player markets + alternates (complete per API docs)
@@ -36747,19 +36814,122 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                                         'alternate_team_totals_p1','alternate_team_totals_p2','alternate_team_totals_p3'
                                     ].join(',');
                                 } else if (sportType === 'combat') {
-                                    // UFC/MMA/Boxing — moneyline + rounds totals + method of victory
+                                    // UFC/MMA/Boxing — complete fighter props + game markets
                                     propMarkets = [
-                                        'player_points' // fallback, most combat props are in game markets
+                                        'player_points',
+                                        'fighter_moneyline','fighter_method_of_victory',
+                                        'fighter_round_betting','fighter_round_over_under',
+                                        'fighter_significant_strikes','fighter_takedowns','fighter_knockdowns',
+                                        'fighter_significant_strikes_alternate','fighter_takedowns_alternate',
+                                        'player_method_of_victory','player_round_betting',
+                                        'player_total_rounds_over_under',
+                                        'player_significant_strikes_landed','player_takedowns_landed',
+                                        'player_knockdowns'
                                     ].join(',');
                                     gameMarkets = [
                                         'h2h','spreads','totals','alternate_spreads','alternate_totals',
-                                        'h2h_3_way'
+                                        'h2h_3_way',
+                                        'method_of_victory','round_betting','go_the_distance',
+                                        'total_rounds','alternate_total_rounds',
+                                        'fight_result_method','fight_to_go_distance'
+                                    ].join(',');
+                                } else if (sportType === 'tennis') {
+                                    // Tennis — ATP/WTA match and set markets
+                                    propMarkets = [
+                                        'player_aces','player_double_faults',
+                                        'player_service_games_won','player_break_points_converted',
+                                        'player_total_games','player_total_games_alternate',
+                                        'player_set_handicap','player_set_betting',
+                                        'player_tiebreaks','player_aces_alternate','player_double_faults_alternate'
+                                    ].join(',');
+                                    gameMarkets = [
+                                        'h2h','spreads','totals','alternate_spreads','alternate_totals',
+                                        'h2h_set1','h2h_set2','h2h_set3',
+                                        'spreads_set1','spreads_set2','spreads_set3',
+                                        'totals_set1','totals_set2','totals_set3',
+                                        'alternate_totals_set1','alternate_totals_set2','alternate_totals_set3',
+                                        'set_betting','set_spread','total_games','alternate_total_games',
+                                        'player_set1_winner','player_set2_winner','player_set3_winner',
+                                        'tiebreak_in_match','match_to_go_to_final_set'
+                                    ].join(',');
+                                } else if (sportType === 'cricket') {
+                                    // Cricket — IPL/T20/ODI/Test match markets
+                                    propMarkets = [
+                                        'player_runs_scored','player_runs_scored_alternate',
+                                        'player_fours','player_sixes','player_fours_alternate','player_sixes_alternate',
+                                        'player_wickets','player_wickets_alternate',
+                                        'player_catches','player_stumpings',
+                                        'player_boundaries','player_strike_rate',
+                                        'player_economy_rate','player_maidens',
+                                        'player_runs_conceded','player_dots_bowled',
+                                        'top_batsman','top_bowler',
+                                        'player_to_score_50','player_to_score_100',
+                                        'player_man_of_match'
+                                    ].join(',');
+                                    gameMarkets = [
+                                        'h2h','spreads','totals','alternate_spreads','alternate_totals',
+                                        'h2h_1st_innings','totals_1st_innings','spreads_1st_innings',
+                                        'team_totals','alternate_team_totals',
+                                        'team_totals_1st_innings','alternate_team_totals_1st_innings',
+                                        'h2h_1st_over','totals_1st_over',
+                                        'h2h_1st_6_overs','totals_1st_6_overs',
+                                        'method_of_dismissal','toss_winner',
+                                        'highest_opening_partnership','total_fours','total_sixes',
+                                        'alternate_totals_1st_innings',
+                                        'race_to_runs','both_teams_to_score'
+                                    ].join(',');
+                                } else if (sportType === 'aussierules') {
+                                    // AFL — Australian Rules Football
+                                    propMarkets = [
+                                        'player_disposals','player_disposals_alternate',
+                                        'player_goals','player_goals_alternate',
+                                        'player_behinds','player_marks','player_marks_alternate',
+                                        'player_tackles','player_tackles_alternate',
+                                        'player_handballs','player_kicks',
+                                        'player_contested_possessions','player_uncontested_possessions',
+                                        'player_clearances','player_inside_50s',
+                                        'player_score_involvements',
+                                        'player_anytime_goal_scorer','player_first_goal_scorer',
+                                        'player_last_goal_scorer'
+                                    ].join(',');
+                                    gameMarkets = [
+                                        'h2h','spreads','totals','alternate_spreads','alternate_totals',
+                                        'h2h_q1','h2h_q2','h2h_q3','h2h_q4','h2h_h1','h2h_h2',
+                                        'spreads_q1','spreads_q2','spreads_q3','spreads_q4','spreads_h1','spreads_h2',
+                                        'totals_q1','totals_q2','totals_q3','totals_q4','totals_h1','totals_h2',
+                                        'alternate_totals_q1','alternate_totals_q2','alternate_totals_q3','alternate_totals_q4',
+                                        'alternate_totals_h1','alternate_totals_h2',
+                                        'alternate_spreads_q1','alternate_spreads_q2','alternate_spreads_q3','alternate_spreads_q4',
+                                        'alternate_spreads_h1','alternate_spreads_h2',
+                                        'team_totals','alternate_team_totals',
+                                        'team_totals_q1','team_totals_q2','team_totals_q3','team_totals_q4',
+                                        'team_totals_h1','team_totals_h2',
+                                        'alternate_team_totals_h1','alternate_team_totals_h2',
+                                        'margin_bands','winning_margin'
                                     ].join(',');
                                 } else { // soccer
+                                    // Complete soccer player props — goals, assists, shots, tackles, passes, cards, corners
                                     propMarkets = [
                                         'player_goal_scorer_anytime','player_first_goal_scorer','player_last_goal_scorer',
                                         'player_shots_on_target','player_shots','player_assists',
-                                        'player_to_receive_card','player_to_receive_red_card'
+                                        'player_to_receive_card','player_to_receive_red_card',
+                                        // V48: Expanded soccer player props
+                                        'player_tackles','player_tackles_alternate',
+                                        'player_passes','player_passes_alternate','player_passes_completed',
+                                        'player_fouls_committed','player_fouls_drawn',
+                                        'player_offsides',
+                                        'player_crosses','player_crosses_alternate',
+                                        'player_interceptions','player_clearances',
+                                        'player_corners_won','player_corners_taken',
+                                        'player_cards','player_cards_alternate',
+                                        'player_yellow_cards','player_booking_point',
+                                        'player_shots_on_target_alternate','player_shots_alternate',
+                                        'player_assists_alternate','player_goal_scorer_anytime_alternate',
+                                        'player_to_score_2_or_more','player_to_score_hat_trick',
+                                        'player_to_score_header','player_to_score_outside_box',
+                                        'player_dribbles','player_dribbles_alternate',
+                                        'player_aerial_duels','player_touches',
+                                        'player_touches_in_box'
                                     ].join(',');
                                     gameMarkets = [
                                         'h2h','h2h_3_way','spreads','totals','draw_no_bet','btts','double_chance',
@@ -36770,8 +36940,24 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                                         'alternate_totals_h1','alternate_totals_h2',
                                         'team_totals_h1','team_totals_h2',
                                         'alternate_team_totals_h1','alternate_team_totals_h2',
-                                        'alternate_spreads_corners','alternate_totals_corners',
-                                        'alternate_spreads_cards','alternate_totals_cards'
+                                        // V48: Corner & card game markets
+                                        'total_corners','alternate_total_corners','team_total_corners',
+                                        'corner_handicap','alternate_corner_handicap',
+                                        'corner_race','corner_match_bet',
+                                        'total_corners_h1','total_corners_h2',
+                                        'alternate_total_corners_h1','alternate_total_corners_h2',
+                                        'total_cards','alternate_total_cards','team_total_cards',
+                                        'card_handicap','alternate_card_handicap',
+                                        'total_cards_h1','total_cards_h2',
+                                        'alternate_total_cards_h1','alternate_total_cards_h2',
+                                        'total_booking_points','alternate_total_booking_points',
+                                        'team_total_booking_points',
+                                        'total_booking_points_h1','total_booking_points_h2',
+                                        // Additional soccer game markets
+                                        'correct_score','half_time_full_time',
+                                        'both_teams_to_score_h1','both_teams_to_score_h2',
+                                        'clean_sheet','win_to_nil',
+                                        'first_half_result','second_half_result'
                                     ].join(',');
                                 }
                                 
@@ -36815,10 +37001,18 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                                                             sport.includes('mlb') ? 'MLB' : sport.includes('nhl') ? 'NHL' :
                                                             sport.includes('epl') ? 'EPL' : sport.includes('la_liga') ? 'LaLiga' :
                                                             sport.includes('serie_a') ? 'SerieA' : sport.includes('bundesliga') ? 'Bundesliga' :
-                                                            sport.includes('mls') ? 'MLS' : sport.includes('champs') ? 'UCL' : 'Soccer';
+                                                            sport.includes('mls') ? 'MLS' : sport.includes('champs') ? 'UCL' :
+                                                            sport.includes('ligue_one') ? 'Ligue1' : sport.includes('primeira') ? 'LigaPT' :
+                                                            sport.includes('eredivisie') ? 'Eredivisie' :
+                                                            sport.includes('tennis_atp') ? 'ATP' : sport.includes('tennis_wta') ? 'WTA' :
+                                                            sport.includes('cricket_ipl') ? 'IPL' : sport.includes('cricket_international_t20') ? 'T20I' :
+                                                            sport.includes('cricket_odi') ? 'ODI' : sport.includes('cricket_test') ? 'Test' :
+                                                            sport.includes('cricket_big_bash') ? 'BBL' :
+                                                            sport.includes('aussie') ? 'AFL' :
+                                                            sport.includes('mma') ? 'UFC' : sport.includes('boxing') ? 'Boxing' : 'Soccer';
                                                         playerLines.set(key, {
                                                             player: outcome.description,
-                                                            market: market.key.replace('player_', '').replace('pitcher_', '').replace('batter_', '').replace(/_/g, ' '),
+                                                            market: market.key.replace('player_', '').replace('pitcher_', '').replace('batter_', '').replace('fighter_', '').replace('top_', 'Top ').replace(/_/g, ' '),
                                                             apiMarket: market.key,
                                                             line: outcome.point,
                                                             event: `${event.home_team} vs ${event.away_team}`,
@@ -36903,7 +37097,15 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                                                     sport.includes('mlb') ? 'MLB' : sport.includes('nhl') ? 'NHL' :
                                                     sport.includes('epl') ? 'EPL' : sport.includes('la_liga') ? 'LaLiga' :
                                                     sport.includes('serie_a') ? 'SerieA' : sport.includes('bundesliga') ? 'Bundesliga' :
-                                                    sport.includes('mls') ? 'MLS' : sport.includes('champs') ? 'UCL' : 'Soccer';
+                                                    sport.includes('mls') ? 'MLS' : sport.includes('champs') ? 'UCL' :
+                                                    sport.includes('ligue_one') ? 'Ligue1' : sport.includes('primeira') ? 'LigaPT' :
+                                                    sport.includes('eredivisie') ? 'Eredivisie' :
+                                                    sport.includes('tennis_atp') ? 'ATP' : sport.includes('tennis_wta') ? 'WTA' :
+                                                    sport.includes('cricket_ipl') ? 'IPL' : sport.includes('cricket_international_t20') ? 'T20I' :
+                                                    sport.includes('cricket_odi') ? 'ODI' : sport.includes('cricket_test') ? 'Test' :
+                                                    sport.includes('cricket_big_bash') ? 'BBL' :
+                                                    sport.includes('aussie') ? 'AFL' :
+                                                    sport.includes('mma') ? 'UFC' : sport.includes('boxing') ? 'Boxing' : 'Soccer';
                                                 
                                                 market.outcomes?.forEach(outcome => {
                                                     // === TEAM TOTALS first (must check before TOTAL since TOTAL matches both) ===
@@ -37600,9 +37802,15 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
         }
         
         function quickEvaluateProp(prop) {
-            // V40 PHASE 5: Complete scoring for ALL market types
-            // Handles: player props, alternate lines, game totals, spreads, MLs, team totals, period markets
-            // Adapts scoring for single-book anchor mode (Pinnacle, FanDuel, etc.)
+            // ═══════════════════════════════════════════════════════════════════════════
+            // V48: EDGE-BASED SCANNER SCORING
+            // Old system: scored purely from market structure (book count, odds tilt)
+            // New system: computes ACTUAL EDGE from stat-vs-line gap + market structure
+            // 
+            // KEY PRINCIPLE: Scanner can NEVER assign "diamond" or "lock" tier.
+            // Those tiers require full AI synthesis + 9-gate evaluation.
+            // Scanner shows: "⚡ HIGH EDGE" / "🟢 GOOD EDGE" / "📊 MONITOR"
+            // ═══════════════════════════════════════════════════════════════════════════
             
             let score = 0;
             let estimatedTier = 'none';
@@ -37611,188 +37819,144 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
             const dna = prop.dna || '';
             const isGame = prop.isGameLevel || false;
             const isAlt = dna.includes('ALT') || mkt.includes('alt') || mkt.includes('alternate');
-            const isPeriod = dna.includes('PERIOD') || mkt.includes('q1') || mkt.includes('q2') || mkt.includes('q3') || mkt.includes('q4') || mkt.includes('1h') || mkt.includes('2h') || mkt.includes('1p') || mkt.includes('2p') || mkt.includes('3p') || mkt.includes('1st');
+            const isPeriod = dna.includes('PERIOD') || mkt.includes('q1') || mkt.includes('q2') || mkt.includes('q3') || mkt.includes('q4') || mkt.includes('1h') || mkt.includes('2h') || mkt.includes('1p') || mkt.includes('2p') || mkt.includes('3p') || mkt.includes('1st') || mkt.includes('set1') || mkt.includes('set2') || mkt.includes('set3') || mkt.includes('innings') || mkt.includes('1st_over') || mkt.includes('6_overs');
             const isSingleBookMode = scannerState.bookFilter && scannerState.bookFilter !== 'all';
-            const bookName = isSingleBookMode ? scannerState.bookFilter.toUpperCase() : '';
             
-            // ═══ SIGNAL 1: BOOK CONSENSUS DEPTH (max 15) ═══
-            // All-books mode: consensus = how many books post this line
-            // More books = more liquid = more potential for book disagreements = more arbs
-            if (prop.bookCount >= 20) { score += 15; signals.push(`${prop.bookCount} books (elite coverage)`); }
-            else if (prop.bookCount >= 15) { score += 13; signals.push(`${prop.bookCount} books (strong coverage)`); }
-            else if (prop.bookCount >= 10) { score += 10; signals.push(`${prop.bookCount} books`); }
-            else if (prop.bookCount >= 6) { score += 6; signals.push(`${prop.bookCount} books`); }
-            else if (prop.bookCount >= 3) { score += 3; }
-            else { score += 0; }
-            
-            // ═══ SIGNAL 2: ODDS TILT / JUICE DIFFERENTIAL (max 20) ═══
+            // ═══ COMPONENT 1: ODDS-BASED EDGE (max 30) ═══
+            // This measures the GAP between over/under implied probabilities
+            // Bigger gap = books disagree more = potential mispricing
             const overOdds = prop.overOdds || -110;
             const underOdds = prop.underOdds || -110;
             const overImplied = overOdds > 0 ? 100 / (overOdds + 100) : Math.abs(overOdds) / (Math.abs(overOdds) + 100);
             const underImplied = underOdds > 0 ? 100 / (underOdds + 100) : Math.abs(underOdds) / (Math.abs(underOdds) + 100);
             const juiceDiff = Math.abs(overImplied - underImplied);
             
-            if (juiceDiff > 0.25) { score += 20; signals.push(`Extreme odds tilt (${(juiceDiff * 100).toFixed(0)}%)`); }
-            else if (juiceDiff > 0.18) { score += 14; signals.push(`Strong odds tilt (${(juiceDiff * 100).toFixed(0)}%)`); }
-            else if (juiceDiff > 0.12) { score += 8; signals.push(`Notable odds lean (${(juiceDiff * 100).toFixed(0)}%)`); }
-            else if (juiceDiff > 0.06) { score += 3; }
+            // No-vig true probability (removes bookmaker margin)
+            const totalImplied = overImplied + underImplied;
+            const noVigOver = totalImplied > 0 ? overImplied / totalImplied : 0.5;
+            const noVigUnder = totalImplied > 0 ? underImplied / totalImplied : 0.5;
+            const bestSideProb = Math.max(noVigOver, noVigUnder);
+            const bestSideImplied = bestSideProb > noVigOver ? underImplied : overImplied;
             
-            // ═══ SIGNAL 3: MARKET TYPE SCORING (max 12) ═══
-            // Different scoring logic for player props vs game markets
-            if (isGame) {
-                // GAME-LEVEL MARKETS
-                if (dna.includes('TOTAL') && !dna.includes('TEAM')) {
-                    score += 10; // Game totals = highly liquid, sharp pricing, excellent for arb
-                    signals.push('Game Total (high liquidity)');
-                } else if (dna.includes('TEAM_TOTAL')) {
-                    score += 9; // Team totals = slightly less liquid but strong
-                    signals.push('Team Total');
-                } else if (dna.includes('SPREAD')) {
-                    score += 10; // Spreads = most liquid market, great for arb
-                    signals.push('Spread (highest liquidity)');
-                } else if (dna.includes('H2H')) {
-                    score += 8; // MLs = liquid, but heavy juice on favorites
-                    signals.push('Moneyline');
-                } else if (dna === 'YES_NO') {
-                    score += 7; // BTTS etc
-                    signals.push('Yes/No market');
-                } else if (dna === 'DOUBLE_CHANCE' || dna === 'MONEYLINE_NO_DRAW') {
-                    score += 6;
-                    signals.push('Special game market');
-                } else {
-                    score += 5;
-                }
-            } else {
-                // PLAYER PROPS
-                const isBinaryThrees = (mkt.includes('threes') || mkt.includes('three')) && prop.line <= 1.5;
+            // EV Edge = True Prob - Implied Prob (higher = more +EV)
+            const evEdge = bestSideProb - bestSideImplied;
+            
+            // Score from odds edge
+            if (juiceDiff > 0.25) { score += 30; signals.push(`🔥 Extreme odds gap (${(juiceDiff * 100).toFixed(0)}%)`); }
+            else if (juiceDiff > 0.18) { score += 22; signals.push(`Strong odds gap (${(juiceDiff * 100).toFixed(0)}%)`); }
+            else if (juiceDiff > 0.12) { score += 14; signals.push(`Notable odds lean (${(juiceDiff * 100).toFixed(0)}%)`); }
+            else if (juiceDiff > 0.06) { score += 6; signals.push(`Slight lean (${(juiceDiff * 100).toFixed(0)}%)`); }
+            else { score += 0; }
+            
+            // ═══ COMPONENT 2: STAT-VS-LINE EDGE (max 25) ═══
+            // This is THE key predictor — how far is the player's actual average from the line?
+            // Only available for player props with season data loaded
+            let statEdge = 0;
+            let statDirection = '';
+            if (!isGame && prop.seasonAvg && prop.seasonAvg > 0 && prop.line > 0) {
+                const gap = prop.seasonAvg - prop.line;
+                const gapPct = Math.abs(gap) / prop.line * 100;
+                statDirection = gap > 0 ? 'OVER' : 'UNDER';
                 
-                if (mkt.includes('points') && !mkt.includes('rebounds') && !mkt.includes('assists')) {
-                    score += 10;
-                    signals.push('Points (highest predictability)');
-                } else if (isBinaryThrees) {
-                    score += 8;
-                    signals.push('Binary threes (1.5)');
-                } else if (mkt.includes('rebounds') && !mkt.includes('points')) {
-                    score += 7;
-                } else if (mkt.includes('assists') && !mkt.includes('points')) {
-                    score += 6;
-                } else if (mkt.includes('points') && (mkt.includes('rebounds') || mkt.includes('assists'))) {
-                    score += 8;
-                    signals.push('Combo market');
-                } else if (mkt.includes('strikeouts') || mkt.includes('total bases')) {
-                    score += 8; // MLB pitcher/batter props = predictable
-                    signals.push('MLB prop (stable)');
-                } else if (mkt.includes('pass') || mkt.includes('rush') || mkt.includes('rec')) {
-                    score += 7; // NFL props
-                    signals.push('NFL prop');
-                } else if (mkt.includes('goals') || mkt.includes('shots')) {
-                    score += 6; // NHL/Soccer
-                } else if (mkt.includes('threes') || mkt.includes('three')) {
-                    score += 4;
-                } else {
-                    score += 3;
-                }
+                if (gapPct >= 25) { statEdge = 25; signals.push(`⚡ ${statDirection} edge ${gapPct.toFixed(0)}% (avg ${prop.seasonAvg.toFixed(1)} vs ${prop.line})`); }
+                else if (gapPct >= 15) { statEdge = 20; signals.push(`🔥 ${statDirection} edge ${gapPct.toFixed(0)}% (avg ${prop.seasonAvg.toFixed(1)} vs ${prop.line})`); }
+                else if (gapPct >= 10) { statEdge = 14; signals.push(`${statDirection} edge ${gapPct.toFixed(0)}% (avg ${prop.seasonAvg.toFixed(1)} vs ${prop.line})`); }
+                else if (gapPct >= 5) { statEdge = 8; signals.push(`${statDirection} lean ${gapPct.toFixed(0)}%`); }
+                else { statEdge = 2; }
+                
+                score += statEdge;
             }
             
-            // ═══ SIGNAL 4: LINE STRUCTURE / PERIOD / ALT BONUS (max 14) ═══
+            // ═══ COMPONENT 3: MARKET LIQUIDITY (max 12) ═══
+            // More books posting = more liquid = prices more likely correct... 
+            // BUT also more opportunities for one book to be off
+            if (prop.bookCount >= 20) { score += 12; signals.push(`${prop.bookCount} books (elite liquidity)`); }
+            else if (prop.bookCount >= 15) { score += 10; }
+            else if (prop.bookCount >= 10) { score += 7; }
+            else if (prop.bookCount >= 6) { score += 4; }
+            else if (prop.bookCount >= 3) { score += 1; }
+            
+            // ═══ COMPONENT 4: MARKET TYPE EDGE (max 10) ═══
             if (isGame) {
-                // Game-level line structure
-                if (isPeriod) {
-                    score += 10; // Period markets = weaker pricing = more mispricing = more edge
-                    signals.push('Period market (weak pricing)');
-                } else if (isAlt) {
-                    score += 12; // Alt lines = structural certainty zone (Curry 20.5 example)
-                    signals.push('Alternate line (structural edge)');
-                } else if (dna.includes('SPREAD') && Math.abs(prop.line) >= 10) {
-                    score += 6; // Large spreads have more variance
-                    signals.push('Large spread');
-                } else if (dna.includes('TOTAL') && prop.line > 0) {
-                    score += 4; // Standard total — no special bonus
-                } else {
-                    score += 2;
-                }
+                if (isPeriod && isAlt) { score += 10; signals.push('⚡ Period+Alt (weakest pricing)'); }
+                else if (isAlt) { score += 9; signals.push('Alt line (structural edge)'); }
+                else if (isPeriod) { score += 8; signals.push('Period market (weak pricing)'); }
+                else if (dna.includes('CORNER') || dna.includes('CARD') || dna.includes('BOOKING')) { score += 8; signals.push('Corner/Card market (niche edge)'); }
+                else if (dna.includes('TOTAL') || dna.includes('SPREAD')) { score += 6; }
+                else { score += 3; }
             } else {
-                // Player prop line structure
-                if (isAlt && prop.line > 0) {
-                    // Alternate player lines — the Steph Curry scenario
-                    score += 14; // Highest structural edge possible
-                    signals.push('⚡ Alt player line (structural certainty)');
-                } else if (prop.line <= 1.5) {
-                    score += 12;
-                    signals.push('Binary line (1.5)');
-                } else if (prop.line <= 3.5) {
-                    score += 8;
-                    signals.push('Low line — concentrated');
-                } else if (prop.line >= 35) {
-                    score += 7;
-                    signals.push('Superstar line');
-                } else if (prop.line >= 25) {
-                    score += 4;
-                } else {
-                    score += 0;
-                }
+                if (isAlt && prop.line > 0) { score += 10; signals.push('⚡ Alt player line (structural)'); }
+                else if (prop.line > 0 && prop.line <= 1.5) { score += 8; signals.push('Binary line (1.5)'); }
+                // High-predictability props by sport
+                else if (mkt.includes('points') || mkt.includes('strikeout') || mkt.includes('disposals')) { score += 7; }
+                else if (mkt.includes('rebounds') || mkt.includes('assists') || mkt.includes('pass') || mkt.includes('rush')) { score += 5; }
+                else if (mkt.includes('aces') || mkt.includes('double_fault') || mkt.includes('total_games')) { score += 6; signals.push('🎾 Tennis prop'); }
+                else if (mkt.includes('runs_scored') || mkt.includes('wickets') || mkt.includes('sixes') || mkt.includes('fours')) { score += 6; signals.push('🏏 Cricket prop'); }
+                else if (mkt.includes('goals') && (prop.sport || '').includes('aussie')) { score += 6; signals.push('🏉 AFL prop'); }
+                else if (mkt.includes('marks') || mkt.includes('tackles') && (prop.sport || '').includes('aussie')) { score += 5; signals.push('🏉 AFL prop'); }
+                else if (mkt.includes('significant_strikes') || mkt.includes('takedown') || mkt.includes('knockdown')) { score += 6; signals.push('🥊 Fighter prop'); }
+                else if (mkt.includes('tackles') || mkt.includes('passes') || mkt.includes('fouls') || mkt.includes('offsides')) { score += 5; signals.push('⚽ Soccer stat prop'); }
+                else if (mkt.includes('corners') || mkt.includes('cards') || mkt.includes('booking')) { score += 6; signals.push('⚽ Corner/Card prop (niche)'); }
+                else if (mkt.includes('crosses') || mkt.includes('dribbles') || mkt.includes('clearances') || mkt.includes('interceptions')) { score += 5; signals.push('⚽ Advanced stat prop'); }
+                else if (mkt.includes('shots') || mkt.includes('goals')) { score += 4; }
+                else if (mkt.includes('method_of_victory') || mkt.includes('round_betting')) { score += 5; signals.push('🥊 Method/Round prop'); }
+                else { score += 2; }
             }
             
-            // ═══ SIGNAL 5: CONVERGENCE BONUS (max 22) ═══
-            const hasDeepBooks = prop.bookCount >= 15;
-            const hasStrongTilt = juiceDiff > 0.18;
-            const hasExtremeTilt = juiceDiff > 0.25;
-            const isBinaryLine = prop.line > 0 && prop.line <= 1.5;
-            const hasStructuralEdge = isAlt || isPeriod || isBinaryLine || (isGame && dna.includes('SPREAD'));
-            const isPredictable = isGame ? (dna.includes('TOTAL') || dna.includes('SPREAD')) : 
-                (mkt.includes('points') || mkt.includes('strikeout') || isBinaryLine);
-            
+            // ═══ COMPONENT 5: CONVERGENCE BONUS (max 15) ═══
+            // Multiple independent signals pointing same direction = stronger edge
             let convergenceCount = 0;
-            if (hasDeepBooks) convergenceCount++;
-            if (hasStrongTilt) convergenceCount++;
-            if (hasStructuralEdge) convergenceCount++;
-            if (isPredictable) convergenceCount++;
+            if (prop.bookCount >= 15) convergenceCount++;
+            if (juiceDiff > 0.15) convergenceCount++;
+            if (statEdge >= 14) convergenceCount++;  // Stats strongly support
+            if (isAlt || isPeriod) convergenceCount++; // Structural edge
+            if (evEdge > 0.03) convergenceCount++; // Positive EV from odds alone
             
-            if (convergenceCount >= 4) {
-                score += 22;
-                signals.push('⚡ 4-signal convergence');
-            } else if (convergenceCount >= 3) {
-                score += 14;
-                signals.push('3-signal convergence');
-            } else if (convergenceCount >= 2) {
-                score += 6;
-            }
+            if (convergenceCount >= 4) { score += 15; signals.push(`⚡ ${convergenceCount}-signal convergence`); }
+            else if (convergenceCount >= 3) { score += 10; signals.push(`${convergenceCount}-signal convergence`); }
+            else if (convergenceCount >= 2) { score += 4; }
             
-            // ═══ SIGNAL 6: THIN MARKET PENALTY ═══
-            if (prop.bookCount <= 2) {
-                score -= 15;
-                signals.push('⚠️ Thin market (2 books) — possible phantom');
-            } else if (prop.bookCount <= 4) {
-                score -= 8;
-                signals.push('⚠️ Thin market (≤4 books)');
-            }
+            // ═══ PENALTIES ═══
+            if (prop.bookCount <= 2) { score -= 15; signals.push('⚠️ Thin market (2 books)'); }
+            else if (prop.bookCount <= 4) { score -= 8; signals.push('⚠️ Thin market'); }
+            if (juiceDiff > 0.20 && prop.bookCount <= 4) { score -= 10; signals.push('🚨 Likely bad data'); }
             
-            // ═══ SIGNAL 7: BAD DATA DETECTION ═══
-            if (juiceDiff > 0.20 && prop.bookCount <= 4) {
-                score -= 10;
-                signals.push('🚨 Likely bad book data (high tilt + thin market)');
-            }
-            
-            // ═══ SIGNAL 8: PERIOD + ALT COMBO BONUS (max 8) ═══
-            // Period alt markets (Alt Q1 Total, Alt 1H Spread) = weakest pricing in the entire market
-            if (isPeriod && isAlt) {
-                score += 8;
-                signals.push('⚡ Period + Alt combo (weakest pricing)');
-            }
-            
-            // Clamp base score to 0-100 (arb engine edge bonus added after)
+            // Clamp
             score = Math.max(0, Math.min(100, score));
             
-            // ═══ TIER ASSIGNMENT ═══
-            // Structural tiers: single-bet probability signal
-            // These are NEVER overwritten by arb data — arb ROI is a separate lane
-            if (score >= 85) estimatedTier = 'diamond';
-            else if (score >= 72) estimatedTier = 'lock';
-            else if (score >= 60) estimatedTier = 'high';
-            else if (score >= 48) estimatedTier = 'streak';
-            else estimatedTier = 'none';
+            // ═══ TIER ASSIGNMENT — PRE-AI ONLY ═══
+            // CRITICAL: Scanner NEVER assigns 'diamond' or 'lock' — those require AI synthesis
+            // Scanner tiers indicate POTENTIAL only
+            if (score >= 82) {
+                estimatedTier = 'high';
+                signals.unshift('⚡ HIGH EDGE — AI synthesis needed for Lock/Diamond');
+            }
+            else if (score >= 65) {
+                estimatedTier = 'high';
+                signals.unshift('🟢 GOOD EDGE — potential Lock candidate');
+            }
+            else if (score >= 50) {
+                estimatedTier = 'streak';
+                signals.unshift('📊 MODERATE — potential Streak Safe');
+            }
+            else {
+                estimatedTier = 'none';
+            }
             
-            return { score, estimatedTier, signals, direction: overImplied > underImplied ? 'UNDER' : 'OVER' };
+            // Store EV data for display
+            const direction = (statDirection === 'OVER' || (noVigOver > noVigUnder)) ? 'OVER' : 'UNDER';
+            
+            return { 
+                score, estimatedTier, signals, direction,
+                // V48: Edge metrics for display
+                evEdge: (evEdge * 100).toFixed(1),
+                noVigProb: (bestSideProb * 100).toFixed(1),
+                statGap: prop.seasonAvg && prop.line ? (prop.seasonAvg - prop.line).toFixed(1) : null,
+                juiceDiff: (juiceDiff * 100).toFixed(0),
+                statDirection,
+                convergenceCount,
+                preScanTier: true  // Flag: this is pre-AI, not final
+            };
         }
         
         function renderScannerCard(result) {
@@ -37800,17 +37964,16 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
             
             // ═══ LANE 1: STRUCTURAL TIER BADGE (single-bet probability) ═══
             // This NEVER changes based on arb data — it's the original DIAMOND/LOCK/HIGH system
-            const tierBadge = result.estimatedTier === 'diamond' 
-                ? '<span style="background: rgba(185,143,255,0.2); color: #b98fff; padding: 2px 6px; border-radius: 3px; font-weight: 700;">💎 DIAMOND</span>'
-                : result.estimatedTier === 'lock'
-                ? '<span style="background: rgba(255,215,0,0.15); color: #FFD700; padding: 2px 6px; border-radius: 3px; font-weight: 700;">🔒 LOCK</span>'
+            // V48: Scanner shows PRE-AI tiers — never diamond or lock
+            const tierBadge = result.estimatedTier === 'high' && result.score >= 82
+                ? '<span style="background: rgba(255,215,0,0.15); color: #FFD700; padding: 2px 6px; border-radius: 3px; font-weight: 700;">⚡ HIGH EDGE</span>'
                 : result.estimatedTier === 'high'
-                ? '<span style="background: rgba(0,255,136,0.1); color: #00ff88; padding: 2px 6px; border-radius: 3px; font-weight: 700;">🟢 HIGH</span>'
+                ? '<span style="background: rgba(0,255,136,0.1); color: #00ff88; padding: 2px 6px; border-radius: 3px; font-weight: 700;">🟢 GOOD EDGE</span>'
                 : result.estimatedTier === 'streak'
-                ? '<span style="background: rgba(0,200,255,0.1); color: #00c8ff; padding: 2px 6px; border-radius: 3px;">📈 STREAK</span>'
+                ? '<span style="background: rgba(0,200,255,0.1); color: #00c8ff; padding: 2px 6px; border-radius: 3px;">📊 MODERATE</span>'
                 : '<span style="background: rgba(100,100,120,0.1); color: #888; padding: 2px 6px; border-radius: 3px;">🔵 MONITOR</span>';
             
-            const cardClass = result.estimatedTier === 'diamond' ? 'diamond' : result.estimatedTier === 'lock' ? 'lock' : result.estimatedTier === 'high' ? 'high' : '';
+            const cardClass = result.score >= 82 ? 'high' : result.estimatedTier === 'high' ? 'high' : '';
             
             // ═══ LANE 2: ARB ROI TIER BADGE (arbitrage quality) ═══
             const roi = result.arbROI;
@@ -37900,7 +38063,7 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                 ${bestBooksLine}
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
                     <div style="font-size: 10px; color: #888;">
-                        Score: ${result.score}/100 • ${result.signals.slice(0, 2).join(' • ')}
+                        Edge: ${result.score}/100${result.statGap ? ` • Gap: ${result.statGap > 0 ? '+' : ''}${result.statGap}` : ''}${result.evEdge && parseFloat(result.evEdge) > 0 ? ` • EV: +${result.evEdge}%` : ''}${result.noVigProb ? ` • Prob: ${result.noVigProb}%` : ''} ${result.convergenceCount >= 3 ? '• ⚡ Converge' : ''}
                     </div>
                     <div style="font-size: 10px; display: flex; gap: 6px; align-items: center;">
                         <button onclick="event.stopPropagation(); addScannerToParlay('${(result.id || (result.player + '_' + result.market + '_' + result.line)).replace(/'/g, '')}')" style="background: rgba(255,215,0,0.15); color: #FFD700; border: 1px solid rgba(255,215,0,0.3); border-radius: 3px; padding: 1px 6px; font-size: 9px; cursor: pointer; font-weight: 600;" title="Add to parlay slip">+ Parlay</button>
@@ -38623,7 +38786,7 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                         bestUnderPrice: direction === 'UNDER' ? (parseInt(odds) || -110) : -110,
                         bestOverBook: leg.book || 'SGP',
                         bestUnderBook: leg.book || 'SGP',
-                        estimatedTier: hitRate > 0.65 ? 'diamond' : hitRate > 0.55 ? 'lock' : hitRate > 0.48 ? 'high' : 'streak',
+                        estimatedTier: hitRate > 0.60 ? 'high' : hitRate > 0.48 ? 'streak' : 'none',
                         score: Math.round(hitRate * 100),
                         entryPoint: 'sgp',
                         event: leg.opponent ? `vs ${leg.opponent}` : '',
