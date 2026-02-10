@@ -35728,14 +35728,14 @@ The bettor wants: ${leg.direction} ${leg.line}
 
 Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-1, your TRUE probability for the pick side), "confidence": 50-95, "reasoning": "brief explanation"}`;
                         
-                        const proxyUrl = CONFIG.aiProxy.url;
+                        const proxyUrl = `${CONFIG.aiProxy}/api/ai/perplexity`;
                         const response = await Promise.race([
                             fetch(proxyUrl, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
-                                    model: 'perplexity',
-                                    messages: [{ role: 'user', content: prompt }]
+                                    prompt: prompt,
+                                    maxTokens: 600
                                 })
                             }),
                             new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 12000))
@@ -38495,4 +38495,3 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
     </script>
 </body>
 </html>
-
