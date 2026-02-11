@@ -44996,7 +44996,7 @@ reasoning must explain your analysis`;
                     try {
                         const yr = new Date().getMonth()>=9 ? new Date().getFullYear() : new Date().getFullYear()-1;
                         const ar = await fetch(`https://api.balldontlie.io/${sport}/v1/season_averages/general?season=${yr}&season_type=regular&type=advanced&player_ids[]=${bdlPlayerId}`, { headers: { 'Authorization': BDL_KEY } });
-                        if (ar.ok) { const ad = (await ar.json()).data?.[0]; if (ad) { advancedStats = { usagePct: ad.usg_pct||ad.usage||null, trueShooting: ad.ts_pct||null }; if (advancedStats.usagePct>0) console.log(`[V48] ✅ Advanced: Usage=${(advancedStats.usagePct*100).toFixed(1)}%`); } }
+                        if (ar.ok) { const raw = (await ar.json()).data?.[0]; const ad = raw?.stats || raw; if (ad) { advancedStats = { usagePct: ad.usage_percentage||ad.usg_pct||ad.usage||null, trueShooting: ad.true_shooting_percentage||ad.ts_pct||null }; if (advancedStats.usagePct>0) console.log(`[V48] ✅ Advanced: Usage=${(advancedStats.usagePct*100).toFixed(1)}%`); } }
                     } catch(e) {}
                 } else if (sport === 'nhl' && params.player) {
                     // NHL: Fetch advanced stats via Perplexity (Corsi%, xGF%, PDO)
@@ -45077,10 +45077,10 @@ reasoning must explain your analysis`;
                         // 1. BDL Matrix (25 categories)
                         (async () => {
                             const categories = [
-                                { cat: 'usage', type: null, key: 'usage' },
-                                { cat: 'scoring', type: null, key: 'scoring' },
-                                { cat: 'defense', type: null, key: 'defense' },
-                                { cat: 'misc', type: null, key: 'misc' },
+                                { cat: 'general', type: 'usage', key: 'usage' },
+                                { cat: 'general', type: 'scoring', key: 'scoring' },
+                                { cat: 'general', type: 'defense', key: 'defense' },
+                                { cat: 'general', type: 'misc', key: 'misc' },
                                 { cat: 'playtype', type: 'isolation', key: 'pt_isolation' },
                                 { cat: 'playtype', type: 'transition', key: 'pt_transition' },
                                 { cat: 'playtype', type: 'prballhandler', key: 'pt_pnr_handler' },
@@ -45124,8 +45124,16 @@ reasoning must explain your analysis`;
                                 const res = await fetch(url, { headers: hdrs });
                                 if (!res.ok) return null;
                                 const json = await res.json();
-                                const adv = json?.data?.[0];
-                                if (adv) console.log(`[V7.0] ✅ V29 Advanced: USG=${(adv.usg_pct*100||0).toFixed(1)}%, TS=${(adv.ts_pct*100||0).toFixed(1)}%`);
+                                const raw = json?.data?.[0];
+                                // V7.0 FIX: Data is inside .stats object, field names use full words
+                                const adv = raw?.stats || raw || {};
+                                const usg = adv.usage_percentage || adv.usg_pct || 0;
+                                const ts = adv.true_shooting_percentage || adv.ts_pct || 0;
+                                if (usg || ts) console.log(`[V7.0] ✅ V29 Advanced: USG=${(usg*100).toFixed(1)}%, TS=${(ts*100).toFixed(1)}%`);
+                                else console.log(`[V7.0] ⚠️ V29 Advanced: No USG/TS data (keys: ${Object.keys(adv).slice(0,5).join(', ')}...)`);
+                                // Normalize field names for downstream
+                                adv.usg_pct = usg;
+                                adv.ts_pct = ts;
                                 // Also fetch per-game tracking
                                 const tUrl = `${baseUrl}/nba/v1/season_averages/tracking?season=${yr}&season_type=regular&type=speeddistance&player_ids[]=${bdlPlayerId}`;
                                 const tRes = await fetch(tUrl, { headers: hdrs });
@@ -45138,7 +45146,8 @@ reasoning must explain your analysis`;
                         // 3. V29 Shooting Range (Paint/Mid/3PT splits)
                         (async () => {
                             try {
-                                const fetches = ['less_than_10_ft', 'midrange', 'above_the_break_3', 'overall'].map(async range => {
+                                // V7.0 FIX: Only fetch valid shotdashboard types (midrange and above_the_break_3 return 400)
+                                const fetches = ['less_than_10_ft', 'overall', 'pullups', 'catch_and_shoot'].map(async range => {
                                     const url = `${baseUrl}/nba/v1/season_averages/shotdashboard?season=${yr}&season_type=regular&type=${range}&player_ids[]=${bdlPlayerId}`;
                                     const res = await fetch(url, { headers: hdrs });
                                     if (!res.ok) return { range, data: null };
@@ -45148,16 +45157,20 @@ reasoning must explain your analysis`;
                                 const results = await Promise.allSettled(fetches);
                                 const shooting = {};
                                 results.forEach(r => { if (r.status === 'fulfilled' && r.value?.data) shooting[r.value.range] = r.value.data; });
-                                // Compute splits
+                                // Compute splits from available data
                                 const overall = shooting.overall;
                                 const rim = shooting.less_than_10_ft;
-                                const mid = shooting.midrange;
-                                const three = shooting.above_the_break_3;
+                                const pullups = shooting.pullups;
+                                const catchShoot = shooting.catch_and_shoot;
                                 if (overall) {
                                     const totalFGA = overall.fga || 1;
-                                    shooting.pctFromPaint = (rim?.fga || 0) / totalFGA;
-                                    shooting.pctFromMidrange = (mid?.fga || 0) / totalFGA;
-                                    shooting.pctFrom3 = (three?.fga || 0) / totalFGA;
+                                    const rimFGA = rim?.fga || 0;
+                                    // Derive 3PT from catch_and_shoot + pullup 3s (fg3a)
+                                    const threeFGA = (catchShoot?.fg3a || 0) + (pullups?.fg3a || 0);
+                                    const midFGA = Math.max(0, totalFGA - rimFGA - threeFGA);
+                                    shooting.pctFromPaint = rimFGA / totalFGA;
+                                    shooting.pctFromMidrange = midFGA / totalFGA;
+                                    shooting.pctFrom3 = threeFGA / totalFGA;
                                     shooting.rimFgPct = rim?.fg_pct || 0;
                                     console.log(`[V7.0] ✅ Shooting: Paint=${(shooting.pctFromPaint*100).toFixed(0)}%, Mid=${(shooting.pctFromMidrange*100).toFixed(0)}%, 3PT=${(shooting.pctFrom3*100).toFixed(0)}%`);
                                 }
@@ -45198,34 +45211,9 @@ reasoning must explain your analysis`;
                             } catch(e) { return null; }
                         })(),
 
-                        // 6. V30 Quarter Breakdowns
-                        (async () => {
-                            try {
-                                const quarters = {};
-                                const qTypes = [
-                                    { type: 'q1', label: 'Q1' }, { type: 'q2', label: 'Q2' },
-                                    { type: 'q3', label: 'Q3' }, { type: 'q4', label: 'Q4' }
-                                ];
-                                const results = await Promise.allSettled(qTypes.map(async ({type, label}) => {
-                                    const url = `${baseUrl}/nba/v1/season_averages/general?season=${yr}&season_type=regular&type=${type}&player_ids[]=${bdlPlayerId}`;
-                                    const res = await fetch(url, { headers: hdrs });
-                                    if (!res.ok) return { label, data: null };
-                                    const json = await res.json();
-                                    return { label, data: json?.data?.[0] };
-                                }));
-                                results.forEach(r => { if (r.status === 'fulfilled' && r.value?.data) quarters[r.value.label] = r.value.data; });
-                                if (Object.keys(quarters).length >= 4) {
-                                    const h1 = quarters.Q1 && quarters.Q2 ? { pts: (quarters.Q1.pts||0)+(quarters.Q2.pts||0), usg_pct: ((quarters.Q1.usg_pct||0)+(quarters.Q2.usg_pct||0))/2, efg_pct: ((quarters.Q1.efg_pct||0)+(quarters.Q2.efg_pct||0))/2 } : null;
-                                    const h2 = quarters.Q3 && quarters.Q4 ? { pts: (quarters.Q3.pts||0)+(quarters.Q4.pts||0), usg_pct: ((quarters.Q3.usg_pct||0)+(quarters.Q4.usg_pct||0))/2, efg_pct: ((quarters.Q3.efg_pct||0)+(quarters.Q4.efg_pct||0))/2 } : null;
-                                    if (h1 && h2) {
-                                        quarters.usageDiff = ((h1.usg_pct - h2.usg_pct) * 100).toFixed(1);
-                                        quarters.efgDiff = ((h1.efg_pct - h2.efg_pct) * 100).toFixed(1);
-                                        console.log(`[V7.0] ✅ Quarter Breakdown: 4/4 | 1H vs 2H: Usage ${quarters.usageDiff > 0 ? '+' : ''}${quarters.usageDiff}%, EFG ${quarters.efgDiff > 0 ? '+' : ''}${quarters.efgDiff}%`);
-                                    }
-                                }
-                                return Object.keys(quarters).length > 0 ? quarters : null;
-                            } catch(e) { return null; }
-                        })()
+                        // 6. V30 Quarter Breakdowns — DISABLED: q1/q2/q3/q4 are not valid
+                        // BDL season_averages types. Quarter data would need box score aggregation.
+                        (async () => { return null; })()
                     ]);
 
                     // Collect results
