@@ -43020,6 +43020,7 @@ LAST_5: [num1, num2, num3, num4, num5]`,
             const v7SharpText = params._v7Sharp ? `\nSharp Money: ${params._v7Sharp}` : '';
             const v7GameScriptText = params._v7GameScript ? `\nGame Script: ${params._v7GameScript}` : '';
             const v7SpotsText = params._v7Spots ? `\nSituational Spots: ${params._v7Spots}` : '';
+            const v7PropsText = params._v7Props ? `\nProp Market: ${params._v7Props}` : '';
 
             prompt = `${sportConfig.name} PLAYER PROP ANALYSIS:
 Player: ${params.player}
@@ -43028,7 +43029,7 @@ Opponent: ${params.opponent}
 
 STATS: ${statsText}
 ${hitText}
-${defText}${v48ProjText}${v48TeamText}${v48BlowoutText}${v48DefText}${v48PaceText}${v48VarText}${v48GTText}${v48AdvText}${v7MatrixText}${v7UsageText}${v7ClutchText}${v7ShootText}${v7QuarterText}${v7StyleText}${v7PosDefText}${v7BlowoutText}${v7InjText}${v7RollText}${v7SharpText}${v7GameScriptText}${v7SpotsText}
+${defText}${v48ProjText}${v48TeamText}${v48BlowoutText}${v48DefText}${v48PaceText}${v48VarText}${v48GTText}${v48AdvText}${v7MatrixText}${v7UsageText}${v7ClutchText}${v7ShootText}${v7QuarterText}${v7StyleText}${v7PosDefText}${v7BlowoutText}${v7InjText}${v7RollText}${v7SharpText}${v7GameScriptText}${v7SpotsText}${v7PropsText}
 
 Analyze this prop bet. Based on the data, should the bettor take OVER, UNDER, or PASS?
 
@@ -45466,22 +45467,42 @@ reasoning must explain your analysis`;
                         console.log(`[V8.0] 🎯 Situational Spots: ${v7Spots.map(s=>s.name).join(', ')} (${spotAdj >= 0 ? '+' : ''}${spotAdj.toFixed(1)})`);
                     }
 
-                    // ── V8.0 BDL Player Props ──
+                    // ── V8.0 Player Prop Lines (from OddsAPI data already fetched) ──
                     v7PlayerProps = null;
-                    try {
-                        const ppRes = await fetch(`https://api.balldontlie.io/nba/v1/player_props?player_ids[]=${bdlPlayerId}`, { headers: hdrs });
-                        if (ppRes.ok) {
-                            const ppData = await ppRes.json();
-                            const props = ppData?.data || [];
-                            if (props.length > 0) {
-                                const relevant = props.filter(p => p.stat_type?.toLowerCase().includes(statKey) || p.market?.toLowerCase().includes(market.replace('player_', '')));
-                                if (relevant.length > 0) {
-                                    v7PlayerProps = { count: relevant.length, props: relevant.slice(0, 5) };
-                                    console.log(`[V8.0] 📋 BDL Props: ${relevant.length} found for ${statKey}`);
-                                }
+                    if (Array.isArray(oddsData) && oddsData.length > 0) {
+                        // Aggregate prop lines from the OddsAPI array we already have
+                        const bookPairs = {};
+                        oddsData.forEach(o => {
+                            if (!bookPairs[o.book]) bookPairs[o.book] = { book: o.book, line: o.point };
+                            if (o.name === 'Over') bookPairs[o.book].over = o.price;
+                            if (o.name === 'Under') bookPairs[o.book].under = o.price;
+                            bookPairs[o.book].line = o.point;
+                        });
+                        const pairs = Object.values(bookPairs).filter(b => b.over && b.under);
+                        if (pairs.length > 0) {
+                            // Find consensus line, best over, best under
+                            const lineCounts = {};
+                            pairs.forEach(p => { lineCounts[p.line] = (lineCounts[p.line]||0) + 1; });
+                            const consensusLine = Object.entries(lineCounts).sort((a,b) => b[1]-a[1])[0]?.[0];
+                            const bestOver = pairs.sort((a,b) => b.over - a.over)[0];
+                            const bestUnder = [...pairs].sort((a,b) => b.under - a.under)[0];
+                            const avgOver = pairs.reduce((s,p) => s + p.over, 0) / pairs.length;
+                            const avgUnder = pairs.reduce((s,p) => s + p.under, 0) / pairs.length;
+                            v7PlayerProps = {
+                                count: pairs.length,
+                                consensusLine: parseFloat(consensusLine),
+                                bestOver: { book: bestOver.book, price: bestOver.over },
+                                bestUnder: { book: bestUnder.book, price: bestUnder.under },
+                                avgOver: Math.round(avgOver),
+                                avgUnder: Math.round(avgUnder),
+                                altLines: Object.keys(lineCounts).length > 1 ? Object.keys(lineCounts).map(Number).sort((a,b) => a-b) : null
+                            };
+                            console.log(`[V8.0] 📋 Prop Lines: ${pairs.length} books @ ${consensusLine} | Best Over: ${bestOver.over > 0 ? '+' : ''}${bestOver.over} (${bestOver.book}) | Best Under: ${bestUnder.under > 0 ? '+' : ''}${bestUnder.under} (${bestUnder.book})`);
+                            if (v7PlayerProps.altLines && v7PlayerProps.altLines.length > 1) {
+                                console.log(`[V8.0]    └─ Alt lines available: ${v7PlayerProps.altLines.join(', ')}`);
                             }
                         }
-                    } catch(e) { /* BDL props may require GOAT tier */ }
+                    }
 
                     console.log(`[V7.0] ✅ Full enrichment complete: Matrix=${!!v7Matrix}, Advanced=${!!v7Advanced}, Shooting=${!!v7Shooting}, Clutch=${!!v7Clutch}, OppProfile=${!!v7OppProfile}, Sharp=${!!v7SharpMoney}, GameScript=${!!v7GameScript}, Spots=${v7Spots.length}`);
                 }
@@ -45807,6 +45828,7 @@ reasoning must explain your analysis`;
             if (v7SharpMoney) aiParams._v7Sharp = `${v7SharpMoney.direction} (${v7SharpMoney.overPct}%)${v7SharpMoney.pinnacle ? ' | Pinnacle: ' + v7SharpMoney.pinnacle.sharpLean + (v7SharpMoney.pinnacle.steamMove ? ' ⚡STEAM' : '') : ''}`;
             if (typeof v7GameScript !== 'undefined' && v7GameScript) aiParams._v7GameScript = `${v7GameScript.label}: Total=${v7GameScript.projTotal?.toFixed(0)}, Spread=${v7GameScript.spread > 0 ? '+':''}${v7GameScript.spread}, Adj=${v7GameScript.scriptAdj >= 0 ? '+':''}${v7GameScript.scriptAdj}`;
             if (typeof v7Spots !== 'undefined' && v7Spots?.length > 0) aiParams._v7Spots = v7Spots.map(s => `${s.name} (${s.adj >= 0 ? '+':''}${s.adj.toFixed(1)})`).join(', ');
+            if (v7PlayerProps) aiParams._v7Props = `${v7PlayerProps.count} books @ ${v7PlayerProps.consensusLine} | Best Over: ${v7PlayerProps.bestOver.price > 0 ? '+':''}${v7PlayerProps.bestOver.price} (${v7PlayerProps.bestOver.book})`;
             
             // V7.0: Diagnostic log — what data reaches AI engines
             const v7Fed = Object.keys(aiParams).filter(k => k.startsWith('_v7')).map(k => k.replace('_v7', ''));
