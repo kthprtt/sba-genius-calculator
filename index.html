@@ -39000,7 +39000,7 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
         window.SBA = window.SBA_V47;
     </script>
 
-    <!-- V48 ULTIMATE V7.0 Console Module — Full Pipeline Parity -->
+    <!-- V48 ULTIMATE V7.0 Console Module — Full Pipeline + E10 Fix -->
     <script>
 // ═══════════════════════════════════════════════════════════════════════════════
 // SBA GENIUS V48 ULTIMATE V6.0 - FULL PROJECTION ENGINE + BLOWOUT CLEAN + STREAK SAFE
@@ -45316,20 +45316,35 @@ reasoning must explain your analysis`;
                 const hasMin = ['nba','wnba','ncaab','nhl'].includes(sport);
                 let smartL5=l5Avg, smartL10=l10Avg, blowoutGamesInL5=0, smartMomentumLabel='neutral';
                 if (rawGames.length >= 3) {
-                    const sorted = [...rawGames].sort((a,b)=>new Date(b.game?.date||b.date)-new Date(a.game?.date||a.date));
+                    // V7.0 FIX: Filter rawGames to only include games with >0 minutes played
+                    // The legacy BDL endpoint may return All-Star, preseason, or placeholder entries
+                    const validRaw = rawGames.filter(g => {
+                        const m = hasMin ? parseMinutes(g.min || '0') : 999;
+                        return m > 0 || !hasMin; // Keep 0-min ONLY if sport doesn't track minutes
+                    });
+                    const sorted = [...(validRaw.length >= 3 ? validRaw : rawGames)].sort((a,b)=>new Date(b.game?.date||b.date)-new Date(a.game?.date||a.date));
                     const l5G=sorted.slice(0,5), l10G=sorted.slice(0,10), genuine=[];
-                    const avgM = hasMin ? sorted.slice(0,20).reduce((s,g)=>s+parseMinutes(g.min||'0'),0)/Math.min(sorted.length,20) : 0;
+                    // V7.0 FIX: Compute avgM only from games with real minutes (>5 min)
+                    const realMinGames = sorted.slice(0,20).filter(g => parseMinutes(g.min||'0') > 5);
+                    const avgM = hasMin && realMinGames.length > 0 ? realMinGames.reduce((s,g)=>s+parseMinutes(g.min||'0'),0)/realMinGames.length : 0;
                     let reason='';
                     l5G.forEach((g,i)=>{
                         const v=extractStatValue(g,getStatMapping(sport,statKey,market),sport)||0;
                         const m=hasMin?parseMinutes(g.min||'0'):999;
-                        if(hasMin&&m<=5){blowoutGamesInL5++;reason+=`G${i+1}:DNP; `;}
-                        else if(hasMin&&m<avgM*0.5&&v<seasonAvg*0.3){const ext=avgM>0?(v/m)*avgM:v;genuine.push(ext);blowoutGamesInL5++;reason+=`G${i+1}:${v}→${ext.toFixed(1)}; `;}
+                        const minRatio = avgM > 0 ? m / avgM : 1;
+                        // V7.0 FIX: Match V47 logic — require val < line AND low minutes
+                        // Pure DNP: 0 minutes AND 0 stat value (true DNP, not data artifact)
+                        if(hasMin && m === 0 && v === 0){blowoutGamesInL5++;reason+=`G${i+1}:DNP(0min); `;}
+                        // Low minutes + below line: likely blowout/injury exit
+                        else if(hasMin && v < line && minRatio < 0.78){
+                            if(m <= 5){blowoutGamesInL5++;reason+=`G${i+1}:DNP(${m}min); `;}
+                            else{const ext=avgM>0?(v/m)*avgM:v;genuine.push(ext);blowoutGamesInL5++;reason+=`G${i+1}:${v}→${ext.toFixed(1)}; `;}
+                        }
                         else genuine.push(v);
                     });
                     smartL5 = genuine.length>0 ? genuine.reduce((a,b)=>a+b,0)/genuine.length : l5Avg;
                     const l10Gen=[];
-                    l10G.forEach(g=>{const v=extractStatValue(g,getStatMapping(sport,statKey,market),sport)||0;const m=hasMin?parseMinutes(g.min||'0'):999;if(hasMin&&m<=5)return;if(hasMin&&m<avgM*0.5&&v<seasonAvg*0.3)l10Gen.push(avgM>0?(v/m)*avgM:v);else l10Gen.push(v);});
+                    l10G.forEach(g=>{const v=extractStatValue(g,getStatMapping(sport,statKey,market),sport)||0;const m=hasMin?parseMinutes(g.min||'0'):999;const mr=avgM>0?m/avgM:1;if(hasMin&&m===0&&v===0)return;if(hasMin&&v<line&&mr<0.78){if(m<=5)return;l10Gen.push(avgM>0?(v/m)*avgM:v);}else l10Gen.push(v);});
                     smartL10 = l10Gen.length>0 ? l10Gen.reduce((a,b)=>a+b,0)/l10Gen.length : l10Avg;
                     const l3=genuine.slice(0,3); const l3a=l3.length>0?l3.reduce((a,b)=>a+b,0)/l3.length:smartL5;
                     if(l3a>smartL5*1.05) smartMomentumLabel='hot'; else if(l3a<smartL5*0.95) smartMomentumLabel='cold';
@@ -45343,7 +45358,7 @@ reasoning must explain your analysis`;
                 let cvClean=0, varianceLabel='Average';
                 if (recVals.length>=5) {
                     let cvV=recVals;
-                    if(blowoutGamesInL5>0&&hasMin){const am=rawGames.slice(0,20).reduce((s,g)=>s+parseMinutes(g.min||'0'),0)/Math.min(rawGames.length,20);const cl=[];[...rawGames].sort((a,b)=>new Date(b.game?.date||b.date)-new Date(a.game?.date||a.date)).slice(0,10).forEach(g=>{const v=extractStatValue(g,getStatMapping(sport,statKey,market),sport)||0;const m=parseMinutes(g.min||'0');if(m>5&&!(m<am*0.5&&v<seasonAvg*0.3))cl.push(v);});if(cl.length>=5){cvV=cl;console.log(`[V48] 🧹 Variance Clean: Filtered ${recVals.length-cl.length} games`);}}
+                    if(blowoutGamesInL5>0&&hasMin){const realMG=rawGames.filter(g=>parseMinutes(g.min||'0')>5);const am=realMG.length>0?realMG.slice(0,20).reduce((s,g)=>s+parseMinutes(g.min||'0'),0)/Math.min(realMG.length,20):30;const cl=[];[...rawGames].filter(g=>parseMinutes(g.min||'0')>0).sort((a,b)=>new Date(b.game?.date||b.date)-new Date(a.game?.date||a.date)).slice(0,10).forEach(g=>{const v=extractStatValue(g,getStatMapping(sport,statKey,market),sport)||0;const m=parseMinutes(g.min||'0');const mr=am>0?m/am:1;if(m>5&&!(v<line&&mr<0.78))cl.push(v);});if(cl.length>=5){cvV=cl;console.log(`[V48] 🧹 Variance Clean: Filtered ${recVals.length-cl.length} games`);}}
                     const mean=cvV.reduce((a,b)=>a+b,0)/cvV.length;
                     const sd=Math.sqrt(cvV.reduce((s,v)=>s+Math.pow(v-mean,2),0)/cvV.length);
                     cvClean=mean>0?(sd/mean)*100:0;
