@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// SBA GENIUS V47 ULTIMATE V5.5.1 - SMART ODDS + COACH K NARRATIVE + FEEL LIKE ODDS
+// SBA GENIUS V48 ULTIMATE V6.0 - FULL PROJECTION ENGINE + BLOWOUT CLEAN + STREAK SAFE
 // ═══════════════════════════════════════════════════════════════════════════════
 // 🏆 THE COMPLETE VERSION - VALIDATED DATA + REAL ODDS + AI ANALYSIS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1472,7 +1472,7 @@ Reply in format: LINE: [number] ODDS: [over odds like -110]`,
                         rankings[item.team.toUpperCase()] = { rank: item.rank || 15, rating: item.rating || 110 };
                     }
                 });
-                return Object.keys(rankings).length >= 10 ? rankings : null;
+                return Object.keys(rankings).length >= 20 ? rankings : null;
             } catch(e) { return null; }
         };
         
@@ -1532,7 +1532,15 @@ Reply in format: LINE: [number] ODDS: [over odds like -110]`,
             }
         } catch(e) { console.log(`[V5.5] Defense/Groq error: ${e.message}`); }
         
-        console.log(`[V5.5] ⚠️ All 3 live defense sources failed — using STATIC fallback`);
+        // Source 4: BDL Computed Defense Rankings (computed from actual game logs)
+        try {
+            const bdlRankings = await getBDLDefenseRankings(sport);
+            if (bdlRankings && Object.keys(bdlRankings).length >= 5) {
+                return cacheResult(bdlRankings, 'BDL-computed');
+            }
+        } catch(e) { console.log(`[V5.5] Defense/BDL error: ${e.message}`); }
+        
+        console.log(`[V5.5] ⚠️ All 4 defense sources failed — using STATIC fallback`);
         return { rankings: STATIC_DEFENSE[sport] || {}, source: 'STATIC' };
     }
 
@@ -2076,25 +2084,27 @@ CONFIDENCE: [HIGH/MEDIUM/LOW]`,
     // PACE FACTOR ANALYSIS
     // ═══════════════════════════════════════════════════════════════════════════
     async function getPaceFactor(team, opponent, sport = 'nba') {
-        // Only relevant for basketball
-        if (!['nba', 'wnba', 'ncaab'].includes(sport)) {
-            return { found: false, adjustment: 0 };
-        }
+        // V48: Expanded to all major sports
+        const pacePrompts = {
+            nba: `${sport.toUpperCase()} pace: ${team} vs ${opponent}. Reply EXACTLY:\nTEAM_PACE_RANK: [1-30, 1=fastest]\nOPP_PACE_RANK: [1-30]\nPACE_IMPACT: [FAST/SLOW/NEUTRAL]`,
+            wnba: `WNBA pace: ${team} vs ${opponent}. Reply EXACTLY:\nTEAM_PACE_RANK: [1-12, 1=fastest]\nOPP_PACE_RANK: [1-12]\nPACE_IMPACT: [FAST/SLOW/NEUTRAL]`,
+            ncaab: `NCAAB pace: ${team} vs ${opponent}. Reply EXACTLY:\nTEAM_PACE_RANK: [1-30, 1=fastest possessions/game]\nOPP_PACE_RANK: [1-30]\nPACE_IMPACT: [FAST/SLOW/NEUTRAL]`,
+            nhl: `NHL pace: ${team} vs ${opponent}. Reply EXACTLY:\nTEAM_PACE_RANK: [1-32, 1=most shots per 60]\nOPP_PACE_RANK: [1-32]\nPACE_IMPACT: [FAST/SLOW/NEUTRAL]`,
+            nfl: `NFL pace: ${team} vs ${opponent}. Reply EXACTLY:\nTEAM_PACE_RANK: [1-32, 1=most plays per game]\nOPP_PACE_RANK: [1-32]\nPACE_IMPACT: [FAST/SLOW/NEUTRAL]`,
+            ncaaf: `NCAAF pace: ${team} vs ${opponent}. Reply EXACTLY:\nTEAM_PACE_RANK: [1-30, 1=most plays per game]\nOPP_PACE_RANK: [1-30]\nPACE_IMPACT: [FAST/SLOW/NEUTRAL]`,
+            mlb: `MLB pace: ${team} vs ${opponent}. Reply EXACTLY:\nTEAM_PACE_RANK: [1-30, 1=most runs per game]\nOPP_PACE_RANK: [1-30]\nPACE_IMPACT: [FAST/SLOW/NEUTRAL]`,
+            soccer: `Soccer pace: ${team} vs ${opponent}. Reply EXACTLY:\nTEAM_PACE_RANK: [1-20, 1=most goals per match]\nOPP_PACE_RANK: [1-20]\nPACE_IMPACT: [FAST/SLOW/NEUTRAL]`
+        };
+        
+        const prompt = pacePrompts[sport];
+        if (!prompt) return { found: false, adjustment: 0 };
         
         try {
             const res = await fetch(`${PROXY}/api/ai/grok`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    prompt: `${sport.toUpperCase()} pace analysis for ${team} vs ${opponent}:
-
-Reply EXACTLY:
-TEAM_PACE_RANK: [1-30 ranking, 1=fastest]
-OPP_PACE_RANK: [1-30 ranking]
-TEAM_PPG: [points per game]
-OPP_PPG_ALLOWED: [points allowed per game]
-PACE_IMPACT: [FAST/SLOW/NEUTRAL]
-SCORING_PROJECTION: [HIGH/LOW/AVERAGE]`,
+                    prompt: prompt,
                     maxTokens: 120
                 })
             });
@@ -2141,6 +2151,95 @@ SCORING_PROJECTION: [HIGH/LOW/AVERAGE]`,
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // V48 GAP FIXES: BDL Team Stats, Defense Rankings, Universal Pace, Lineups
+    // ═══════════════════════════════════════════════════════════════════════════
+    
+    // GAP 1 FIX: Real team stats from BDL for game bets
+    async function getBDLTeamStats(teamName, sport) {
+        const bdlSports = { nba:'nba', wnba:'wnba', ncaab:'ncaab', nfl:'nfl', ncaaf:'ncaaf', mlb:'mlb', nhl:'nhl' };
+        const ep = bdlSports[sport]; if (!ep) return null;
+        try {
+            const yr = new Date().getMonth()>=9 ? new Date().getFullYear() : new Date().getFullYear()-1;
+            // Search for team
+            const tRes = await fetch(`https://api.balldontlie.io/${ep}/v1/teams`, { headers: { 'Authorization': BDL_KEY } });
+            if (!tRes.ok) return null;
+            const teams = (await tRes.json()).data || [];
+            const tn = teamName.toLowerCase();
+            const team = teams.find(t => t.full_name?.toLowerCase().includes(tn) || t.abbreviation?.toLowerCase()===tn || t.city?.toLowerCase().includes(tn) || t.name?.toLowerCase().includes(tn));
+            if (!team) { console.log(`[V48] ⚠️ BDL Team not found: ${teamName}`); return null; }
+            
+            // Fetch team's games
+            const gRes = await fetch(`https://api.balldontlie.io/${ep}/v1/games?seasons[]=${yr}&team_ids[]=${team.id}&per_page=100`, { headers: { 'Authorization': BDL_KEY } });
+            if (!gRes.ok) return null;
+            const games = ((await gRes.json()).data||[]).filter(g=>g.status==='Final');
+            if (games.length < 3) return null;
+            
+            const recent = games.slice(-20); // Most recent 20
+            let ppg=0,opp=0,homeW=0,homeL=0,awayW=0,awayL=0,l5ppg=0,l5opp=0,totals=[];
+            recent.forEach(g=>{
+                const isH = g.home_team?.id===team.id;
+                const ts = isH?g.home_team_score:g.visitor_team_score;
+                const os = isH?g.visitor_team_score:g.home_team_score;
+                ppg+=ts; opp+=os; totals.push(ts+os);
+                if(isH){if(ts>os)homeW++;else homeL++;}else{if(ts>os)awayW++;else awayL++;}
+            });
+            ppg/=recent.length; opp/=recent.length;
+            const l5 = games.slice(-5);
+            l5.forEach(g=>{const isH=g.home_team?.id===team.id;l5ppg+=(isH?g.home_team_score:g.visitor_team_score);l5opp+=(isH?g.visitor_team_score:g.home_team_score);});
+            l5ppg/=l5.length; l5opp/=l5.length;
+            const avgTotal = totals.reduce((a,b)=>a+b,0)/totals.length;
+            
+            // Standings
+            let wins=0,losses=0;
+            try{const sRes=await fetch(`https://api.balldontlie.io/${ep}/v1/standings?season=${yr}`,{headers:{'Authorization':BDL_KEY}});if(sRes.ok){const s=(await sRes.json()).data?.find(s=>s.team?.id===team.id);if(s){wins=s.wins;losses=s.losses;}}}catch(e){}
+            
+            console.log(`[V48] ✅ BDL Team [${sport.toUpperCase()}]: ${team.full_name} ${ppg.toFixed(1)}ppg, allow ${opp.toFixed(1)}, L5=${l5ppg.toFixed(1)}, Record=${wins}-${losses} (${recent.length}g)`);
+            return { teamId:team.id, name:team.full_name, abbr:team.abbreviation, ppg, oppPPG:opp, l5PPG:l5ppg, l5Opp:l5opp, avgTotal, homeRecord:`${homeW}-${homeL}`, awayRecord:`${awayW}-${awayL}`, record:`${wins}-${losses}`, wins, losses, gamesUsed:recent.length };
+        } catch(e) { console.log(`[V48] ⚠️ BDL Team error [${teamName}]: ${e.message}`); return null; }
+    }
+    
+    // GAP 2 FIX: BDL-computed defense rankings (fallback for Perplexity)
+    async function getBDLDefenseRankings(sport) {
+        const bdlSports = { nba:'nba', wnba:'wnba', ncaab:'ncaab', nfl:'nfl', ncaaf:'ncaaf', mlb:'mlb', nhl:'nhl' };
+        const ep = bdlSports[sport]; if (!ep) return null;
+        try {
+            const yr = new Date().getMonth()>=9 ? new Date().getFullYear() : new Date().getFullYear()-1;
+            const tRes = await fetch(`https://api.balldontlie.io/${ep}/v1/teams`, { headers: { 'Authorization': BDL_KEY } });
+            if (!tRes.ok) return null;
+            const teams = (await tRes.json()).data || [];
+            
+            // Fetch recent games for ALL teams to compute points allowed
+            const gRes = await fetch(`https://api.balldontlie.io/${ep}/v1/games?seasons[]=${yr}&per_page=100`, { headers: { 'Authorization': BDL_KEY } });
+            if (!gRes.ok) return null;
+            const games = ((await gRes.json()).data||[]).filter(g=>g.status==='Final');
+            
+            // Compute points allowed per team
+            const teamStats = {};
+            teams.forEach(t => { teamStats[t.id] = { name: t.full_name, abbr: t.abbreviation, allowed: [], scored: [] }; });
+            games.forEach(g => {
+                if (teamStats[g.home_team?.id]) { teamStats[g.home_team.id].allowed.push(g.visitor_team_score); teamStats[g.home_team.id].scored.push(g.home_team_score); }
+                if (teamStats[g.visitor_team?.id]) { teamStats[g.visitor_team.id].allowed.push(g.home_team_score); teamStats[g.visitor_team.id].scored.push(g.visitor_team_score); }
+            });
+            
+            // Rank by points allowed (ascending = best defense)
+            const ranked = Object.entries(teamStats).filter(([,s])=>s.allowed.length>=5).map(([id,s])=>({
+                id, name:s.name, abbr:s.abbr, avgAllowed: s.allowed.reduce((a,b)=>a+b,0)/s.allowed.length,
+                avgScored: s.scored.reduce((a,b)=>a+b,0)/s.scored.length, games: s.allowed.length
+            })).sort((a,b)=>a.avgAllowed-b.avgAllowed);
+            
+            const rankings = {};
+            ranked.forEach((t,i) => { rankings[t.abbr.toUpperCase()] = { rank: i+1, rating: t.avgAllowed, ppg: t.avgScored }; });
+            
+            if (Object.keys(rankings).length >= 5) {
+                console.log(`[V48] ✅ BDL Defense Rankings [${sport.toUpperCase()}]: ${Object.keys(rankings).length} teams computed from ${games.length} games`);
+                return rankings;
+            }
+            return null;
+        } catch(e) { console.log(`[V48] ⚠️ BDL Defense error: ${e.message}`); return null; }
+    }
+
     // SAME GAME PARLAY (SGP) CORRELATION ANALYSIS
     // ═══════════════════════════════════════════════════════════════════════════
     function calculateSGPCorrelation(legs) {
@@ -3150,7 +3249,14 @@ MINUTES: [expected minutes]`,
                     confidence: confidence,
                     status: validationStatus
                 },
-                team: bdlStats.team || espnStats.team
+                team: bdlStats.team || espnStats.team,
+                // V48: Preserve BDL advanced data for projection engine
+                bdlPlayerId: bdlStats.bdlPlayerId || null,
+                bdlTeamId: bdlStats.bdlTeamId || null,
+                rawGames: bdlStats.rawGames || [],
+                gameValues: bdlStats.gameValues || [],
+                l5StdDev: bdlStats.l5StdDev || 0,
+                l10StdDev: bdlStats.l10StdDev || 0
             };
             
             // Format for consistency
@@ -3507,7 +3613,10 @@ MINUTES: [expected minutes]`,
             const currentYear = new Date().getFullYear();
             const seasonYear = new Date().getMonth() >= 9 ? currentYear : currentYear - 1;
             
-            const statsUrl = `https://api.balldontlie.io/${endpoint}/v1/stats?player_ids[]=${p.id}&seasons[]=${seasonYear}&per_page=100`;
+            // V6.4 FIX: Use legacy /v1/stats for game logs — includes DNP/0-minute games
+            // The sport-specific /${endpoint}/v1/stats EXCLUDES DNP games, breaking blowout detection
+            const statsEndpoint = (sport === 'nba') ? '' : `${endpoint}/`;
+            const statsUrl = `https://api.balldontlie.io/${statsEndpoint}v1/stats?player_ids[]=${p.id}&seasons[]=${seasonYear}&per_page=100`;
             const statsRes = await fetch(statsUrl, { headers: { 'Authorization': BDL_KEY } });
             
             if (!statsRes.ok) {
@@ -3526,17 +3635,18 @@ MINUTES: [expected minutes]`,
             // Map stat keys per sport
             const statMapping = getStatMapping(sport, statKey, market);
             
-            // Extract stat values and filter low-minute games
+            // Extract stat values — keep ALL games for rawGames (blowout detection needs DNPs)
             const gameValues = [];
+            const allGamesForRaw = []; // V48 FIX: Keep DNP/low-min games for blowout detector
             for (const g of games) {
-                // Filter low-minute games for basketball
-                if (['nba', 'wnba', 'ncaab'].includes(sport)) {
-                    const mins = parseMinutes(g.min);
-                    if (mins < 12) continue;
-                }
-                
                 const value = extractStatValue(g, statMapping, sport);
                 if (value !== null && !isNaN(value)) {
+                    allGamesForRaw.push(g); // Keep everything for rawGames
+                    // Filter low-minute games ONLY for stat averages
+                    if (['nba', 'wnba', 'ncaab'].includes(sport)) {
+                        const mins = parseMinutes(g.min);
+                        if (mins < 12) continue; // Skip for averages, but kept in rawGames
+                    }
                     gameValues.push({
                         date: g.game?.date || g.date,
                         value: value
@@ -3570,7 +3680,14 @@ MINUTES: [expected minutes]`,
                 gamesPlayed: gameValues.length,
                 source: `BDL-${sport.toUpperCase()}`,
                 validated: true,
-                team: teamAbbr
+                team: teamAbbr,
+                // V48: Additional data for projection engine
+                bdlPlayerId: p.id,
+                bdlTeamId: p.team?.id || null,
+                rawGames: allGamesForRaw, // V48 FIX: Includes DNP/low-min games for blowout detection
+                gameValues: gameValues, // Parsed stat values with dates
+                l5StdDev: l5.length > 1 ? Math.sqrt(l5.reduce((s, g) => s + Math.pow(g.value - l5Avg, 2), 0) / l5.length) : 0,
+                l10StdDev: l10.length > 1 ? Math.sqrt(l10.reduce((s, g) => s + Math.pow(g.value - l10Avg, 2), 0) / l10.length) : 0
             };
         } catch(e) {
             console.log(`[V5.4] BDL ${sport.toUpperCase()} error: ${e.message}`);
@@ -3855,10 +3972,20 @@ LAST_5: [num1, num2, num3, num4, num5]`,
         let prompt;
         
         if (isPlayerProp) {
-            // PLAYER PROP PROMPT
-            const statsText = stats ? `L5=${getStatVal(stats.l5, statKey)} L10=${getStatVal(stats.l10, statKey)} Season=${getStatVal(stats.season, statKey)}. Recent games: ${hitRate?.values?.join(', ') || 'N/A'}` : 'Stats unavailable';
+            // PLAYER PROP PROMPT - V48: Use clean L5/L10 when available
+            const cleanL5 = params._v48CleanL5 || getStatVal(stats.l5, statKey);
+            const cleanL10 = params._v48CleanL10 || getStatVal(stats.l10, statKey);
+            const statsText = stats ? `L5=${cleanL5} L10=${cleanL10} Season=${getStatVal(stats.season, statKey)}. Recent games: ${hitRate?.values?.join(', ') || 'N/A'}` : 'Stats unavailable';
             const hitText = hitRate ? `Hit Rate: ${hitRate.rate}% (${hitRate.detail}) ${hitRate.trend}` : '';
             const defText = defenseData?.found ? `Opponent: ${defenseData.opponent} #${defenseData.rank} ranked defense (${defenseData.tier})` : '';
+            const v48ProjText = params._v48Projection ? `\nSBA Model Projection: ${params._v48Projection.toFixed(1)} (${params._v48Direction})` : '';
+            const v48BlowoutText = params._v48BlowoutWarning ? `\n⚠️ ${params._v48BlowoutWarning}` : '';
+            const v48TeamText = params._v48TeamIntel ? `\nTeam Intel: PPG=${params._v48TeamIntel.teamPPG?.toFixed(1)}, OppAllow=${params._v48TeamIntel.oppAllowedPPG?.toFixed(1)}, ProjTotal=${params._v48TeamIntel.projectedTotal?.toFixed(1)}` : '';
+            const v48DefText = params._v48Defense ? `\nDefense: ${params._v48Defense}` : '';
+            const v48PaceText = params._v48Pace ? `\nPace: ${params._v48Pace}` : '';
+            const v48VarText = params._v48Variance ? `\nVariance: ${params._v48Variance} (CV=${params._v48CV || '?'}%)` : '';
+            const v48GTText = params._v48GameTotal ? `\nGame Total O/U: ${params._v48GameTotal}` : '';
+            const v48AdvText = params._v48Advanced ? (params._v48Advanced.sport==='nhl' ? `\nNHL Advanced: Corsi=${params._v48Advanced.corsiPct}%, xGF=${params._v48Advanced.xGFPct}%` : params._v48Advanced.usagePct ? `\nUsage: ${(params._v48Advanced.usagePct*100).toFixed(1)}%` : '') : '';
 
             prompt = `${sportConfig.name} PLAYER PROP ANALYSIS:
 Player: ${params.player}
@@ -3867,7 +3994,7 @@ Opponent: ${params.opponent}
 
 STATS: ${statsText}
 ${hitText}
-${defText}
+${defText}${v48ProjText}${v48TeamText}${v48BlowoutText}${v48DefText}${v48PaceText}${v48VarText}${v48GTText}${v48AdvText}
 
 Analyze this prop bet. Based on the data, should the bettor take OVER, UNDER, or PASS?
 
@@ -3884,12 +4011,14 @@ reasoning must explain your analysis`;
             const away = params.away || params.opponent || 'Away';
             const line = params.line;
             const period = marketConfig.period || 'GAME';
+            const v48GameCtx = params._v48Projection ? `\nSBA Model: ${params._v48Direction} (proj ${typeof params._v48Projection === 'number' ? params._v48Projection.toFixed(1) : params._v48Projection})` : '';
+            const v48GameIntel = params._v48TeamIntel ? `\nTeam Intel: ${home} ${params._v48TeamIntel.teamPPG?.toFixed?.(1)||params._v48TeamIntel.teamPPG}ppg, Opp allows ${params._v48TeamIntel.oppAllowedPPG?.toFixed?.(1)||params._v48TeamIntel.oppAllowedPPG}ppg, ProjTotal=${params._v48TeamIntel.projectedTotal?.toFixed?.(1)||params._v48TeamIntel.projectedTotal}` : '';
             
             prompt = `${sportConfig.name} GAME BET ANALYSIS:
 Matchup: ${home} vs ${away}
 Market: ${statDisplay}
 Line: ${line}
-Period: ${period}
+Period: ${period}${v48GameCtx}${v48GameIntel}
 
 Analyze this game bet. Consider:
 - Recent team form and ATS records
@@ -5276,7 +5405,7 @@ reasoning must explain your analysis`;
         
         console.log('\n');
         console.log('╔═══════════════════════════════════════════════════════════════════════════════╗');
-        console.log('║       🏆 SBA GENIUS V47 ULTIMATE V5.5.1 - MAXIMUM ACCURACY 🏆             ║');
+        console.log('║   🏆 SBA GENIUS V48 ULTIMATE V6.4 - 17-ENGINE PROJECTION + DNP FIX 🏆 ║');
         console.log('╠═══════════════════════════════════════════════════════════════════════════════╣');
         console.log(`║  ${displaySubject} | ${statDisplay} @ ${params.line} ${isPlayerProp ? 'vs ' + (params.opponent || 'Unknown') : ''}`.padEnd(78) + '║');
         console.log(`║  Sport: ${sportConfig.name} | Market: ${market} | Type: ${marketType.toUpperCase()}`.padEnd(78) + '║');
@@ -5689,6 +5818,396 @@ reasoning must explain your analysis`;
         }
 
         // ═══════════════════════════════════════════════════════════════════════
+        // V48 LAYER 0.5: ADVANCED DATA + 17-ENGINE PROJECTION
+        // ═══════════════════════════════════════════════════════════════════════
+        console.log('\n══════════════════════════════════════════════════════════════════════');
+        console.log('  🧮 V48 LAYER 0.5: Advanced Projection Engine');
+        console.log('══════════════════════════════════════════════════════════════════════');
+        
+        let v48Projection = null;
+        let v48TeamIntel = null;
+        let v48StreakSafe = null;
+        let v48CleanL5 = null;
+        let v48CleanL10 = null;
+        let v48BlowoutWarning = null;
+        
+        if (isPlayerProp && stats) {
+            // ══════════════════════════════════════════════════════════════════
+            // PLAYER PROP PROJECTION — ALL SPORTS
+            // ══════════════════════════════════════════════════════════════════
+            const bdlSports = ['nba', 'wnba', 'ncaab', 'nfl', 'ncaaf', 'mlb', 'nhl'];
+            const hasBDL = bdlSports.includes(sport);
+            try {
+                const bdlPlayerId = stats.bdlPlayerId;
+                const bdlTeamId = stats.bdlTeamId;
+                const seasonAvg = parseFloat(stats.season?.[statKey] || stats.season?.pts || 0);
+                const l5Avg = parseFloat(stats.l5?.[statKey] || stats.l5?.pts || 0);
+                const l10Avg = parseFloat(stats.l10?.[statKey] || stats.l10?.pts || 0);
+                const line = parseFloat(params.line);
+                
+                // ── Team Intelligence (all BDL sports) ──
+                if (hasBDL && bdlPlayerId) {
+                    try {
+                        const rawOpp = (params.opponent || '').toLowerCase().trim();
+                        // V48 FIX 7: Normalize common team aliases for better H2H matching
+                        const teamAliases = {
+                            // NBA - all 30 teams standard abbreviations
+                            'atl':'atlanta hawks','hawks':'atlanta hawks',
+                            'bos':'boston celtics','celtics':'boston celtics',
+                            'bkn':'brooklyn nets','nets':'brooklyn nets','brooklyn':'brooklyn nets',
+                            'cha':'charlotte hornets','hornets':'charlotte hornets',
+                            'chi':'chicago bulls','bulls':'chicago bulls',
+                            'cle':'cleveland cavaliers','cavs':'cleveland cavaliers','cavaliers':'cleveland cavaliers',
+                            'dal':'dallas mavericks','mavs':'dallas mavericks','mavericks':'dallas mavericks',
+                            'den':'denver nuggets','nuggets':'denver nuggets',
+                            'det':'detroit pistons','pistons':'detroit pistons',
+                            'gsw':'golden state warriors','warriors':'golden state warriors','golden state':'golden state warriors','gs':'golden state warriors',
+                            'hou':'houston rockets','rockets':'houston rockets',
+                            'ind':'indiana pacers','pacers':'indiana pacers',
+                            'lac':'la clippers','clippers':'la clippers','la clippers':'la clippers',
+                            'lal':'los angeles lakers','lakers':'los angeles lakers','la lakers':'los angeles lakers',
+                            'mem':'memphis grizzlies','grizzlies':'memphis grizzlies',
+                            'mia':'miami heat','heat':'miami heat',
+                            'mil':'milwaukee bucks','bucks':'milwaukee bucks',
+                            'min':'minnesota timberwolves','wolves':'minnesota timberwolves','twolves':'minnesota timberwolves',
+                            'nop':'new orleans pelicans','pelicans':'new orleans pelicans','no':'new orleans pelicans',
+                            'nyk':'new york knicks','knicks':'new york knicks','ny':'new york knicks','nyc':'new york knicks',
+                            'okc':'oklahoma city thunder','thunder':'oklahoma city thunder',
+                            'orl':'orlando magic','magic':'orlando magic',
+                            'phi':'philadelphia 76ers','sixers':'philadelphia 76ers','76ers':'philadelphia 76ers',
+                            'phx':'phoenix suns','suns':'phoenix suns',
+                            'por':'portland trail blazers','blazers':'portland trail blazers',
+                            'sac':'sacramento kings','kings':'sacramento kings',
+                            'sas':'san antonio spurs','sa':'san antonio spurs','spurs':'san antonio spurs',
+                            'tor':'toronto raptors','raptors':'toronto raptors',
+                            'uta':'utah jazz','jazz':'utah jazz',
+                            'was':'washington wizards','wizards':'washington wizards','wiz':'washington wizards',
+                            // NHL - common abbreviations
+                            'ana':'anaheim ducks','ducks':'anaheim ducks',
+                            'ari':'arizona coyotes','coyotes':'arizona coyotes','uta':'utah hockey club',
+                            'bos':'boston bruins','bruins':'boston bruins',
+                            'buf':'buffalo sabres','sabres':'buffalo sabres',
+                            'cgy':'calgary flames','flames':'calgary flames','cal':'calgary flames',
+                            'car':'carolina hurricanes','hurricanes':'carolina hurricanes','canes':'carolina hurricanes',
+                            'cbj':'columbus blue jackets','blue jackets':'columbus blue jackets',
+                            'chi':'chicago blackhawks','blackhawks':'chicago blackhawks',
+                            'col':'colorado avalanche','avs':'colorado avalanche','avalanche':'colorado avalanche',
+                            'dal':'dallas stars','stars':'dallas stars',
+                            'det':'detroit red wings','red wings':'detroit red wings',
+                            'edm':'edmonton oilers','oilers':'edmonton oilers',
+                            'fla':'florida panthers','panthers':'florida panthers',
+                            'lak':'los angeles kings','la kings':'los angeles kings',
+                            'min':'minnesota wild','wild':'minnesota wild',
+                            'mtl':'montreal canadiens','canadiens':'montreal canadiens','habs':'montreal canadiens',
+                            'njd':'new jersey devils','devils':'new jersey devils','nj':'new jersey devils',
+                            'nsh':'nashville predators','predators':'nashville predators','preds':'nashville predators',
+                            'nyi':'new york islanders','isles':'new york islanders','islanders':'new york islanders',
+                            'nyr':'new york rangers','rangers':'new york rangers',
+                            'ott':'ottawa senators','senators':'ottawa senators','sens':'ottawa senators',
+                            'pit':'pittsburgh penguins','penguins':'pittsburgh penguins','pens':'pittsburgh penguins',
+                            'sea':'seattle kraken','kraken':'seattle kraken',
+                            'sjs':'san jose sharks','sharks':'san jose sharks',
+                            'stl':'st. louis blues','blues':'st. louis blues',
+                            'tbl':'tampa bay lightning','tb':'tampa bay lightning','lightning':'tampa bay lightning',
+                            'van':'vancouver canucks','canucks':'vancouver canucks',
+                            'vgk':'vegas golden knights','knights':'vegas golden knights','golden knights':'vegas golden knights',
+                            'wpg':'winnipeg jets','jets':'winnipeg jets',
+                            'wsh':'washington capitals','capitals':'washington capitals','caps':'washington capitals',
+                            // NCAAB common
+                            'uconn':'connecticut','unc':'north carolina','uk':'kentucky','ku':'kansas',
+                            'duke':'duke blue devils','msu':'michigan state','osu':'ohio state',
+                        };
+                        const opponentName = teamAliases[rawOpp] || rawOpp;
+                        const curYr = new Date().getFullYear();
+                        const sznYr = new Date().getMonth() >= 9 ? curYr : curYr - 1;
+                        const ep = { nba:'nba', wnba:'wnba', ncaab:'ncaab', nfl:'nfl', ncaaf:'ncaaf', mlb:'mlb', nhl:'nhl' }[sport] || 'nba';
+                        // V6.4 FIX: Use legacy /v1/stats for NBA (includes DNP games)
+                        const glEp = (sport === 'nba') ? '' : `${ep}/`;
+                        const glRes = await fetch(`https://api.balldontlie.io/${glEp}v1/stats?player_ids[]=${bdlPlayerId}&seasons[]=${sznYr}&per_page=100`, { headers: { 'Authorization': BDL_KEY } });
+                        if (glRes.ok) {
+                            const glData = await glRes.json();
+                            const pGames = glData.data || [];
+                            if (pGames.length >= 5) {
+                                let tScores=[], oScores=[], h2hG=[];
+                                for (const pg of pGames.slice(0,20)) {
+                                    const gm = pg.game; if (!gm || gm.status !== 'Final') continue;
+                                    const isH = pg.team?.id === gm.home_team?.id;
+                                    const ts = isH ? gm.home_team_score : gm.visitor_team_score;
+                                    const os = isH ? gm.visitor_team_score : gm.home_team_score;
+                                    if (ts > 0 || os > 0) { tScores.push(ts); oScores.push(os); }
+                                    const oT = isH ? gm.visitor_team : gm.home_team;
+                                    if (oT && (oT.full_name?.toLowerCase().includes(opponentName) || oT.abbreviation?.toLowerCase() === opponentName.toLowerCase() || oT.city?.toLowerCase().includes(opponentName) || oT.name?.toLowerCase().includes(opponentName)))
+                                        h2hG.push({ teamScore: ts, oppScore: os, total: ts + os });
+                                }
+                                if (tScores.length >= 3) {
+                                    const tPPG = tScores.reduce((a,b)=>a+b,0)/tScores.length;
+                                    const oPPG = oScores.reduce((a,b)=>a+b,0)/oScores.length;
+                                    v48TeamIntel = { teamPPG: tPPG, oppAllowedPPG: oPPG, margin: tPPG-oPPG, projectedTotal: tPPG+oPPG, h2hGames: h2hG.length, h2hAvgTotal: h2hG.length>0 ? h2hG.reduce((s,g)=>s+g.total,0)/h2hG.length : null, gamesUsed: tScores.length, sport };
+                                    console.log(`[V48] ✅ Team Intel [${sport.toUpperCase()}]: PPG=${tPPG.toFixed(1)}, OppAllow=${oPPG.toFixed(1)}, Margin=${(tPPG-oPPG).toFixed(1)} (${tScores.length}g)`);
+                                    if (h2hG.length > 0) console.log(`[V48]    H2H: ${h2hG.length}g, avg total=${v48TeamIntel.h2hAvgTotal?.toFixed(1)}`);
+                                }
+                            }
+                        }
+                    } catch (e) { console.log(`[V48] ⚠️ Team Intel: ${e.message}`); }
+                } else if (!hasBDL) { console.log(`[V48] ℹ️ Team Intel: N/A for ${sport.toUpperCase()}`); }
+                
+                // ── Advanced Stats (basketball: BDL, NHL: Perplexity) ──
+                let advancedStats = null;
+                if (['nba','wnba','ncaab'].includes(sport) && bdlPlayerId) {
+                    try {
+                        const yr = new Date().getMonth()>=9 ? new Date().getFullYear() : new Date().getFullYear()-1;
+                        const ar = await fetch(`https://api.balldontlie.io/${sport}/v1/season_averages/general?season=${yr}&season_type=regular&type=advanced&player_ids[]=${bdlPlayerId}`, { headers: { 'Authorization': BDL_KEY } });
+                        if (ar.ok) { const ad = (await ar.json()).data?.[0]; if (ad) { advancedStats = { usagePct: ad.usg_pct||ad.usage||null, trueShooting: ad.ts_pct||null }; if (advancedStats.usagePct>0) console.log(`[V48] ✅ Advanced: Usage=${(advancedStats.usagePct*100).toFixed(1)}%`); } }
+                    } catch(e) {}
+                } else if (sport === 'nhl' && params.player) {
+                    // NHL: Fetch advanced stats via Perplexity (Corsi%, xGF%, PDO)
+                    try {
+                        const nhlAdvRes = await fetch(`${PROXY}/api/ai/perplexity`, { method:'POST', headers:{'Content-Type':'application/json'},
+                            body: JSON.stringify({ prompt: `NHL player ${params.player} 2024-25 advanced stats. Reply ONLY JSON:\n{"corsiPct":50.0,"fenwickPct":50.0,"xGFPct":50.0,"pdo":100.0,"oiSHPct":10.0,"toi":"20:00","pp_toi":"3:00"}\nUse current season data.`, maxTokens: 200 })
+                        });
+                        if (nhlAdvRes.ok) {
+                            const nhlAdvText = extractText(await nhlAdvRes.json());
+                            const nhlAdvMatch = nhlAdvText.match(/\{[\s\S]*\}/);
+                            if (nhlAdvMatch) {
+                                const nhlAdv = safeParseJSON(nhlAdvMatch[0]);
+                                if (nhlAdv && (nhlAdv.corsiPct || nhlAdv.xGFPct)) {
+                                    advancedStats = { corsiPct: nhlAdv.corsiPct, fenwickPct: nhlAdv.fenwickPct, xGFPct: nhlAdv.xGFPct, pdo: nhlAdv.pdo, oiSHPct: nhlAdv.oiSHPct, ppTOI: nhlAdv.pp_toi, sport: 'nhl' };
+                                    console.log(`[V48] ✅ NHL Advanced: Corsi=${nhlAdv.corsiPct}%, xGF=${nhlAdv.xGFPct}%, PDO=${nhlAdv.pdo}`);
+                                }
+                            }
+                        }
+                    } catch(e) { console.log(`[V48] ⚠️ NHL advanced: ${e.message}`); }
+                }
+                
+                // ── Standings (BDL sports) ──
+                if (hasBDL && bdlTeamId) {
+                    try {
+                        const yr = new Date().getMonth()>=9 ? new Date().getFullYear() : new Date().getFullYear()-1;
+                        const ep = { nba:'nba', wnba:'wnba', ncaab:'ncaab', nfl:'nfl', ncaaf:'ncaaf', mlb:'mlb', nhl:'nhl' }[sport]||sport;
+                        const sr = await fetch(`https://api.balldontlie.io/${ep}/v1/standings?season=${yr}`, { headers: { 'Authorization': BDL_KEY } });
+                        if (sr.ok) { const ts = (await sr.json()).data?.find(s=>s.team?.id===bdlTeamId); if (ts) console.log(`[V48] ✅ Standings [${sport.toUpperCase()}]: ${ts.wins}-${ts.losses}`); }
+                    } catch(e) {}
+                }
+                
+                // ── E10: Smart Momentum + Blowout/DNP (all sports) ──
+                const rawGames = stats.rawGames || [];
+                const hasMin = ['nba','wnba','ncaab','nhl'].includes(sport);
+                let smartL5=l5Avg, smartL10=l10Avg, blowoutGamesInL5=0, smartMomentumLabel='neutral';
+                if (rawGames.length >= 3) {
+                    const sorted = [...rawGames].sort((a,b)=>new Date(b.game?.date||b.date)-new Date(a.game?.date||a.date));
+                    const l5G=sorted.slice(0,5), l10G=sorted.slice(0,10), genuine=[];
+                    const avgM = hasMin ? sorted.slice(0,20).reduce((s,g)=>s+parseMinutes(g.min||'0'),0)/Math.min(sorted.length,20) : 0;
+                    let reason='';
+                    l5G.forEach((g,i)=>{
+                        const v=extractStatValue(g,getStatMapping(sport,statKey,market),sport)||0;
+                        const m=hasMin?parseMinutes(g.min||'0'):999;
+                        if(hasMin&&m<=5){blowoutGamesInL5++;reason+=`G${i+1}:DNP; `;}
+                        else if(hasMin&&m<avgM*0.5&&v<seasonAvg*0.3){const ext=avgM>0?(v/m)*avgM:v;genuine.push(ext);blowoutGamesInL5++;reason+=`G${i+1}:${v}→${ext.toFixed(1)}; `;}
+                        else genuine.push(v);
+                    });
+                    smartL5 = genuine.length>0 ? genuine.reduce((a,b)=>a+b,0)/genuine.length : l5Avg;
+                    const l10Gen=[];
+                    l10G.forEach(g=>{const v=extractStatValue(g,getStatMapping(sport,statKey,market),sport)||0;const m=hasMin?parseMinutes(g.min||'0'):999;if(hasMin&&m<=5)return;if(hasMin&&m<avgM*0.5&&v<seasonAvg*0.3)l10Gen.push(avgM>0?(v/m)*avgM:v);else l10Gen.push(v);});
+                    smartL10 = l10Gen.length>0 ? l10Gen.reduce((a,b)=>a+b,0)/l10Gen.length : l10Avg;
+                    const l3=genuine.slice(0,3); const l3a=l3.length>0?l3.reduce((a,b)=>a+b,0)/l3.length:smartL5;
+                    if(l3a>smartL5*1.05) smartMomentumLabel='hot'; else if(l3a<smartL5*0.95) smartMomentumLabel='cold';
+                    if(blowoutGamesInL5>0){smartMomentumLabel='blowout_cold';v48CleanL5=smartL5;v48CleanL10=smartL10;v48BlowoutWarning=`WARNING: ${blowoutGamesInL5} of L5 are blowout/DNP. Raw L5=${l5Avg.toFixed(1)}, cleaned=${smartL5.toFixed(1)}.`;}
+                    console.log(`[V48] 📊 E10 [${sport.toUpperCase()}]: ${smartMomentumLabel.toUpperCase()} | L5=${l5Avg.toFixed(1)}→${smartL5.toFixed(1)} | Blowout: ${blowoutGamesInL5}/${l5G.length}`);
+                    if(reason) console.log(`[V48]    ${reason}`);
+                }
+                
+                // ── Variance / CV (all sports) ──
+                const recVals = (stats.gameValues||[]).slice(0,10).map(g=>g.value);
+                let cvClean=0, varianceLabel='Average';
+                if (recVals.length>=5) {
+                    let cvV=recVals;
+                    if(blowoutGamesInL5>0&&hasMin){const am=rawGames.slice(0,20).reduce((s,g)=>s+parseMinutes(g.min||'0'),0)/Math.min(rawGames.length,20);const cl=[];[...rawGames].sort((a,b)=>new Date(b.game?.date||b.date)-new Date(a.game?.date||a.date)).slice(0,10).forEach(g=>{const v=extractStatValue(g,getStatMapping(sport,statKey,market),sport)||0;const m=parseMinutes(g.min||'0');if(m>5&&!(m<am*0.5&&v<seasonAvg*0.3))cl.push(v);});if(cl.length>=5){cvV=cl;console.log(`[V48] 🧹 Variance Clean: Filtered ${recVals.length-cl.length} games`);}}
+                    const mean=cvV.reduce((a,b)=>a+b,0)/cvV.length;
+                    const sd=Math.sqrt(cvV.reduce((s,v)=>s+Math.pow(v-mean,2),0)/cvV.length);
+                    cvClean=mean>0?(sd/mean)*100:0;
+                    varianceLabel=cvClean>35?'High Variance':cvClean>20?'Average':'Consistent';
+                    console.log(`[V48] 📊 Variance [${sport.toUpperCase()}]: CV=${cvClean.toFixed(1)}% → ${varianceLabel}`);
+                }
+                
+                // ── Base Projection (blowout-cleaned) ──
+                const projL5=blowoutGamesInL5>0?smartL5:l5Avg, projL10=blowoutGamesInL5>0?smartL10:l10Avg;
+                if(blowoutGamesInL5>0) console.log(`[V48] 🧹 Blowout Clean: L5:${l5Avg.toFixed(1)}→${projL5.toFixed(1)}, L10:${l10Avg.toFixed(1)}→${projL10.toFixed(1)}`);
+                let bW; if(varianceLabel==='High Variance') bW={s:.20,r:.45,m:.20,l:.15}; else if(varianceLabel==='Consistent') bW={s:.40,r:.25,m:.20,l:.15}; else bW={s:.30,r:.35,m:.20,l:.15};
+                const mAvg = h2hData?.found ? parseFloat(h2hData.avgVs)||seasonAvg : seasonAvg;
+                let baseProj = (seasonAvg*bW.s)+(projL5*bW.r)+(mAvg*bW.m)+(projL10*bW.l);
+                console.log(`[V48] 📊 Base [${sport.toUpperCase()}]: ${baseProj.toFixed(1)} (${(bW.s*100).toFixed(0)}%S+${(bW.r*100).toFixed(0)}%L5${blowoutGamesInL5>0?'🧹':''}+${(bW.m*100).toFixed(0)}%M+${(bW.l*100).toFixed(0)}%L10) [${varianceLabel}]`);
+                
+                // ── Sport-Specific Adjustments ──
+                let totalAdj=0; const adjList=[];
+                // Home/Away
+                const isH = homeAwayData?.isHome ?? null;
+                if(isH!==null){const ha={nba:1.0,nhl:0.3,nfl:2.5,mlb:0.3,ncaab:1.5,ncaaf:3.0,wnba:1.0,soccer:0.4}[sport]||0.5;const a=isH?ha*0.15:-ha*0.15;if(Math.abs(a)>=0.1){totalAdj+=a;adjList.push(`${isH?'Home':'Away'} ${a>=0?'+':''}${a.toFixed(1)}`);}}
+                // B2B (basketball, hockey)
+                if(['nba','wnba','ncaab','nhl'].includes(sport)){if(b2bData?.isB2B){totalAdj-=1.5;adjList.push('B2B -1.5');}else if((b2bData?.restDays||1)>=3){totalAdj+=0.5;adjList.push('Rest +0.5');}}
+                // Pace
+                if(paceData?.found){const pm={nba:1.2,wnba:1.0,ncaab:1.0,nfl:0.8,ncaaf:0.8}[sport]||0.5;const pa=paceData.paceImpact==='FAST'?pm:paceData.paceImpact==='SLOW'?-pm*0.8:0;if(pa!==0){totalAdj+=pa;adjList.push(`Pace ${paceData.paceImpact} ${pa>=0?'+':''}${pa.toFixed(1)}`);}}
+                // Usage (basketball)
+                if(advancedStats?.usagePct&&advancedStats.usagePct>0){const u=advancedStats.usagePct*100;const d=u-20;if(Math.abs(d)>3){const a=Math.min(2.5,Math.max(-2.5,d*0.08));totalAdj+=a;adjList.push(`Usage ${u.toFixed(0)}% ${a>=0?'+':''}${a.toFixed(1)}`);}}
+                // Momentum
+                const momA=smartMomentumLabel==='hot'?0.8:smartMomentumLabel==='cold'?-0.5:smartMomentumLabel==='blowout_cold'?-0.3:0;
+                if(momA!==0){totalAdj+=momA;adjList.push(`Mom ${smartMomentumLabel} ${momA>=0?'+':''}${momA.toFixed(1)}`);}
+                // Defense
+                if(defenseData?.found){const r=defenseData.rank||15;const tt={nba:30,nhl:32,nfl:32,mlb:30,ncaab:362,ncaaf:130,wnba:12}[sport]||30;const pr=r/tt;const dm=pr<=0.18?0.96:pr<=0.35?0.98:pr>=0.82?1.04:pr>=0.65?1.02:1.0;const da=baseProj*(dm-1);if(Math.abs(da)>=0.1){totalAdj+=da;adjList.push(`Def #${r} ${da>=0?'+':''}${da.toFixed(1)}`);}}
+                // Blowout risk
+                if(v48TeamIntel&&v48TeamIntel.margin>8&&hasMin){totalAdj-=1.1;adjList.push('Blowout -1.1');}
+                // Weather (outdoor: NFL, NCAAF, MLB, soccer)
+                if(['nfl','ncaaf'].includes(sport)&&weatherData?.found){const wa=weatherData.scoringEffect==='LOW'?-1.5:weatherData.scoringEffect==='HIGH'?1.0:0;if(wa!==0){totalAdj+=wa;adjList.push(`Weather ${wa>=0?'+':''}${wa.toFixed(1)}`);}}
+                if(sport==='mlb'&&weatherData?.found){const wa=weatherData.scoringEffect==='HIGH'?0.3:weatherData.scoringEffect==='LOW'?-0.3:0;if(wa!==0){totalAdj+=wa;adjList.push(`Weather ${wa>=0?'+':''}${wa.toFixed(1)}`);}}
+                // V48 FIX 2: Vegas Game Total adjustment (high total = more scoring = player props UP)
+                if (oddsData?.found && oddsData?.gameTotal) {
+                    const gt = parseFloat(oddsData.gameTotal);
+                    const avgTotals = { nba: 224, ncaab: 142, nhl: 6.0, nfl: 44, mlb: 8.5 }[sport];
+                    if (gt > 0 && avgTotals) {
+                        const gtDiff = (gt - avgTotals) / avgTotals; // % above/below average
+                        const gtAdj = gtDiff * baseProj * 0.15; // 15% of base projection scaled by difference
+                        if (Math.abs(gtAdj) >= 0.2) { totalAdj += gtAdj; adjList.push(`GameTotal ${gt} ${gtAdj>=0?'+':''}${gtAdj.toFixed(1)}`); }
+                    }
+                } else if (v48TeamIntel?.projectedTotal) {
+                    // Use team intel projected total as proxy
+                    const avgTotals = { nba: 224, ncaab: 142, nhl: 6.0 }[sport];
+                    if (avgTotals) {
+                        const gtDiff = (v48TeamIntel.projectedTotal - avgTotals) / avgTotals;
+                        const gtAdj = gtDiff * baseProj * 0.15;
+                        if (Math.abs(gtAdj) >= 0.1) { totalAdj += gtAdj; adjList.push(`ProjTotal ${v48TeamIntel.projectedTotal.toFixed(0)} ${gtAdj>=0?'+':''}${gtAdj.toFixed(1)}`); }
+                    }
+                }
+                // V48 FIX 6: NHL Corsi adjustment (puck possession = more opportunities)
+                if (sport === 'nhl' && advancedStats?.corsiPct) {
+                    const corsiDiff = advancedStats.corsiPct - 50; // % above/below 50% (neutral)
+                    if (Math.abs(corsiDiff) > 2) {
+                        const corsiAdj = corsiDiff * 0.03; // ~0.15 per 5% Corsi above average
+                        totalAdj += corsiAdj; adjList.push(`Corsi ${advancedStats.corsiPct.toFixed(0)}% ${corsiAdj>=0?'+':''}${corsiAdj.toFixed(1)}`);
+                    }
+                }
+                // NHL PDO regression (PDO > 102 = luck, expect regression down)
+                if (sport === 'nhl' && advancedStats?.pdo) {
+                    const pdoDiff = advancedStats.pdo - 100;
+                    if (Math.abs(pdoDiff) > 2) {
+                        const pdoAdj = -pdoDiff * 0.02; // Regress toward mean
+                        totalAdj += pdoAdj; adjList.push(`PDO ${advancedStats.pdo.toFixed(0)} ${pdoAdj>=0?'+':''}${pdoAdj.toFixed(1)}`);
+                    }
+                }
+                
+                const finalProj = baseProj + totalAdj;
+                console.log(`[V48] 📊 Adj: ${totalAdj>=0?'+':''}${totalAdj.toFixed(1)} → Final: ${finalProj.toFixed(1)}`);
+                if(adjList.length>0) console.log(`[V48]    ${adjList.join(' | ')}`);
+                console.log(`[V48] 🎯 Projection [${sport.toUpperCase()}]: ${finalProj.toFixed(1)} (${((finalProj/line-1)*100).toFixed(1)}% ${finalProj>line?'above':'below'} line)`);
+                
+                v48Projection = { base:baseProj, final:finalProj, adjustments:totalAdj, variance:varianceLabel, cv:cvClean, smartL5, smartL10, blowoutGamesInL5, direction:finalProj>line?'OVER':'UNDER', edge:Math.abs(finalProj-line), edgePct:Math.abs((finalProj/line-1)*100), teamIntel:v48TeamIntel, advancedStats, weights:{seasonAvg:bW.s,recentForm:bW.r,matchupHistory:bW.m,l10Form:bW.l}, adjustmentDetails:adjList, sport };
+                
+                // ── Situational H2H (all sports with game values) ──
+                const gVals = stats.gameValues || [];
+                if (gVals.length >= 5) {
+                    const all=gVals.slice(0,15).map(g=>g.value), oc=all.filter(v=>v>line).length;
+                    const l5V=gVals.slice(0,5).map(g=>g.value), l10V=gVals.slice(0,10).map(g=>g.value);
+                    const sf=[
+                        {name:'All',avg:all.reduce((a,b)=>a+b,0)/all.length,total:all.length,overCount:oc,dir:oc>all.length/2?'OVER':'UNDER'},
+                        {name:'L5',avg:l5V.reduce((a,b)=>a+b,0)/l5V.length,total:l5V.length,overCount:l5V.filter(v=>v>line).length,dir:l5V.filter(v=>v>line).length>2.5?'OVER':'UNDER'},
+                        {name:'L10',avg:l10V.reduce((a,b)=>a+b,0)/l10V.length,total:l10V.length,overCount:l10V.filter(v=>v>line).length,dir:l10V.filter(v=>v>line).length>5?'OVER':'UNDER'}
+                    ];
+                    console.log(`[V48] 🎯 Sit H2H: HR=${(oc/all.length*100).toFixed(1)}%, Avg=${(all.reduce((a,b)=>a+b,0)/all.length).toFixed(1)}`);
+                    sf.forEach(f=>console.log(`[V48]    ${f.name}: ${f.avg.toFixed(1)} avg, ${f.overCount}/${f.total} (${(f.overCount/f.total*100).toFixed(0)}%) ${f.dir}`));
+                    v48Projection.situationalH2H = { filters:sf, hitRate:parseFloat((oc/all.length*100).toFixed(1)) };
+                }
+            } catch(e) { console.log(`[V48] ⚠️ Player projection error: ${e.message}`); console.log(e.stack); }
+            
+        } else if (!isPlayerProp) {
+            // ══════════════════════════════════════════════════════════════════
+            // GAME BET PROJECTION — BDL Team Stats + Perplexity Cross-Validation
+            // ══════════════════════════════════════════════════════════════════
+            try {
+                const home = params.home || params.team || '';
+                const away = params.away || params.opponent || '';
+                const line = parseFloat(params.line) || 0;
+                const ml = (market||'').toLowerCase();
+                const isSpread = ml.includes('spread')||ml.includes('handicap')||ml.includes('_line');
+                const isTotals = ml.includes('total') && !ml.includes('team_total');
+                const isTeamTotal = ml.includes('team_total');
+                const isMoneyline = ml.includes('moneyline')||ml.includes('h2h')||ml.includes('match_winner');
+                const betType = isSpread?'SPREAD':isTotals?'TOTAL':isTeamTotal?'TEAM TOTAL':isMoneyline?'MONEYLINE':'OTHER';
+                console.log(`[V48] 🏟️ Game Bet: ${betType} | ${home} vs ${away} @ ${line}`);
+                
+                // SOURCE 1: BDL real team stats (primary)
+                const bdlS = ['nba','wnba','ncaab','nfl','ncaaf','mlb','nhl'];
+                let hStats=null, aStats=null;
+                if (bdlS.includes(sport)) {
+                    [hStats, aStats] = await Promise.all([getBDLTeamStats(home,sport), getBDLTeamStats(away,sport)]);
+                }
+                // SOURCE 2: Perplexity context (supplement/fallback)
+                let gc=null;
+                try {
+                    const cr = await fetch(`${PROXY}/api/ai/perplexity`, {method:'POST',headers:{'Content-Type':'application/json'},
+                        body:JSON.stringify({prompt:`${sport.toUpperCase()} game today: ${home} vs ${away}. ONLY JSON:\n{"homePPG":0,"awayPPG":0,"homeAllowed":0,"awayAllowed":0,"homeRecord":"0-0","awayRecord":"0-0","homeATS":"0-0","awayATS":"0-0","homeL5PPG":0,"awayL5PPG":0,"keyInjuries":"","startingPitcher":"","startingQB":""}\nCurrent ${new Date().getFullYear()} stats.`,maxTokens:400})});
+                    if(cr.ok){const cd=await cr.json();const txt=extractText(cd);const jm=txt.match(/\{[\s\S]*\}/);if(jm)gc=safeParseJSON(jm[0]);}
+                } catch(e){}
+                
+                let hPPG,aPPG,hAll,aAll,hL5,aL5;
+                if(hStats&&aStats){
+                    hPPG=hStats.ppg;aPPG=aStats.ppg;hAll=hStats.oppPPG;aAll=aStats.oppPPG;hL5=hStats.l5PPG;aL5=aStats.l5PPG;
+                    console.log(`[V48] ✅ CROSS-VALIDATED [BDL+Perplexity]:`);
+                    console.log(`[V48]    ${home}: ${hPPG.toFixed(1)}ppg (allow ${hAll.toFixed(1)}), L5=${hL5.toFixed(1)}, ${hStats.record}`);
+                    console.log(`[V48]    ${away}: ${aPPG.toFixed(1)}ppg (allow ${aAll.toFixed(1)}), L5=${aL5.toFixed(1)}, ${aStats.record}`);
+                    if(gc?.keyInjuries) console.log(`[V48]    🏥 ${gc.keyInjuries}`);
+                    if(gc?.homeATS) console.log(`[V48]    📊 ATS: ${home} ${gc.homeATS}, ${away} ${gc.awayATS}`);
+                    if(gc?.startingPitcher&&sport==='mlb') console.log(`[V48]    ⚾ SP: ${gc.startingPitcher}`);
+                    if(gc?.startingQB&&['nfl','ncaaf'].includes(sport)) console.log(`[V48]    🏈 QB: ${gc.startingQB}`);
+                } else if(gc){
+                    hPPG=parseFloat(gc.homePPG)||0;aPPG=parseFloat(gc.awayPPG)||0;hAll=parseFloat(gc.homeAllowed)||0;aAll=parseFloat(gc.awayAllowed)||0;hL5=parseFloat(gc.homeL5PPG)||hPPG;aL5=parseFloat(gc.awayL5PPG)||aPPG;
+                    console.log(`[V48] ⚠️ Perplexity only: ${home} ${hPPG}ppg vs ${away} ${aPPG}ppg`);
+                } else { hPPG=0;aPPG=0;hAll=0;aAll=0;hL5=0;aL5=0; console.log(`[V48] ❌ No game data`); }
+                
+                if(hPPG>0&&aPPG>0){
+                    const pH=((hPPG+hL5)/2+aAll)/2, pA=((aPPG+aL5)/2+hAll)/2;
+                    let gAdj=0;const gAdjD=[];
+                    const ha={nba:2.5,nhl:0.3,nfl:2.5,mlb:0.3,ncaab:3.0,ncaaf:3.5,wnba:2.0,soccer:0.4}[sport]||1.5;
+                    gAdj+=ha;gAdjD.push(`Home +${ha.toFixed(1)}`);
+                    if(paceData?.found){const pa=paceData.paceImpact==='FAST'?3.0:paceData.paceImpact==='SLOW'?-2.5:0;if(pa!==0){gAdj+=pa;gAdjD.push(`Pace ${pa>=0?'+':''}${pa.toFixed(1)}`);}}
+                    if(weatherData?.found&&['nfl','ncaaf','mlb','soccer'].includes(sport)){const wa=weatherData.scoringEffect==='LOW'?-3.0:weatherData.scoringEffect==='HIGH'?1.5:0;if(wa!==0){gAdj+=wa;gAdjD.push(`Weather ${wa>=0?'+':''}${wa.toFixed(1)}`);}}
+                    const aH=pH+gAdj/2,aA=pA-gAdj/2,aT=aH+aA,aM=aH-aA;
+                    let gFinal,gDir,gEdge;
+                    if(isSpread){gFinal=aM;gDir=aM+line>0?'UNDER':'OVER';gEdge=Math.abs(aM+line);console.log(`[V48] 📊 Spread: Margin=${aM.toFixed(1)} vs ${line} → ${gDir} (edge:${gEdge.toFixed(1)})`);}
+                    else if(isTotals){gFinal=aT;gDir=aT>line?'OVER':'UNDER';gEdge=Math.abs(aT-line);console.log(`[V48] 📊 Totals: ${aT.toFixed(1)} vs ${line} → ${gDir} (edge:${gEdge.toFixed(1)})`);}
+                    else if(isTeamTotal){const tp=home?aH:aA;gFinal=tp;gDir=tp>line?'OVER':'UNDER';gEdge=Math.abs(tp-line);console.log(`[V48] 📊 TeamTotal: ${tp.toFixed(1)} vs ${line} → ${gDir} (edge:${gEdge.toFixed(1)})`);}
+                    else if(isMoneyline){const m2p=(m)=>1/(1+Math.pow(10,-m/({nba:13.5,nfl:13.0,nhl:6.0,mlb:8.0}[sport]||10.0)));const wp=m2p(aM);gFinal=wp;gDir=wp>0.5?'OVER':'UNDER';gEdge=Math.abs(wp-0.5)*100;console.log(`[V48] 📊 ML: ${(wp*100).toFixed(1)}% HomeWin → ${gDir==='OVER'?home:away}`);}
+                    else{gFinal=aT;gDir=aT>line?'OVER':'UNDER';gEdge=Math.abs(aT-line);}
+                    v48Projection={base:pH+pA,final:gFinal,adjustments:gAdj,direction:gDir,edge:gEdge,edgePct:line>0?Math.abs((gFinal/line-1)*100):gEdge,variance:'N/A',cv:0,sport,isGameBet:true,projHome:aH,projAway:aA,projTotal:aT,projMargin:aM,adjustmentDetails:gAdjD,gameContext:gc,bdlValidated:!!(hStats&&aStats)};
+                    v48TeamIntel={teamPPG:hPPG,oppAllowedPPG:aAll,margin:aM,projectedTotal:aT};
+                    console.log(`[V48] 🎯 Game: ${home} ${aH.toFixed(1)} - ${away} ${aA.toFixed(1)} (Total:${aT.toFixed(1)}, Margin:${aM>0?'+':''}${aM.toFixed(1)})`);
+                    console.log(`[V48]    ${gAdjD.join(' | ')}`);
+                }
+            } catch(e) { console.log(`[V48] ⚠️ Game bet error: ${e.message}`); }
+        }
+        
+        // ── V48: Update AI context with clean data ──
+        const v48L5ForAI = v48CleanL5 || parseFloat(stats?.l5?.[statKey] || stats?.l5?.pts || 0);
+        const v48L10ForAI = v48CleanL10 || parseFloat(stats?.l10?.[statKey] || stats?.l10?.pts || 0);
+        const v48SeasonForAI = parseFloat(stats?.season?.[statKey] || stats?.season?.pts || 0);
+        
+        // V48: Inject clean data into params so callEngine() can use it
+        const aiParams = { ...params };
+        if (v48Projection) {
+            aiParams._v48CleanL5 = v48L5ForAI.toFixed(1);
+            aiParams._v48CleanL10 = v48L10ForAI.toFixed(1);
+            aiParams._v48Projection = v48Projection.final;
+            aiParams._v48Direction = v48Projection.direction;
+            aiParams._v48BlowoutWarning = v48BlowoutWarning;
+            aiParams._v48TeamIntel = v48TeamIntel;
+            // V48 FIX 3: Enrich AI with all available context
+            if (defenseData?.found) aiParams._v48Defense = `#${defenseData.rank} ${defenseData.tier} (${defenseData.source})`;
+            if (paceData?.found) aiParams._v48Pace = paceData.paceImpact;
+            if (v48Projection?.variance) aiParams._v48Variance = v48Projection.variance;
+            if (v48Projection?.cv) aiParams._v48CV = v48Projection.cv.toFixed(1);
+            if (oddsData?.found && oddsData?.gameTotal) aiParams._v48GameTotal = oddsData.gameTotal;
+            if (lineupData?.available) aiParams._v48Lineup = lineupData.status || 'confirmed';
+            if (v48Projection?.advancedStats) aiParams._v48Advanced = v48Projection.advancedStats;
+        }
+        
+        // ═══════════════════════════════════════════════════════════════════════
         // LAYER 1: AI ENGINES
         // ═══════════════════════════════════════════════════════════════════════
         console.log('\n══════════════════════════════════════════════════════════════════════');
@@ -5698,7 +6217,7 @@ reasoning must explain your analysis`;
         const results = {};
         await Promise.all(engines.map(async (engineId) => {
             try {
-                const result = await callEngine(engineId, params, stats, hitRate, oddsData, defenseData, sport, market);
+                const result = await callEngine(engineId, aiParams, stats, hitRate, oddsData, defenseData, sport, market);
                 results[engineId] = result;
                 const icon = result.pick === 'OVER' ? '🟢' : result.pick === 'UNDER' ? '🔴' : '⚪';
                 console.log(`[V5.4] ${icon} ${engineId.padEnd(10)}: ${result.pick.padEnd(5)} @ ${result.confidence}%`);
@@ -5726,6 +6245,97 @@ reasoning must explain your analysis`;
         const workingCount = aiCollective.overEngines.length + aiCollective.underEngines.length;
         if (workingCount === 0) {
             console.log(`[V5.4] ⚠️ WARNING: All AI engines returned PASS - possible API/parsing issue`);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // V48 LAYER 2.5: STREAK SAFE EVALUATION
+        // ═══════════════════════════════════════════════════════════════════════
+        if (v48Projection && isPlayerProp) {
+            const line = parseFloat(params.line);
+            const aiEngineCount = workingCount;
+            const aiOverCount = aiCollective.overEngines.length;
+            // V48 FIX: overEngines/underEngines are STRING arrays (engine names), not objects
+            // Must look up confidence from the results object
+            const allVotingEngines = [...aiCollective.overEngines, ...aiCollective.underEngines];
+            const allConfidences = allVotingEngines.map(engineName => results[engineName]?.confidence || 50).filter(c => c > 0);
+            const aiMinConf = allConfidences.length > 0 ? Math.min(...allConfidences) : 50;
+            const aiAvgConf = allConfidences.length > 0 ? allConfidences.reduce((s, c) => s + c, 0) / allConfidences.length : 50;
+            const aiPct = aiEngineCount > 0 ? Math.max(aiOverCount / aiEngineCount, (aiEngineCount - aiOverCount) / aiEngineCount) * 100 : 0;
+            
+            // Count greens (passing checks)
+            let greens = 0;
+            const vetoes = [];
+            
+            // Check 1: AI agreement (≥ 70%)
+            if (aiPct >= 70) greens++;
+            else vetoes.push(`AI agreement only ${aiPct.toFixed(0)}%`);
+            
+            // Check 2: CV < 35%
+            if ((v48Projection.cv || 0) < 35) greens++;
+            else vetoes.push(`High Variance (CV ${v48Projection.cv?.toFixed(1)}%)`);
+            
+            // Check 3: Edge > 2 points
+            if (v48Projection.edge > 2) greens++;
+            else vetoes.push(`Small edge (${v48Projection.edge?.toFixed(1)})`);
+            
+            // Check 4: H2H reasonable
+            if (h2hData?.found && h2hData.avgVs) greens++;
+            else vetoes.push('No H2H data');
+            
+            // Check 5: No blowout contamination
+            if (v48Projection.blowoutGamesInL5 === 0) greens++;
+            else vetoes.push(`Dirty trend: ${v48Projection.blowoutGamesInL5} blowout/DNP games`);
+            
+            // Check 6: Research/AI alignment
+            const researchDir = redditData?.found && redditData.lean ? redditData.lean.toUpperCase() : null;
+            const aiDir = aiCollective.direction;
+            if (!researchDir || researchDir === aiDir || researchDir === 'SPLIT') greens++;
+            else vetoes.push(`Research says ${researchDir}, AI says ${aiDir}`);
+            
+            // V48 FIX 5: Check 7: Model projection agrees with AI consensus direction
+            const modelDir = v48Projection.direction;
+            if (modelDir === aiDir) { greens++; }
+            else vetoes.push(`Model says ${modelDir}, AI says ${aiDir}`);
+            
+            // V48 FIX 4: Model + AI Consensus Reconciliation
+            // Use AI trueProb to derive an implied projection, then blend with model
+            if (v48Projection.final && aiCollective.trueProb) {
+                const modelFinal = v48Projection.final;
+                const line = parseFloat(params.line);
+                // Convert AI trueProb to an implied projection offset from line
+                // trueProb > 0.5 means AI leans direction, strength proportional to distance from 0.5
+                const aiTrueProb = aiCollective.trueProb;
+                const aiDirection = aiCollective.direction;
+                // Derive AI implied projection: how far from line the AI thinks the result will be
+                const aiEdgePct = Math.abs(aiTrueProb - 0.5) * 2; // 0-1 scale of conviction
+                const aiImpliedOffset = aiEdgePct * line * 0.15; // Scale: 15% of line at max conviction
+                const aiImpliedProj = aiDirection === 'OVER' ? line + aiImpliedOffset : line - aiImpliedOffset;
+                const hybridFinal = (modelFinal * 0.55) + (aiImpliedProj * 0.45);
+                const hybridDir = hybridFinal > line ? 'OVER' : 'UNDER';
+                console.log(`[V48] 🔗 Reconciliation: Model=${modelFinal.toFixed(1)} (${modelDir}) + AI=${aiImpliedProj.toFixed(1)} (${aiDirection} @${(aiTrueProb*100).toFixed(0)}%) → Hybrid=${hybridFinal.toFixed(1)} (${hybridDir})`);
+                v48Projection.hybridFinal = hybridFinal;
+                v48Projection.hybridDirection = hybridDir;
+                if (modelDir !== aiDir) console.log(`[V48] ⚠️ MODEL-AI CONFLICT: Model=${modelDir}, AI=${aiDir}`);
+            }
+            
+            // Determine tier (now /7 checks)
+            let tier, tierLabel;
+            if (greens >= 7 && aiPct >= 90 && aiMinConf >= 65 && aiAvgConf >= 70) {
+                tier = 3; tierLabel = '🔒 THE LOCK';
+            } else if (greens >= 6 && aiPct >= 80 && aiAvgConf >= 65) {
+                tier = 2; tierLabel = '✅ STREAK SAFE';
+            } else if (greens >= 5 && aiPct >= 70) {
+                tier = 1; tierLabel = '🟡 LEAN';
+            } else {
+                tier = 0; tierLabel = '⚠️ NOT STREAK SAFE';
+            }
+            
+            v48StreakSafe = { tier, tierLabel, greens, vetoes, aiPct, aiMinConf: aiMinConf || 0, aiAvgConf: aiAvgConf || 0, modelAgrees: modelDir === aiDir, hybridFinal: v48Projection.hybridFinal };
+            
+            console.log(`\n🎯 V48 STREAK SAFE: Tier ${tier} (${tierLabel})`);
+            if (vetoes.length > 0) console.log(`   Vetoes: ${vetoes.join(', ')}`);
+            console.log(`   Greens: ${greens}/7 | AI: ${aiOverCount > aiEngineCount - aiOverCount ? aiOverCount : aiEngineCount - aiOverCount}/${aiEngineCount} @ min ${(aiMinConf||0).toFixed(0)}% avg ${(aiAvgConf||0).toFixed(0)}%`);
+            console.log(`   CV: ${(v48Projection.cv||0).toFixed(1)}% — ${v48Projection.variance} | Gap: ${v48Projection.edge?.toFixed(1)} | H2H: ${h2hData?.found ? h2hData.avgVs : 'N/A'} | Model ${modelDir === aiDir ? '✅ agrees' : '❌ disagrees'}`);
         }
 
         // ═══════════════════════════════════════════════════════════════════════
@@ -5993,6 +6603,13 @@ reasoning must explain your analysis`;
             console.log(`║  PICK: ${master.finalPick} | TRUE PROB: ${coach.trueProb}% | EDGE: ${coach.edge}%`.padEnd(78) + '║');
             console.log(`║  VERDICT: ${coach.verdict} | ${coach.unitSizing} units`.padEnd(78) + '║');
             console.log(`║  AI Consensus: ${aiCollective.overEngines.length} OVER / ${aiCollective.underEngines.length} UNDER (${aiCollective.agreement})`.padEnd(78) + '║');
+            // V48: Projection & Streak Safe
+            if (v48Projection) {
+                console.log(`║  🧮 V48 Model: ${v48Projection.final?.toFixed(1)} → ${v48Projection.direction} (edge: ${v48Projection.edge?.toFixed(1)})`.padEnd(78) + '║');
+            }
+            if (v48StreakSafe) {
+                console.log(`║  ${v48StreakSafe.tierLabel} (${v48StreakSafe.greens}/7 greens${v48StreakSafe.modelAgrees ? ' | Model ✅' : ' | Model ❌'})`.padEnd(78) + '║');
+            }
             // V5.3: Show if all gates passed
             if (coach.allGatesPass) {
                 console.log('║  Confidence Gates: ALL PASSED ✅'.padEnd(78) + '║');
@@ -6149,7 +6766,16 @@ reasoning must explain your analysis`;
             // Result tracking (to be filled later)
             result: null, // 'WIN' | 'LOSS' | 'PUSH' | null
             actualValue: null, // The actual stat value
-            closingLine: null // Line at game start
+            closingLine: null, // Line at game start
+            // V48: Advanced projection data
+            v48: {
+                projection: v48Projection,
+                streakSafe: v48StreakSafe,
+                teamIntel: v48TeamIntel,
+                cleanL5: v48CleanL5,
+                cleanL10: v48CleanL10,
+                blowoutWarning: v48BlowoutWarning
+            }
         };
         
         // Save to history
