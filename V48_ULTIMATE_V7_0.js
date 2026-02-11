@@ -7281,7 +7281,7 @@ reasoning must explain your analysis`;
                     const totalImplied = overImplied + underImplied;
                     if (totalImplied < 1.0) {
                         const arbPct = ((1 - totalImplied) * 100).toFixed(2);
-                        console.log(`[V8.0] 🚨 PROP ARB FOUND @ ${ln}: Over ${formatAmerican(bestOver.price)} (${bestOver.book}) + Under ${formatAmerican(bestUnder.price)} (${bestUnder.book}) = ${arbPct}% arb!`);
+                        console.log(`[V8.0] 🚨 PROP ARB FOUND @ ${ln}: Over ${`${bestOver.price > 0 ? "+" : ""}${bestOver.price}`} (${bestOver.book}) + Under ${`${bestUnder.price > 0 ? "+" : ""}${bestUnder.price}`} (${bestUnder.book}) = ${arbPct}% arb!`);
                         arbFound = true;
                     }
                 }
