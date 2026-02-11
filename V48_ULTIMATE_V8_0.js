@@ -109,6 +109,20 @@ const SBA_V47_ULTIMATE = (function() {
     const SGO_KEY = window.SGO_API_KEY;
     const ODDS_API_KEY = window.ODDS_API_KEY;
     
+    // V8.1 FIX: Reverse map — BDL team ID → abbreviation (for legacy /v1/stats)
+    const BDL_ID_TO_ABBR = {
+        1:'ATL', 2:'BOS', 3:'BKN', 4:'CHA', 5:'CHI', 6:'CLE', 7:'DAL', 8:'DEN',
+        9:'DET', 10:'GSW', 11:'HOU', 12:'IND', 13:'LAC', 14:'LAL', 15:'MEM',
+        16:'MIA', 17:'MIL', 18:'MIN', 19:'NOP', 20:'NYK', 21:'OKC', 22:'ORL',
+        23:'PHI', 24:'PHX', 25:'POR', 26:'SAC', 27:'SAS', 28:'TOR', 29:'UTA', 30:'WAS'
+    };
+    const BDL_ID_TO_NAME = {
+        1:'Hawks', 2:'Celtics', 3:'Nets', 4:'Hornets', 5:'Bulls', 6:'Cavaliers', 7:'Mavericks', 8:'Nuggets',
+        9:'Pistons', 10:'Warriors', 11:'Rockets', 12:'Pacers', 13:'Clippers', 14:'Lakers', 15:'Grizzlies',
+        16:'Heat', 17:'Bucks', 18:'Timberwolves', 19:'Pelicans', 20:'Knicks', 21:'Thunder', 22:'Magic',
+        23:'76ers', 24:'Suns', 25:'Trail Blazers', 26:'Kings', 27:'Spurs', 28:'Raptors', 29:'Jazz', 30:'Wizards'
+    };
+    
     // ═══════════════════════════════════════════════════════════════════════════
     // V5.3 FIX 9: ODDSAPI PLAYER PROPS - REAL IMPLIED PROBABILITY
     // ═══════════════════════════════════════════════════════════════════════════
@@ -6082,12 +6096,17 @@ reasoning must explain your analysis`;
                                 let tScores=[], oScores=[], h2hG=[];
                                 for (const pg of pGames.slice(0,20)) {
                                     const gm = pg.game; if (!gm || gm.status !== 'Final') continue;
-                                    const isH = pg.team?.id === gm.home_team?.id;
-                                    const ts = isH ? gm.home_team_score : gm.visitor_team_score;
-                                    const os = isH ? gm.visitor_team_score : gm.home_team_score;
+                                    // V8.1 FIX: Legacy /v1/stats has home_team_id (number), not home_team (object)
+                                    const isH = pg.team?.id === (gm.home_team?.id || gm.home_team_id);
+                                    const ts = isH ? (gm.home_team_score || 0) : (gm.visitor_team_score || 0);
+                                    const os = isH ? (gm.visitor_team_score || 0) : (gm.home_team_score || 0);
                                     if (ts > 0 || os > 0) { tScores.push(ts); oScores.push(os); }
+                                    // V8.1 FIX: Use ID-based matching when team objects aren't available
                                     const oT = isH ? gm.visitor_team : gm.home_team;
-                                    if (oT && (oT.full_name?.toLowerCase().includes(opponentName) || oT.abbreviation?.toLowerCase() === opponentName.toLowerCase() || oT.city?.toLowerCase().includes(opponentName) || oT.name?.toLowerCase().includes(opponentName)))
+                                    const oTId = isH ? (gm.visitor_team_id || gm.visitor_team?.id) : (gm.home_team_id || gm.home_team?.id);
+                                    const oTName = oT ? (oT.full_name || oT.name || BDL_ID_TO_NAME[oTId] || '') : (BDL_ID_TO_NAME[oTId] || '');
+                                    const oTAbbr = oT ? (oT.abbreviation || BDL_ID_TO_ABBR[oTId] || '') : (BDL_ID_TO_ABBR[oTId] || '');
+                                    if (oTName && (oTName.toLowerCase().includes(opponentName) || oTAbbr.toLowerCase() === opponentName.toLowerCase() || opponentName.includes(oTName.toLowerCase().split(' ').pop())))
                                         h2hG.push({ teamScore: ts, oppScore: os, total: ts + os });
                                 }
                                 if (tScores.length >= 3) {
@@ -6842,6 +6861,19 @@ reasoning must explain your analysis`;
                         });
                         const hf = mkFilter('Home', homeVals); if (hf) sf.push(hf);
                         const af = mkFilter('Away', awayVals); if (af) sf.push(af);
+                        // V8.1: vs This Opponent filter (use oppTeamId from V7.0 enrichment)
+                        if (oppTeamId) {
+                            const vsOppVals = [];
+                            gVals.forEach((g,i) => {
+                                const rg = rawG[i];
+                                if (!rg?.game) return;
+                                const isHome = (rg.game.home_team_id === stats.bdlTeamId);
+                                const oppId = isHome ? (rg.game.visitor_team_id || rg.game.visitor_team?.id) : (rg.game.home_team_id || rg.game.home_team?.id);
+                                if (oppId === oppTeamId) vsOppVals.push(g.value);
+                            });
+                            const vof = mkFilter(`vs ${BDL_ID_TO_ABBR[oppTeamId] || params.opponent || 'Opp'}`, vsOppVals);
+                            if (vof) sf.push(vof);
+                        }
                     }
                     // Rest filter (B2B vs rested)
                     if (gVals.length > 1) {
