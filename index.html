@@ -45236,8 +45236,7 @@ reasoning must explain your analysis`;
                             } catch(e) { return null; }
                         })(),
 
-                        // 6. V30 Quarter Breakdowns — DISABLED: q1/q2/q3/q4 are not valid
-                        // BDL season_averages types. Quarter data would need box score aggregation.
+                        // 6. V30 Quarter Breakdowns — computed after parallel fetch (needs clutch data)
                         (async () => { return null; })()
                     ]);
 
@@ -45247,7 +45246,47 @@ reasoning must explain your analysis`;
                     v7Shooting = shootingRes.status === 'fulfilled' ? shootingRes.value : null;
                     v7Clutch = clutchRes.status === 'fulfilled' ? clutchRes.value : null;
                     v7OppProfile = oppProfileRes.status === 'fulfilled' ? oppProfileRes.value : null;
-                    v7Quarters = quartersRes.status === 'fulfilled' ? quartersRes.value : null;
+                    v7Quarters = null; // Computed below after clutch data available
+                    
+                    // ── V30 Quarter Profile (derived from clutch + game flow) ──
+                    try {
+                        if (rawGames && rawGames.length >= 5) {
+                            const qSorted = [...rawGames].filter(g => parseMinutes(g.min||'0') > 12)
+                                .sort((a,b) => new Date(b.game?.date||b.date) - new Date(a.game?.date||a.date)).slice(0, 15);
+                            if (qSorted.length >= 5) {
+                                const qStatMap = getStatMapping(sport, statKey, market);
+                                let closeGameVals = [], blowoutVals = [];
+                                qSorted.forEach(g => {
+                                    const val = extractStatValue(g, qStatMap, sport) || 0;
+                                    const hs = g.game?.home_team_score || 0, vs = g.game?.visitor_team_score || 0;
+                                    const margin = Math.abs(hs - vs);
+                                    if (margin <= 10) closeGameVals.push(val);
+                                    else blowoutVals.push(val);
+                                });
+                                
+                                // Clutch data as 4Q proxy (now available from parallel fetch)
+                                const clutchPts = v7Clutch?.stats?.pts || v7Clutch?.stats?.points || 0;
+                                const clutchMin = v7Clutch?.stats?.min || v7Clutch?.stats?.minutes || 0;
+                                const clutchRate = clutchMin > 0 ? clutchPts / clutchMin : 0;
+                                
+                                const avgVal = qSorted.reduce((s,g) => s + (extractStatValue(g, qStatMap, sport)||0), 0) / qSorted.length;
+                                const avgMin = qSorted.reduce((s,g) => s + parseMinutes(g.min||'0'), 0) / qSorted.length;
+                                const perMinRate = avgMin > 0 ? avgVal / avgMin : 0;
+                                
+                                const estHalfMins = avgMin / 2;
+                                const est1H = perMinRate * estHalfMins;
+                                const clutchBoost = clutchRate > perMinRate * 1.1 ? 1.08 : clutchRate < perMinRate * 0.8 ? 0.92 : 1.0;
+                                const blowoutPenalty = blowoutVals.length > closeGameVals.length * 0.5 ? 0.95 : 1.0;
+                                const est2H = perMinRate * estHalfMins * clutchBoost * blowoutPenalty;
+                                
+                                const halfDiff = est1H > 0 ? ((est2H - est1H) / est1H * 100).toFixed(1) : '0';
+                                const profile = est2H > est1H * 1.05 ? '2H HEAVY' : est1H > est2H * 1.05 ? '1H HEAVY' : 'BALANCED';
+                                
+                                v7Quarters = { est1H, est2H, halfDiff: parseFloat(halfDiff), profile, clutchRate, perMinRate, closeGames: closeGameVals.length, blowoutGames: blowoutVals.length };
+                                console.log(`[V8.0] 📊 Quarter Profile: ${profile} | Est 1H: ${est1H.toFixed(1)} / 2H: ${est2H.toFixed(1)} (${halfDiff}% diff) | Close=${closeGameVals.length}g, Blowout=${blowoutVals.length}g`);
+                            }
+                        }
+                    } catch(e) { /* quarter analysis optional */ }
 
                     // ── V25 Rolling Stats ──
                     if (rawGames?.length >= 5) {
@@ -45504,7 +45543,7 @@ reasoning must explain your analysis`;
                         }
                     }
 
-                    console.log(`[V7.0] ✅ Full enrichment complete: Matrix=${!!v7Matrix}, Advanced=${!!v7Advanced}, Shooting=${!!v7Shooting}, Clutch=${!!v7Clutch}, OppProfile=${!!v7OppProfile}, Sharp=${!!v7SharpMoney}, GameScript=${!!v7GameScript}, Spots=${v7Spots.length}`);
+                    console.log(`[V7.0] ✅ Full enrichment complete: Matrix=${!!v7Matrix}, Advanced=${!!v7Advanced}, Shooting=${!!v7Shooting}, Clutch=${!!v7Clutch}, OppProfile=${!!v7OppProfile}, Quarters=${!!v7Quarters}, Sharp=${!!v7SharpMoney}, GameScript=${!!v7GameScript}, Props=${!!v7PlayerProps}, Spots=${v7Spots.length}`);
                 }
 
                 const hasMin = ['nba','wnba','ncaab','nhl'].includes(sport);
@@ -45819,7 +45858,7 @@ reasoning must explain your analysis`;
                 if (v7Matrix.hustle) mParts.push(`Hustle:${v7Matrix.hustle.contested_shots || v7Matrix.hustle.contested || 'N/A'} contested`);
                 aiParams._v7Matrix = mParts.length > 0 ? mParts.join(', ') : `${Object.keys(v7Matrix).length} categories loaded`;
             }
-            if (v7Quarters?.usageDiff) aiParams._v7Quarters = `1H vs 2H: Usage ${v7Quarters.usageDiff}%, EFG ${v7Quarters.efgDiff}%`;
+            if (v7Quarters) aiParams._v7Quarters = `${v7Quarters.profile}: 1H=${v7Quarters.est1H?.toFixed(1)}, 2H=${v7Quarters.est2H?.toFixed(1)} (${v7Quarters.halfDiff}% diff), Close=${v7Quarters.closeGames}g, Blowout=${v7Quarters.blowoutGames}g`;
             if (v7StyleMatchup) aiParams._v7Style = `${(v7StyleMatchup.score*100).toFixed(1)}% ${v7StyleMatchup.favors} (${v7StyleMatchup.quality}), signals: ${v7StyleMatchup.signals?.map(s=>s.name).join(', ')||'none'}`;
             if (v7PositionDefense) aiParams._v7PosDefense = `${v7PositionDefense.position} vs #${v7PositionDefense.teamRank} (${v7PositionDefense.teamTier})`;
             if (v7BlowoutRisk && v7BlowoutRisk.risk !== 'Low') aiParams._v7Blowout = `${v7BlowoutRisk.risk} risk (spread ${v7BlowoutRisk.spread}), adj ${v7BlowoutRisk.adjustment}`;
@@ -46095,6 +46134,93 @@ reasoning must explain your analysis`;
             
             convictionScore = { sba: sbaScore, books: booksScore, gap: sbaScore - booksScore, label: sbaScore > 70 ? 'HIGH' : sbaScore > 50 ? 'MODERATE' : 'LOW' };
             console.log(`[V8.0] 💪 Conviction: SBA=${sbaScore}/100 (${convictionScore.label}) vs Books=${booksScore}/100 | Gap=${convictionScore.gap}`);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // V8.0 LAYER 3.7: 14-ENGINE BOTH SIDES SYNTHESIS
+        // ═══════════════════════════════════════════════════════════════════════
+        let synthResult = null;
+        console.log(`[V8.0] 🧪 Synth check: isPlayerProp=${!!isPlayerProp}, master=${!!master}, bothSides=${!!bothSides}`);
+        if (isPlayerProp && master && bothSides) {
+            console.log('\n══════════════════════════════════════════════════════════════════════');
+            console.log('  🧪 LAYER 3.7: 14-Engine Synthesis (Both Sides)');
+            console.log('══════════════════════════════════════════════════════════════════════');
+            
+            // Run 3 fast engines with explicit OVER framing and UNDER framing
+            const synthEngines = ['groq', 'together', 'deepseek'];
+            const overResults = {}, underResults = {};
+            
+            // Build focused prompts for each side
+            const overPrompt = `ARGUE THE CASE FOR OVER ${params.line} ${market.replace('player_','').replace(/_/g,' ')} for ${params.player} vs ${params.opponent}. ` +
+                `Stats: Season=${stats?.season?.[getStatKey(market)]||'?'}, L10=${stats?.l10?.[getStatKey(market)]||'?'}, L5=${stats?.l5?.[getStatKey(market)]||'?'}. ` +
+                `Model projects ${v48Projection?.final?.toFixed(1)||'?'}. Defense: #${defenseData?.rank||'?'} (${defenseData?.tier||'?'}). ` +
+                `${bothSides.over.factors.slice(0,3).join('. ')}. ` +
+                `Rate the OVER case strength 1-100 and explain in 1 sentence.`;
+            
+            const underPrompt = `ARGUE THE CASE FOR UNDER ${params.line} ${market.replace('player_','').replace(/_/g,' ')} for ${params.player} vs ${params.opponent}. ` +
+                `Stats: Season=${stats?.season?.[getStatKey(market)]||'?'}, L5=${stats?.l5?.[getStatKey(market)]||'?'}. ` +
+                `${bothSides.under.factors.slice(0,3).join('. ')}. ` +
+                `Rate the UNDER case strength 1-100 and explain in 1 sentence.`;
+            
+            try {
+                const synthCalls = synthEngines.flatMap(eng => [
+                    (async () => { 
+                        try {
+                            const r = await callEngine(eng, {...aiParams, _synthSide: 'OVER', _synthPrompt: overPrompt}, stats, hitRate, oddsData, defenseData, sport, market);
+                            return { engine: eng, side: 'OVER', result: r };
+                        } catch(e) { return { engine: eng, side: 'OVER', result: { pick: 'PASS', confidence: 50, error: true } }; }
+                    })(),
+                    (async () => {
+                        try {
+                            const r = await callEngine(eng, {...aiParams, _synthSide: 'UNDER', _synthPrompt: underPrompt}, stats, hitRate, oddsData, defenseData, sport, market);
+                            return { engine: eng, side: 'UNDER', result: r };
+                        } catch(e) { return { engine: eng, side: 'UNDER', result: { pick: 'PASS', confidence: 50, error: true } }; }
+                    })()
+                ]);
+                
+                const synthResults = await Promise.all(synthCalls);
+                
+                let overStrength = 0, underStrength = 0, overCount = 0, underCount = 0;
+                synthResults.forEach(sr => {
+                    const conf = sr.result?.confidence || 50;
+                    if (sr.side === 'OVER') { overStrength += conf; overCount++; }
+                    else { underStrength += conf; underCount++; }
+                    const icon = sr.result?.pick === 'OVER' ? '🟢' : sr.result?.pick === 'UNDER' ? '🔴' : '⚪';
+                    console.log(`[V8.0] ${icon} ${sr.engine.padEnd(10)} [${sr.side}]: ${sr.result?.pick || 'PASS'} @ ${conf}%`);
+                });
+                
+                const avgOverStr = overCount > 0 ? overStrength / overCount : 50;
+                const avgUnderStr = underCount > 0 ? underStrength / underCount : 50;
+                const synthDirection = avgOverStr > avgUnderStr + 5 ? 'OVER' : avgUnderStr > avgOverStr + 5 ? 'UNDER' : 'SPLIT';
+                const synthConfidence = Math.abs(avgOverStr - avgUnderStr);
+                
+                synthResult = {
+                    overStrength: Math.round(avgOverStr),
+                    underStrength: Math.round(avgUnderStr),
+                    direction: synthDirection,
+                    confidence: Math.round(synthConfidence),
+                    totalEngines: 11 + synthEngines.length * 2 // 11 original + 6 synthesis = 17 total evaluations
+                };
+                
+                console.log(`[V8.0] 🧪 Synthesis: ${synthDirection} | Over=${Math.round(avgOverStr)}% vs Under=${Math.round(avgUnderStr)}% | ${synthResult.totalEngines} total evaluations`);
+                
+                // Update conviction with synthesis data
+                if (convictionScore && synthConfidence > 10) {
+                    const synthBonus = Math.min(10, Math.round(synthConfidence / 3));
+                    if (synthDirection === master.finalPick) {
+                        convictionScore.sba = Math.min(100, convictionScore.sba + synthBonus);
+                        console.log(`[V8.0]    └─ Conviction boost +${synthBonus} → SBA=${convictionScore.sba}/100`);
+                    }
+                }
+                
+                // Update bothSides with synthesis
+                if (bothSides) {
+                    bothSides.synthOver = Math.round(avgOverStr);
+                    bothSides.synthUnder = Math.round(avgUnderStr);
+                }
+            } catch(e) {
+                console.log(`[V8.0] ⚠️ Synthesis error: ${e.message}`);
+            }
         }
 
         // ═══════════════════════════════════════════════════════════════════════
@@ -46473,6 +46599,9 @@ reasoning must explain your analysis`;
             // V8.0: Conviction Score
             if (convictionScore) {
                 console.log(`║  💪 CONVICTION: SBA=${convictionScore.sba}/100 (${convictionScore.label}) vs Books=${convictionScore.books}/100`.padEnd(78) + '║');
+            }
+            if (synthResult) {
+                console.log(`║  🧪 SYNTHESIS: ${synthResult.direction} | Over=${synthResult.overStrength}% vs Under=${synthResult.underStrength}% (${synthResult.totalEngines} evals)`.padEnd(78) + '║');
             }
             
             // ═══ V5.5.1: PREDICTION CONFIDENCE CONTEXT ═══
