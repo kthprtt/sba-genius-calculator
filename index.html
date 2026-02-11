@@ -44868,7 +44868,7 @@ reasoning must explain your analysis`;
             h2hData = await getH2HHistory(params.player, params.opponent, sport, market);
             if (h2hData.found) {
                 const h2hIcon = h2hData.trend === 'BETTER' ? '📈' : h2hData.trend === 'WORSE' ? '📉' : '➡️';
-                console.log(`[V5.4] ${h2hIcon} H2H vs ${params.opponent}: ${h2hData.avgVs} avg (${h2hData.trend} than usual)`);
+                console.log(`[V5.4] ${h2hIcon} H2H vs ${params.opponent}: ${h2hData.avgVs} avg (${h2hData.trend === 'SIMILAR' ? 'similar to usual' : h2hData.trend + ' than usual'})`);
             }
         }
         
@@ -45169,10 +45169,17 @@ reasoning must explain your analysis`;
                             const teamsData = await teamsRes.json();
                             const allTeams = teamsData?.data || [];
                             for (const team of allTeams) {
-                                if (team.abbreviation?.toLowerCase() === oppName ||
-                                    team.full_name?.toLowerCase().includes(oppName) ||
-                                    team.city?.toLowerCase().includes(oppName) ||
-                                    team.name?.toLowerCase().includes(oppName)) {
+                                // V8.0 FIX: Exact abbreviation match FIRST (prevents "ORL" matching "New Orleans")
+                                if (team.abbreviation?.toLowerCase() === oppName) {
+                                    console.log(`[V7.0] ✅ Opponent matched: ${team.full_name} (ID=${team.id}, abbr=${team.abbreviation})`);
+                                    return team.id;
+                                }
+                            }
+                            // Fallback: full name / city match (only if abbreviation didn't match)
+                            for (const team of allTeams) {
+                                if (team.full_name?.toLowerCase().includes(oppName) ||
+                                    (oppName.length > 3 && (team.city?.toLowerCase().includes(oppName) ||
+                                    team.name?.toLowerCase().includes(oppName)))) {
                                     console.log(`[V7.0] ✅ Opponent matched: ${team.full_name} (ID=${team.id}, abbr=${team.abbreviation})`);
                                     return team.id;
                                 }
@@ -46229,7 +46236,7 @@ reasoning must explain your analysis`;
             if (paceData?.paceImpact === 'SLOW') underFactors.push('Slow pace environment');
             if (v7BlowoutRisk?.risk === 'High') underFactors.push(`Blowout risk (spread ${v7BlowoutRisk.spread})`);
             if (typeof v7GameScript !== 'undefined' && v7GameScript?.scriptAdj < 0) underFactors.push(`Game script suppresses scoring (${v7GameScript.scriptAdj})`);
-            if (v48Projection?.cv > 35) underFactors.push(`High variance (CV=${v48Projection.cv}%)`);
+            if (v48Projection?.cv > 35) underFactors.push(`High variance (CV=${v48Projection.cv.toFixed(1)}%)`);
             const l5Avg = parseFloat(stats?.l5?.[getStatKey(market)] || 0);
             if (l5Avg < parseFloat(params.line) * 0.9) underFactors.push(`L5 avg ${l5Avg.toFixed(1)} trending below line`);
             
