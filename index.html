@@ -44880,6 +44880,7 @@ reasoning must explain your analysis`;
         
         let v48Projection = null;
         let v48TeamIntel = null;
+        let v48StandingsData = null;
         let v48StreakSafe = null;
         let v48CleanL5 = null;
         let v48CleanL10 = null;
@@ -45047,7 +45048,7 @@ reasoning must explain your analysis`;
                         const yr = new Date().getMonth()>=9 ? new Date().getFullYear() : new Date().getFullYear()-1;
                         const ep = { nba:'nba', wnba:'wnba', ncaab:'ncaab', nfl:'nfl', ncaaf:'ncaaf', mlb:'mlb', nhl:'nhl' }[sport]||sport;
                         const sr = await fetch(`https://api.balldontlie.io/${ep}/v1/standings?season=${yr}`, { headers: { 'Authorization': BDL_KEY } });
-                        if (sr.ok) { const ts = (await sr.json()).data?.find(s=>s.team?.id===bdlTeamId); if (ts) console.log(`[V48] ✅ Standings [${sport.toUpperCase()}]: ${ts.wins}-${ts.losses}`); }
+                        if (sr.ok) { const ts = (await sr.json()).data?.find(s=>s.team?.id===bdlTeamId); if (ts) { v48StandingsData = { wins: ts.wins, losses: ts.losses }; console.log(`[V48] ✅ Standings [${sport.toUpperCase()}]: ${ts.wins}-${ts.losses}`); } }
                     } catch(e) {}
                 }
                 
@@ -45414,7 +45415,7 @@ reasoning must explain your analysis`;
                     if (sport === 'nba' || sport === 'nhl') {
                         // Spotlight: national TV, rivalry, playoff implications
                         if (v48TeamIntel) {
-                            const wins = v48Standings?.wins || 0, losses = v48Standings?.losses || 0;
+                            const wins = v48StandingsData?.wins || 0, losses = v48StandingsData?.losses || 0;
                             const pctg = wins / (wins + losses || 1);
                             if (pctg > 0.6 && pctg < 0.7) v7Spots.push({ name: 'Playoff Race', adj: 0.5, note: `${wins}-${losses} record, fighting for seeding` });
                         }
@@ -45988,7 +45989,7 @@ reasoning must explain your analysis`;
                 if (v48Projection.final > parseFloat(params.line)) overFactors.push(`Model projects ${v48Projection.final?.toFixed(1)} (${((v48Projection.final/params.line-1)*100).toFixed(1)}% above)`);
                 if (v48Projection.situationalH2H?.hitRate > 55) overFactors.push(`${v48Projection.situationalH2H.hitRate}% hit rate over line`);
             }
-            if (defenseData?.tier === 'WEAK') overFactors.push(`${opponent} weak defense #${defenseData.rank}`);
+            if (defenseData?.tier === 'WEAK') overFactors.push(`${params.opponent || "Opp"} weak defense #${defenseData.rank}`);
             if (v7InjuryBoost?.boost > 0) overFactors.push(`+${v7InjuryBoost.boost} injury boost (${v7InjuryBoost.count} teammates OUT)`);
             if (paceData?.paceImpact === 'FAST') overFactors.push('Fast pace environment');
             if (typeof v7GameScript !== 'undefined' && v7GameScript?.scriptAdj > 0) overFactors.push(`Game script favors scoring (+${v7GameScript.scriptAdj})`);
@@ -45996,7 +45997,7 @@ reasoning must explain your analysis`;
             // Under case
             const underFactors = [];
             if (v48Projection && v48Projection.final < parseFloat(params.line)) underFactors.push(`Model projects ${v48Projection.final?.toFixed(1)} (${((1-v48Projection.final/params.line)*100).toFixed(1)}% below)`);
-            if (defenseData?.tier === 'ELITE') underFactors.push(`${opponent} elite defense #${defenseData.rank}`);
+            if (defenseData?.tier === 'ELITE') underFactors.push(`${params.opponent || "Opp"} elite defense #${defenseData.rank}`);
             if (paceData?.paceImpact === 'SLOW') underFactors.push('Slow pace environment');
             if (v7BlowoutRisk?.risk === 'High') underFactors.push(`Blowout risk (spread ${v7BlowoutRisk.spread})`);
             if (typeof v7GameScript !== 'undefined' && v7GameScript?.scriptAdj < 0) underFactors.push(`Game script suppresses scoring (${v7GameScript.scriptAdj})`);
