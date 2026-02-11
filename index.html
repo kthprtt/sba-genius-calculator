@@ -44863,6 +44863,11 @@ reasoning must explain your analysis`;
         
         // Odds
         const oddsData = await getOddsMultiSource(params.player, params.opponent, sport, market);
+        // V8.0: Also fetch raw OddsAPI array for Sharp Money, Pinnacle, Props enrichment
+        let oddsAPIRaw = null;
+        try {
+            oddsAPIRaw = await getOddsAPIPlayerProps(sport, params.player, market, params.line, null);
+        } catch(e) { /* oddsAPIRaw optional */ }
         if (oddsData.found) {
             console.log(`[V5.4] ✅ Odds: Found from ${oddsData.sources.length} source(s)`);
         } else {
