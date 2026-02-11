@@ -39000,7 +39000,7 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
         window.SBA = window.SBA_V47;
     </script>
 
-    <!-- V48 ULTIMATE V6.4 Console Module — Legacy Endpoint DNP Fix -->
+    <!-- V48 ULTIMATE V7.0 Console Module — Full Pipeline Parity -->
     <script>
 // ═══════════════════════════════════════════════════════════════════════════════
 // SBA GENIUS V48 ULTIMATE V6.0 - FULL PROJECTION ENGINE + BLOWOUT CLEAN + STREAK SAFE
@@ -41345,6 +41345,24 @@ CONFIDENCE: [HIGH/MEDIUM/LOW]`,
     // ═══════════════════════════════════════════════════════════════════════════
     // SGP ANALYSIS FUNCTION
     // ═══════════════════════════════════════════════════════════════════════════
+
+    // V7.0: Rolling Stats computation (from V47)
+    function computeRollingStats(values, line = null) {
+        const clean = values.filter(v => typeof v === 'number' && Number.isFinite(v));
+        if (!clean.length) return { mean: 0, median: 0, std: 0, hitRate: null, trend: null, n: 0 };
+        const sorted = [...clean].sort((a,b) => a-b);
+        const n = clean.length;
+        const mean = clean.reduce((a,b) => a+b, 0) / n;
+        const median = n % 2 ? sorted[(n-1)/2] : (sorted[n/2-1] + sorted[n/2]) / 2;
+        const variance = clean.reduce((acc,v) => acc + Math.pow(v - mean, 2), 0) / n;
+        const std = Math.sqrt(variance);
+        let hitRate = null;
+        if (line !== null && line > 0) hitRate = parseFloat((clean.filter(v => v > line).length / n * 100).toFixed(1));
+        let trend = null;
+        if (n >= 4) { const half = Math.floor(n/2); trend = parseFloat(((clean.slice(0,half).reduce((a,b)=>a+b,0)/half) - (clean.slice(half).reduce((a,b)=>a+b,0)/clean.slice(half).length)).toFixed(2)); }
+        return { mean: parseFloat(mean.toFixed(2)), median: parseFloat(median.toFixed(2)), std: parseFloat(std.toFixed(2)), hitRate, trend, n };
+    }
+
     async function analyzeSGP(legs, sport = 'nba') {
         console.log(`\n[V5.4] 🎰 SAME GAME PARLAY ANALYSIS - ${legs.length} Legs`);
         
@@ -42990,6 +43008,15 @@ LAST_5: [num1, num2, num3, num4, num5]`,
             const v48VarText = params._v48Variance ? `\nVariance: ${params._v48Variance} (CV=${params._v48CV || '?'}%)` : '';
             const v48GTText = params._v48GameTotal ? `\nGame Total O/U: ${params._v48GameTotal}` : '';
             const v48AdvText = params._v48Advanced ? (params._v48Advanced.sport==='nhl' ? `\nNHL Advanced: Corsi=${params._v48Advanced.corsiPct}%, xGF=${params._v48Advanced.xGFPct}%` : params._v48Advanced.usagePct ? `\nUsage: ${(params._v48Advanced.usagePct*100).toFixed(1)}%` : '') : '';
+            // V7.0: Enhanced context for AI engines
+            const v7ShootText = params._v7Shooting ? `\nShooting: ${params._v7Shooting}` : '';
+            const v7QuarterText = params._v7Quarters ? `\nQuarter Breakdown: ${params._v7Quarters}` : '';
+            const v7StyleText = params._v7Style ? `\nStyle Matchup: ${params._v7Style}` : '';
+            const v7PosDefText = params._v7PosDefense ? `\nPosition Defense: ${params._v7PosDefense}` : '';
+            const v7BlowoutText = params._v7Blowout ? `\nBlowout Risk: ${params._v7Blowout}` : '';
+            const v7InjText = params._v7InjuryBoost ? `\nInjury Usage Boost: ${params._v7InjuryBoost}` : '';
+            const v7RollText = params._v7Rolling ? `\nRolling Stats: ${params._v7Rolling}` : '';
+            const v7SharpText = params._v7Sharp ? `\nSharp Money: ${params._v7Sharp}` : '';
 
             prompt = `${sportConfig.name} PLAYER PROP ANALYSIS:
 Player: ${params.player}
@@ -42998,7 +43025,7 @@ Opponent: ${params.opponent}
 
 STATS: ${statsText}
 ${hitText}
-${defText}${v48ProjText}${v48TeamText}${v48BlowoutText}${v48DefText}${v48PaceText}${v48VarText}${v48GTText}${v48AdvText}
+${defText}${v48ProjText}${v48TeamText}${v48BlowoutText}${v48DefText}${v48PaceText}${v48VarText}${v48GTText}${v48AdvText}${v7ShootText}${v7QuarterText}${v7StyleText}${v7PosDefText}${v7BlowoutText}${v7InjText}${v7RollText}${v7SharpText}
 
 Analyze this prop bet. Based on the data, should the bettor take OVER, UNDER, or PASS?
 
@@ -44409,7 +44436,7 @@ reasoning must explain your analysis`;
         
         console.log('\n');
         console.log('╔═══════════════════════════════════════════════════════════════════════════════╗');
-        console.log('║   🏆 SBA GENIUS V48 ULTIMATE V6.4 - 17-ENGINE PROJECTION + DNP FIX 🏆 ║');
+        console.log('║   🏆 SBA GENIUS V48 ULTIMATE V7.0 - FULL PIPELINE + 17-ENGINE + DNP FIX 🏆 ║');
         console.log('╠═══════════════════════════════════════════════════════════════════════════════╣');
         console.log(`║  ${displaySubject} | ${statDisplay} @ ${params.line} ${isPlayerProp ? 'vs ' + (params.opponent || 'Unknown') : ''}`.padEnd(78) + '║');
         console.log(`║  Sport: ${sportConfig.name} | Market: ${market} | Type: ${marketType.toUpperCase()}`.padEnd(78) + '║');
@@ -44995,6 +45022,296 @@ reasoning must explain your analysis`;
                 
                 // ── E10: Smart Momentum + Blowout/DNP (all sports) ──
                 const rawGames = stats.rawGames || [];
+
+                // ═══════════════════════════════════════════════════════════
+                // V7.0: FULL DATA ENRICHMENT (Ported from V47 Webflow)
+                // Parallel fetch: Matrix, V29 Advanced, Shooting, Clutch,
+                // Opponent Profile, Quarter Breakdown, Team Profiles
+                // ═══════════════════════════════════════════════════════════
+                let v7Matrix = null, v7Advanced = null, v7Shooting = null;
+                let v7Clutch = null, v7OppProfile = null, v7Quarters = null;
+                let v7StyleMatchup = null, v7RollingStats = null;
+                let v7PositionDefense = null, v7BlowoutRisk = null;
+                let v7InjuryBoost = null, v7Situational = null;
+                let v7SharpMoney = null;
+
+                if (sport === 'nba' && bdlPlayerId) {
+                    const yr = new Date().getMonth() >= 9 ? new Date().getFullYear() : new Date().getFullYear() - 1;
+                    const baseUrl = 'https://api.balldontlie.io';
+                    const hdrs = { 'Authorization': BDL_KEY };
+                    
+                    // Find opponent team BDL ID from game data
+                    const oppTeamId = (() => {
+                        if (!rawGames?.length) return null;
+                        for (const g of rawGames.slice(0, 5)) {
+                            const gm = g.game; if (!gm) continue;
+                            const isHome = g.team?.id === gm.home_team?.id;
+                            const opp = isHome ? gm.visitor_team : gm.home_team;
+                            const oppName = (params.opponent || '').toLowerCase();
+                            if (opp && (opp.full_name?.toLowerCase().includes(oppName) || 
+                                opp.abbreviation?.toLowerCase() === oppName ||
+                                opp.city?.toLowerCase().includes(oppName) ||
+                                opp.name?.toLowerCase().includes(oppName))) {
+                                return opp.id;
+                            }
+                        }
+                        return null;
+                    })();
+
+                    console.log(`[V7.0] 🚀 Full data enrichment: player=${bdlPlayerId}, oppTeam=${oppTeamId || 'unknown'}`);
+
+                    // ── PARALLEL FETCH ALL V29/V30/V24 DATA ──
+                    const [matrixRes, advancedRes, shootingRes, clutchRes, oppProfileRes, quartersRes] = 
+                        await Promise.allSettled([
+                        
+                        // 1. BDL Matrix (25 categories)
+                        (async () => {
+                            const categories = [
+                                { cat: 'usage', type: null, key: 'usage' },
+                                { cat: 'scoring', type: null, key: 'scoring' },
+                                { cat: 'defense', type: null, key: 'defense' },
+                                { cat: 'misc', type: null, key: 'misc' },
+                                { cat: 'playtype', type: 'isolation', key: 'pt_isolation' },
+                                { cat: 'playtype', type: 'transition', key: 'pt_transition' },
+                                { cat: 'playtype', type: 'prballhandler', key: 'pt_pnr_handler' },
+                                { cat: 'playtype', type: 'spotup', key: 'pt_spotup' },
+                                { cat: 'playtype', type: 'postup', key: 'pt_postup' },
+                                { cat: 'playtype', type: 'handoff', key: 'pt_handoff' },
+                                { cat: 'playtype', type: 'cut', key: 'pt_cut' },
+                                { cat: 'playtype', type: 'offscreen', key: 'pt_offscreen' },
+                                { cat: 'tracking', type: 'drives', key: 'tk_drives' },
+                                { cat: 'tracking', type: 'passing', key: 'tk_passing' },
+                                { cat: 'tracking', type: 'rebounding', key: 'tk_rebounding' },
+                                { cat: 'tracking', type: 'catchshoot', key: 'tk_catchshoot' },
+                                { cat: 'tracking', type: 'pullupshot', key: 'tk_pullup' },
+                                { cat: 'tracking', type: 'speeddistance', key: 'tk_speed' },
+                                { cat: 'hustle', type: null, key: 'hustle' },
+                                { cat: 'shotdashboard', type: 'overall', key: 'sd_overall' },
+                                { cat: 'shotdashboard', type: 'less_than_10_ft', key: 'sd_close' },
+                                { cat: 'shotdashboard', type: 'pullups', key: 'sd_pullups' },
+                                { cat: 'shotdashboard', type: 'catch_and_shoot', key: 'sd_catchshoot' },
+                                { cat: 'clutch', type: 'usage', key: 'clutch_usage' },
+                            ];
+                            const matrix = {};
+                            const results = await Promise.allSettled(categories.map(async ({cat, type, key}) => {
+                                let url = `${baseUrl}/nba/v1/season_averages/${cat}?season=${yr}&season_type=regular&player_ids[]=${bdlPlayerId}`;
+                                if (type) url += `&type=${type}`;
+                                const res = await fetch(url, { headers: hdrs });
+                                if (!res.ok) return { key, data: null };
+                                const json = await res.json();
+                                return { key, data: json?.data?.[0]?.stats || json?.data?.[0] || null };
+                            }));
+                            let count = 0;
+                            results.forEach(r => { if (r.status === 'fulfilled' && r.value?.data) { matrix[r.value.key] = r.value.data; count++; } });
+                            console.log(`[V7.0] ✅ BDL Matrix: ${count}/24 categories loaded`);
+                            return count > 0 ? matrix : null;
+                        })(),
+
+                        // 2. V29 Advanced Per-Game (Speed, Touches, PaintPts, Fatigue)
+                        (async () => {
+                            try {
+                                const url = `${baseUrl}/nba/v1/season_averages/general?season=${yr}&season_type=regular&type=advanced&player_ids[]=${bdlPlayerId}`;
+                                const res = await fetch(url, { headers: hdrs });
+                                if (!res.ok) return null;
+                                const json = await res.json();
+                                const adv = json?.data?.[0];
+                                if (adv) console.log(`[V7.0] ✅ V29 Advanced: USG=${(adv.usg_pct*100||0).toFixed(1)}%, TS=${(adv.ts_pct*100||0).toFixed(1)}%`);
+                                // Also fetch per-game tracking
+                                const tUrl = `${baseUrl}/nba/v1/season_averages/tracking?season=${yr}&season_type=regular&type=speeddistance&player_ids[]=${bdlPlayerId}`;
+                                const tRes = await fetch(tUrl, { headers: hdrs });
+                                let tracking = null;
+                                if (tRes.ok) { const tj = await tRes.json(); tracking = tj?.data?.[0]?.stats || tj?.data?.[0]; }
+                                return { advanced: adv, tracking };
+                            } catch(e) { return null; }
+                        })(),
+
+                        // 3. V29 Shooting Range (Paint/Mid/3PT splits)
+                        (async () => {
+                            try {
+                                const fetches = ['less_than_10_ft', 'midrange', 'above_the_break_3', 'overall'].map(async range => {
+                                    const url = `${baseUrl}/nba/v1/season_averages/shotdashboard?season=${yr}&season_type=regular&type=${range}&player_ids[]=${bdlPlayerId}`;
+                                    const res = await fetch(url, { headers: hdrs });
+                                    if (!res.ok) return { range, data: null };
+                                    const json = await res.json();
+                                    return { range, data: json?.data?.[0]?.stats || json?.data?.[0] };
+                                });
+                                const results = await Promise.allSettled(fetches);
+                                const shooting = {};
+                                results.forEach(r => { if (r.status === 'fulfilled' && r.value?.data) shooting[r.value.range] = r.value.data; });
+                                // Compute splits
+                                const overall = shooting.overall;
+                                const rim = shooting.less_than_10_ft;
+                                const mid = shooting.midrange;
+                                const three = shooting.above_the_break_3;
+                                if (overall) {
+                                    const totalFGA = overall.fga || 1;
+                                    shooting.pctFromPaint = (rim?.fga || 0) / totalFGA;
+                                    shooting.pctFromMidrange = (mid?.fga || 0) / totalFGA;
+                                    shooting.pctFrom3 = (three?.fga || 0) / totalFGA;
+                                    shooting.rimFgPct = rim?.fg_pct || 0;
+                                    console.log(`[V7.0] ✅ Shooting: Paint=${(shooting.pctFromPaint*100).toFixed(0)}%, Mid=${(shooting.pctFromMidrange*100).toFixed(0)}%, 3PT=${(shooting.pctFrom3*100).toFixed(0)}%`);
+                                }
+                                return Object.keys(shooting).length > 2 ? shooting : null;
+                            } catch(e) { return null; }
+                        })(),
+
+                        // 4. V29 Clutch Stats
+                        (async () => {
+                            try {
+                                const url = `${baseUrl}/nba/v1/season_averages/clutch?season=${yr}&season_type=regular&type=usage&player_ids[]=${bdlPlayerId}`;
+                                const res = await fetch(url, { headers: hdrs });
+                                if (!res.ok) return null;
+                                const json = await res.json();
+                                const clutch = json?.data?.[0]?.stats || json?.data?.[0];
+                                if (clutch) console.log(`[V7.0] ✅ Clutch Stats loaded`);
+                                return clutch;
+                            } catch(e) { return null; }
+                        })(),
+
+                        // 5. V29 Opponent Profile (how opponents score vs this team)
+                        (async () => {
+                            if (!oppTeamId) return null;
+                            try {
+                                const types = ['isolation', 'transition', 'prballhandler', 'spotup', 'postup', 'cut'];
+                                const profile = {};
+                                const results = await Promise.allSettled(types.map(async type => {
+                                    const url = `${baseUrl}/nba/v1/team_season_averages/playtype?season=${yr}&season_type=regular&type=${type}&team_ids[]=${oppTeamId}`;
+                                    const res = await fetch(url, { headers: hdrs });
+                                    if (!res.ok) return { type, data: null };
+                                    const json = await res.json();
+                                    return { type, data: json?.data?.[0]?.stats || json?.data?.[0] };
+                                }));
+                                let count = 0;
+                                results.forEach(r => { if (r.status === 'fulfilled' && r.value?.data) { profile[r.value.type] = r.value.data; count++; } });
+                                if (count > 0) console.log(`[V7.0] ✅ Opponent Profile: ${count}/${types.length} playtypes`);
+                                return count > 0 ? profile : null;
+                            } catch(e) { return null; }
+                        })(),
+
+                        // 6. V30 Quarter Breakdowns
+                        (async () => {
+                            try {
+                                const quarters = {};
+                                const qTypes = [
+                                    { type: 'q1', label: 'Q1' }, { type: 'q2', label: 'Q2' },
+                                    { type: 'q3', label: 'Q3' }, { type: 'q4', label: 'Q4' }
+                                ];
+                                const results = await Promise.allSettled(qTypes.map(async ({type, label}) => {
+                                    const url = `${baseUrl}/nba/v1/season_averages/general?season=${yr}&season_type=regular&type=${type}&player_ids[]=${bdlPlayerId}`;
+                                    const res = await fetch(url, { headers: hdrs });
+                                    if (!res.ok) return { label, data: null };
+                                    const json = await res.json();
+                                    return { label, data: json?.data?.[0] };
+                                }));
+                                results.forEach(r => { if (r.status === 'fulfilled' && r.value?.data) quarters[r.value.label] = r.value.data; });
+                                if (Object.keys(quarters).length >= 4) {
+                                    const h1 = quarters.Q1 && quarters.Q2 ? { pts: (quarters.Q1.pts||0)+(quarters.Q2.pts||0), usg_pct: ((quarters.Q1.usg_pct||0)+(quarters.Q2.usg_pct||0))/2, efg_pct: ((quarters.Q1.efg_pct||0)+(quarters.Q2.efg_pct||0))/2 } : null;
+                                    const h2 = quarters.Q3 && quarters.Q4 ? { pts: (quarters.Q3.pts||0)+(quarters.Q4.pts||0), usg_pct: ((quarters.Q3.usg_pct||0)+(quarters.Q4.usg_pct||0))/2, efg_pct: ((quarters.Q3.efg_pct||0)+(quarters.Q4.efg_pct||0))/2 } : null;
+                                    if (h1 && h2) {
+                                        quarters.usageDiff = ((h1.usg_pct - h2.usg_pct) * 100).toFixed(1);
+                                        quarters.efgDiff = ((h1.efg_pct - h2.efg_pct) * 100).toFixed(1);
+                                        console.log(`[V7.0] ✅ Quarter Breakdown: 4/4 | 1H vs 2H: Usage ${quarters.usageDiff > 0 ? '+' : ''}${quarters.usageDiff}%, EFG ${quarters.efgDiff > 0 ? '+' : ''}${quarters.efgDiff}%`);
+                                    }
+                                }
+                                return Object.keys(quarters).length > 0 ? quarters : null;
+                            } catch(e) { return null; }
+                        })()
+                    ]);
+
+                    // Collect results
+                    v7Matrix = matrixRes.status === 'fulfilled' ? matrixRes.value : null;
+                    v7Advanced = advancedRes.status === 'fulfilled' ? advancedRes.value : null;
+                    v7Shooting = shootingRes.status === 'fulfilled' ? shootingRes.value : null;
+                    v7Clutch = clutchRes.status === 'fulfilled' ? clutchRes.value : null;
+                    v7OppProfile = oppProfileRes.status === 'fulfilled' ? oppProfileRes.value : null;
+                    v7Quarters = quartersRes.status === 'fulfilled' ? quartersRes.value : null;
+
+                    // ── V25 Rolling Stats ──
+                    if (rawGames?.length >= 5) {
+                        const vals = rawGames.slice(0, 15).map(g => extractStatValue(g, getStatMapping(sport, statKey, market), sport) || 0);
+                        v7RollingStats = computeRollingStats(vals, line);
+                        if (v7RollingStats) console.log(`[V7.0] ✅ Rolling: L5 mean=${v7RollingStats.mean}, median=${v7RollingStats.median}, std=${v7RollingStats.std?.toFixed(1)}, hitRate=${v7RollingStats.hitRate}%`);
+                    }
+
+                    // ── V29 Style Matchup ──
+                    if (v7Matrix && v7OppProfile && v7Shooting) {
+                        const signals = [];
+                        let totalScore = 0, totalWeight = 0;
+                        // Shot quality signal
+                        if (v7Matrix.sd_overall) {
+                            const uncontested = v7Matrix.sd_overall.fg_pct_uncontested || v7Matrix.sd_overall.uncontested_fg_pct || 0;
+                            if (uncontested > 0.55) { signals.push({ name: 'Shot Quality', adj: 0.05, weight: 1, note: `${(uncontested*100).toFixed(0)}% uncontested` }); }
+                        }
+                        // PnR handler efficiency
+                        if (v7Matrix.pt_pnr_handler) {
+                            const ppp = v7Matrix.pt_pnr_handler.ppp || v7Matrix.pt_pnr_handler.pts_per_possession || 0;
+                            if (ppp > 1.0) { signals.push({ name: 'PnR Efficiency', adj: 0.03, weight: 1, note: `${ppp.toFixed(2)} PPP` }); }
+                        }
+                        signals.forEach(s => { totalScore += s.adj * s.weight; totalWeight += s.weight; });
+                        const score = totalWeight > 0 ? totalScore / totalWeight : 0;
+                        const clampedScore = Math.max(-0.15, Math.min(0.15, score));
+                        v7StyleMatchup = { score: clampedScore, quality: Math.abs(clampedScore) > 0.05 ? 'STRONG' : Math.abs(clampedScore) > 0.02 ? 'MODERATE' : 'WEAK', favors: clampedScore > 0 ? 'OVER' : clampedScore < 0 ? 'UNDER' : 'NEUTRAL', signals };
+                        console.log(`[V7.0] 🎯 Style Matchup: ${(clampedScore*100).toFixed(1)}% → ${v7StyleMatchup.favors} (${v7StyleMatchup.quality})`);
+                    }
+
+                    // ── V11 Position Defense ──
+                    if (defenseData?.found && stats?.position) {
+                        const pos = stats.position?.toUpperCase() || 'PG';
+                        v7PositionDefense = { position: pos, teamRank: defenseData.rank, teamTier: defenseData.tier };
+                        console.log(`[V7.0] 🛡️ Position Defense: ${pos} vs ${defenseData.opponent} #${defenseData.rank} (${defenseData.tier})`);
+                    }
+
+                    // ── V11 Blowout Risk ──
+                    if (oddsData?.found && oddsData?.spread) {
+                        const spread = parseFloat(oddsData.spread || 0);
+                        const absSpread = Math.abs(spread);
+                        const risk = absSpread >= 12 ? 'High' : absSpread >= 7 ? 'Medium' : 'Low';
+                        const garbageProb = absSpread >= 12 ? 0.4 : absSpread >= 7 ? 0.2 : 0.05;
+                        const minMultiplier = 1 - (garbageProb * 0.3);
+                        const adjustment = absSpread >= 7 ? -(absSpread * 0.15) : 0;
+                        v7BlowoutRisk = { spread, risk, garbageProb, minMultiplier, adjustment: parseFloat(adjustment.toFixed(1)) };
+                        if (absSpread >= 7) console.log(`[V7.0] ⚠️ Blowout Risk: ${risk} (spread ${spread > 0 ? '+' : ''}${spread.toFixed(1)}) → ${adjustment.toFixed(1)} adj`);
+                    }
+
+                    // ── Injury Usage Boost ──
+                    if (injuryData?.injuries?.length > 0) {
+                        const teamInjuries = injuryData.injuries.filter(inj => 
+                            inj.status?.toLowerCase().includes('out') && !inj.status?.toLowerCase().includes('questionable'));
+                        if (teamInjuries.length > 0) {
+                            const usagePerPlayer = 20; // rough estimate
+                            const totalMissingUsage = teamInjuries.length * usagePerPlayer;
+                            const boost = Math.min(totalMissingUsage * 0.15, 5); // cap at +5
+                            v7InjuryBoost = { count: teamInjuries.length, missingUsage: totalMissingUsage, boost: parseFloat(boost.toFixed(1)), names: teamInjuries.map(i => i.name || 'unknown').slice(0, 3) };
+                            console.log(`[V7.0] 🏥 Injury Boost: ${teamInjuries.length} OUT (~${totalMissingUsage}% usage) → +${boost.toFixed(1)} pts`);
+                        }
+                    }
+
+                    // ── Sharp Money (basic from odds data) ──
+                    if (oddsData?.found && oddsData?.odds) {
+                        const odds = oddsData.odds;
+                        let overBooks = 0, underBooks = 0, sharpSignals = [];
+                        if (Array.isArray(odds)) {
+                            odds.forEach(o => {
+                                if (o.over && o.under) {
+                                    const overJuice = Math.abs(o.over);
+                                    const underJuice = Math.abs(o.under);
+                                    if (overJuice > underJuice + 10) underBooks++;
+                                    else if (underJuice > overJuice + 10) overBooks++;
+                                }
+                            });
+                        }
+                        const totalBooks = overBooks + underBooks;
+                        if (totalBooks > 0) {
+                            const overPct = Math.round(overBooks / totalBooks * 100);
+                            const direction = overPct > 60 ? 'OVER' : overPct < 40 ? 'UNDER' : 'NEUTRAL';
+                            v7SharpMoney = { direction, overPct, signals: sharpSignals.length, totalBooks };
+                            console.log(`[V7.0] 💰 Sharp Money: ${direction} (${overPct}% lean from ${totalBooks} books)`);
+                        }
+                    }
+
+                    console.log(`[V7.0] ✅ Full enrichment complete: Matrix=${!!v7Matrix}, Advanced=${!!v7Advanced}, Shooting=${!!v7Shooting}, Clutch=${!!v7Clutch}, OppProfile=${!!v7OppProfile}, Quarters=${!!v7Quarters}`);
+                }
+
                 const hasMin = ['nba','wnba','ncaab','nhl'].includes(sport);
                 let smartL5=l5Avg, smartL10=l10Avg, blowoutGamesInL5=0, smartMomentumLabel='neutral';
                 if (rawGames.length >= 3) {
@@ -45098,6 +45415,11 @@ reasoning must explain your analysis`;
                 }
                 
                 const finalProj = baseProj + totalAdj;
+
+                // V7.0 Adjustments
+                if (v7InjuryBoost?.boost > 0) { totalAdj += v7InjuryBoost.boost; adjList.push(`InjuryBoost +${v7InjuryBoost.boost.toFixed(1)}`); }
+                if (v7BlowoutRisk?.adjustment && Math.abs(v7BlowoutRisk.adjustment) >= 0.5) { totalAdj += v7BlowoutRisk.adjustment; adjList.push(`BlowoutRisk ${v7BlowoutRisk.adjustment >= 0 ? '+' : ''}${v7BlowoutRisk.adjustment.toFixed(1)}`); }
+                if (v7StyleMatchup?.score && Math.abs(v7StyleMatchup.score) > 0.02) { const sa = v7StyleMatchup.score * seasonAvg * 0.3; totalAdj += sa; adjList.push(`Style ${sa >= 0 ? '+' : ''}${sa.toFixed(1)}`); }
                 console.log(`[V48] 📊 Adj: ${totalAdj>=0?'+':''}${totalAdj.toFixed(1)} → Final: ${finalProj.toFixed(1)}`);
                 if(adjList.length>0) console.log(`[V48]    ${adjList.join(' | ')}`);
                 console.log(`[V48] 🎯 Projection [${sport.toUpperCase()}]: ${finalProj.toFixed(1)} (${((finalProj/line-1)*100).toFixed(1)}% ${finalProj>line?'above':'below'} line)`);
@@ -45209,6 +45531,17 @@ reasoning must explain your analysis`;
             if (oddsData?.found && oddsData?.gameTotal) aiParams._v48GameTotal = oddsData.gameTotal;
             if (lineupData?.available) aiParams._v48Lineup = lineupData.status || 'confirmed';
             if (v48Projection?.advancedStats) aiParams._v48Advanced = v48Projection.advancedStats;
+            // V7.0: Feed enriched data to AI engines
+            if (v7Matrix) aiParams._v7Matrix = Object.keys(v7Matrix).length + ' categories';
+            if (v7Advanced?.advanced) aiParams._v7Usage = (v7Advanced.advanced.usg_pct * 100).toFixed(1) + '%';
+            if (v7Shooting) aiParams._v7Shooting = `Paint=${(v7Shooting.pctFromPaint*100||0).toFixed(0)}%, Mid=${(v7Shooting.pctFromMidrange*100||0).toFixed(0)}%, 3PT=${(v7Shooting.pctFrom3*100||0).toFixed(0)}%`;
+            if (v7Quarters?.usageDiff) aiParams._v7Quarters = `1H vs 2H: Usage ${v7Quarters.usageDiff}%, EFG ${v7Quarters.efgDiff}%`;
+            if (v7StyleMatchup) aiParams._v7Style = `${(v7StyleMatchup.score*100).toFixed(1)}% ${v7StyleMatchup.favors} (${v7StyleMatchup.quality})`;
+            if (v7PositionDefense) aiParams._v7PosDefense = `${v7PositionDefense.position} vs #${v7PositionDefense.teamRank} (${v7PositionDefense.teamTier})`;
+            if (v7BlowoutRisk?.risk !== 'Low') aiParams._v7Blowout = `${v7BlowoutRisk.risk} risk (spread ${v7BlowoutRisk.spread}), adj ${v7BlowoutRisk.adjustment}`;
+            if (v7InjuryBoost) aiParams._v7InjuryBoost = `+${v7InjuryBoost.boost} from ${v7InjuryBoost.count} OUT (${v7InjuryBoost.names.join(', ')})`;
+            if (v7RollingStats) aiParams._v7Rolling = `mean=${v7RollingStats.mean}, median=${v7RollingStats.median}, std=${v7RollingStats.std}, hitRate=${v7RollingStats.hitRate}%`;
+            if (v7SharpMoney) aiParams._v7Sharp = `${v7SharpMoney.direction} (${v7SharpMoney.overPct}%)`;
         }
         
         // ═══════════════════════════════════════════════════════════════════════
