@@ -6031,10 +6031,6 @@ reasoning must explain your analysis`;
                 // Parallel fetch: Matrix, V29 Advanced, Shooting, Clutch,
                 // Opponent Profile, Quarter Breakdown, Team Profiles
                 // ═══════════════════════════════════════════════════════════
-                let v7StyleMatchup = null, v7RollingStats = null;
-                let v7PositionDefense = null, v7BlowoutRisk = null;
-                let v7InjuryBoost = null, v7Situational = null;
-                let v7SharpMoney = null;
 
                 if (sport === 'nba' && bdlPlayerId) {
                     const yr = new Date().getMonth() >= 9 ? new Date().getFullYear() : new Date().getFullYear() - 1;
@@ -6316,20 +6312,35 @@ reasoning must explain your analysis`;
                 const hasMin = ['nba','wnba','ncaab','nhl'].includes(sport);
                 let smartL5=l5Avg, smartL10=l10Avg, blowoutGamesInL5=0, smartMomentumLabel='neutral';
                 if (rawGames.length >= 3) {
-                    const sorted = [...rawGames].sort((a,b)=>new Date(b.game?.date||b.date)-new Date(a.game?.date||a.date));
+                    // V7.0 FIX: Filter rawGames to only include games with >0 minutes played
+                    // The legacy BDL endpoint may return All-Star, preseason, or placeholder entries
+                    const validRaw = rawGames.filter(g => {
+                        const m = hasMin ? parseMinutes(g.min || '0') : 999;
+                        return m > 0 || !hasMin; // Keep 0-min ONLY if sport doesn't track minutes
+                    });
+                    const sorted = [...(validRaw.length >= 3 ? validRaw : rawGames)].sort((a,b)=>new Date(b.game?.date||b.date)-new Date(a.game?.date||a.date));
                     const l5G=sorted.slice(0,5), l10G=sorted.slice(0,10), genuine=[];
-                    const avgM = hasMin ? sorted.slice(0,20).reduce((s,g)=>s+parseMinutes(g.min||'0'),0)/Math.min(sorted.length,20) : 0;
+                    // V7.0 FIX: Compute avgM only from games with real minutes (>5 min)
+                    const realMinGames = sorted.slice(0,20).filter(g => parseMinutes(g.min||'0') > 5);
+                    const avgM = hasMin && realMinGames.length > 0 ? realMinGames.reduce((s,g)=>s+parseMinutes(g.min||'0'),0)/realMinGames.length : 0;
                     let reason='';
                     l5G.forEach((g,i)=>{
                         const v=extractStatValue(g,getStatMapping(sport,statKey,market),sport)||0;
                         const m=hasMin?parseMinutes(g.min||'0'):999;
-                        if(hasMin&&m<=5){blowoutGamesInL5++;reason+=`G${i+1}:DNP; `;}
-                        else if(hasMin&&m<avgM*0.5&&v<seasonAvg*0.3){const ext=avgM>0?(v/m)*avgM:v;genuine.push(ext);blowoutGamesInL5++;reason+=`G${i+1}:${v}→${ext.toFixed(1)}; `;}
+                        const minRatio = avgM > 0 ? m / avgM : 1;
+                        // V7.0 FIX: Match V47 logic — require val < line AND low minutes
+                        // Pure DNP: 0 minutes AND 0 stat value (true DNP, not data artifact)
+                        if(hasMin && m === 0 && v === 0){blowoutGamesInL5++;reason+=`G${i+1}:DNP(0min); `;}
+                        // Low minutes + below line: likely blowout/injury exit
+                        else if(hasMin && v < line && minRatio < 0.78){
+                            if(m <= 5){blowoutGamesInL5++;reason+=`G${i+1}:DNP(${m}min); `;}
+                            else{const ext=avgM>0?(v/m)*avgM:v;genuine.push(ext);blowoutGamesInL5++;reason+=`G${i+1}:${v}→${ext.toFixed(1)}; `;}
+                        }
                         else genuine.push(v);
                     });
                     smartL5 = genuine.length>0 ? genuine.reduce((a,b)=>a+b,0)/genuine.length : l5Avg;
                     const l10Gen=[];
-                    l10G.forEach(g=>{const v=extractStatValue(g,getStatMapping(sport,statKey,market),sport)||0;const m=hasMin?parseMinutes(g.min||'0'):999;if(hasMin&&m<=5)return;if(hasMin&&m<avgM*0.5&&v<seasonAvg*0.3)l10Gen.push(avgM>0?(v/m)*avgM:v);else l10Gen.push(v);});
+                    l10G.forEach(g=>{const v=extractStatValue(g,getStatMapping(sport,statKey,market),sport)||0;const m=hasMin?parseMinutes(g.min||'0'):999;const mr=avgM>0?m/avgM:1;if(hasMin&&m===0&&v===0)return;if(hasMin&&v<line&&mr<0.78){if(m<=5)return;l10Gen.push(avgM>0?(v/m)*avgM:v);}else l10Gen.push(v);});
                     smartL10 = l10Gen.length>0 ? l10Gen.reduce((a,b)=>a+b,0)/l10Gen.length : l10Avg;
                     const l3=genuine.slice(0,3); const l3a=l3.length>0?l3.reduce((a,b)=>a+b,0)/l3.length:smartL5;
                     if(l3a>smartL5*1.05) smartMomentumLabel='hot'; else if(l3a<smartL5*0.95) smartMomentumLabel='cold';
@@ -6343,7 +6354,7 @@ reasoning must explain your analysis`;
                 let cvClean=0, varianceLabel='Average';
                 if (recVals.length>=5) {
                     let cvV=recVals;
-                    if(blowoutGamesInL5>0&&hasMin){const am=rawGames.slice(0,20).reduce((s,g)=>s+parseMinutes(g.min||'0'),0)/Math.min(rawGames.length,20);const cl=[];[...rawGames].sort((a,b)=>new Date(b.game?.date||b.date)-new Date(a.game?.date||a.date)).slice(0,10).forEach(g=>{const v=extractStatValue(g,getStatMapping(sport,statKey,market),sport)||0;const m=parseMinutes(g.min||'0');if(m>5&&!(m<am*0.5&&v<seasonAvg*0.3))cl.push(v);});if(cl.length>=5){cvV=cl;console.log(`[V48] 🧹 Variance Clean: Filtered ${recVals.length-cl.length} games`);}}
+                    if(blowoutGamesInL5>0&&hasMin){const realMG=rawGames.filter(g=>parseMinutes(g.min||'0')>5);const am=realMG.length>0?realMG.slice(0,20).reduce((s,g)=>s+parseMinutes(g.min||'0'),0)/Math.min(realMG.length,20):30;const cl=[];[...rawGames].filter(g=>parseMinutes(g.min||'0')>0).sort((a,b)=>new Date(b.game?.date||b.date)-new Date(a.game?.date||a.date)).slice(0,10).forEach(g=>{const v=extractStatValue(g,getStatMapping(sport,statKey,market),sport)||0;const m=parseMinutes(g.min||'0');const mr=am>0?m/am:1;if(m>5&&!(v<line&&mr<0.78))cl.push(v);});if(cl.length>=5){cvV=cl;console.log(`[V48] 🧹 Variance Clean: Filtered ${recVals.length-cl.length} games`);}}
                     const mean=cvV.reduce((a,b)=>a+b,0)/cvV.length;
                     const sd=Math.sqrt(cvV.reduce((s,v)=>s+Math.pow(v-mean,2),0)/cvV.length);
                     cvClean=mean>0?(sd/mean)*100:0;
@@ -6539,7 +6550,7 @@ reasoning must explain your analysis`;
             if (v7Quarters?.usageDiff) aiParams._v7Quarters = `1H vs 2H: Usage ${v7Quarters.usageDiff}%, EFG ${v7Quarters.efgDiff}%`;
             if (v7StyleMatchup) aiParams._v7Style = `${(v7StyleMatchup.score*100).toFixed(1)}% ${v7StyleMatchup.favors} (${v7StyleMatchup.quality})`;
             if (v7PositionDefense) aiParams._v7PosDefense = `${v7PositionDefense.position} vs #${v7PositionDefense.teamRank} (${v7PositionDefense.teamTier})`;
-            if (v7BlowoutRisk?.risk !== 'Low') aiParams._v7Blowout = `${v7BlowoutRisk.risk} risk (spread ${v7BlowoutRisk.spread}), adj ${v7BlowoutRisk.adjustment}`;
+            if (v7BlowoutRisk && v7BlowoutRisk.risk !== 'Low') aiParams._v7Blowout = `${v7BlowoutRisk.risk} risk (spread ${v7BlowoutRisk.spread}), adj ${v7BlowoutRisk.adjustment}`;
             if (v7InjuryBoost) aiParams._v7InjuryBoost = `+${v7InjuryBoost.boost} from ${v7InjuryBoost.count} OUT (${v7InjuryBoost.names.join(', ')})`;
             if (v7RollingStats) aiParams._v7Rolling = `mean=${v7RollingStats.mean}, median=${v7RollingStats.median}, std=${v7RollingStats.std}, hitRate=${v7RollingStats.hitRate}%`;
             if (v7SharpMoney) aiParams._v7Sharp = `${v7SharpMoney.direction} (${v7SharpMoney.overPct}%)`;
