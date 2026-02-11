@@ -39000,7 +39000,7 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
         window.SBA = window.SBA_V47;
     </script>
 
-    <!-- V48 ULTIMATE V6.4 Console Module — DNP Fix + Streak Safe + Defense -->
+    <!-- V48 ULTIMATE V6.4 Console Module — Legacy Endpoint DNP Fix -->
     <script>
 // ═══════════════════════════════════════════════════════════════════════════════
 // SBA GENIUS V48 ULTIMATE V6.0 - FULL PROJECTION ENGINE + BLOWOUT CLEAN + STREAK SAFE
@@ -42617,7 +42617,10 @@ MINUTES: [expected minutes]`,
             const currentYear = new Date().getFullYear();
             const seasonYear = new Date().getMonth() >= 9 ? currentYear : currentYear - 1;
             
-            const statsUrl = `https://api.balldontlie.io/${endpoint}/v1/stats?player_ids[]=${p.id}&seasons[]=${seasonYear}&per_page=100`;
+            // V6.4 FIX: Use legacy /v1/stats for game logs — includes DNP/0-minute games
+            // The sport-specific /${endpoint}/v1/stats EXCLUDES DNP games, breaking blowout detection
+            const statsEndpoint = (sport === 'nba') ? '' : `${endpoint}/`;
+            const statsUrl = `https://api.balldontlie.io/${statsEndpoint}v1/stats?player_ids[]=${p.id}&seasons[]=${seasonYear}&per_page=100`;
             const statsRes = await fetch(statsUrl, { headers: { 'Authorization': BDL_KEY } });
             
             if (!statsRes.ok) {
@@ -44406,7 +44409,7 @@ reasoning must explain your analysis`;
         
         console.log('\n');
         console.log('╔═══════════════════════════════════════════════════════════════════════════════╗');
-        console.log('║   🏆 SBA GENIUS V48 ULTIMATE V6.0 - 17-ENGINE PROJECTION + STREAK SAFE 🏆 ║');
+        console.log('║   🏆 SBA GENIUS V48 ULTIMATE V6.4 - 17-ENGINE PROJECTION + DNP FIX 🏆 ║');
         console.log('╠═══════════════════════════════════════════════════════════════════════════════╣');
         console.log(`║  ${displaySubject} | ${statDisplay} @ ${params.line} ${isPlayerProp ? 'vs ' + (params.opponent || 'Unknown') : ''}`.padEnd(78) + '║');
         console.log(`║  Sport: ${sportConfig.name} | Market: ${market} | Type: ${marketType.toUpperCase()}`.padEnd(78) + '║');
@@ -44922,7 +44925,9 @@ reasoning must explain your analysis`;
                         const curYr = new Date().getFullYear();
                         const sznYr = new Date().getMonth() >= 9 ? curYr : curYr - 1;
                         const ep = { nba:'nba', wnba:'wnba', ncaab:'ncaab', nfl:'nfl', ncaaf:'ncaaf', mlb:'mlb', nhl:'nhl' }[sport] || 'nba';
-                        const glRes = await fetch(`https://api.balldontlie.io/${ep}/v1/stats?player_ids[]=${bdlPlayerId}&seasons[]=${sznYr}&per_page=100`, { headers: { 'Authorization': BDL_KEY } });
+                        // V6.4 FIX: Use legacy /v1/stats for NBA (includes DNP games)
+                        const glEp = (sport === 'nba') ? '' : `${ep}/`;
+                        const glRes = await fetch(`https://api.balldontlie.io/${glEp}v1/stats?player_ids[]=${bdlPlayerId}&seasons[]=${sznYr}&per_page=100`, { headers: { 'Authorization': BDL_KEY } });
                         if (glRes.ok) {
                             const glData = await glRes.json();
                             const pGames = glData.data || [];
