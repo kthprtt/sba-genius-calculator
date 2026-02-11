@@ -5645,14 +5645,19 @@ reasoning must explain your analysis`;
                 const aiSeasonCheck = await quickSeasonCheck(params.player, sport, market);
                 if (aiSeasonCheck && seasonVal > 0) {
                     const gap = Math.abs(aiSeasonCheck - seasonVal) / aiSeasonCheck;
+                    // V8.0 FIX: If BDL+ESPN cross-validated (two independent sources agree), 
+                    // NEVER let a single AI hallucination override them
+                    const isCrossValidated = stats.source && stats.source.includes('ESPN');
                     if (gap > 0.15) {
                         console.log(`[V5.4] ⚠️ BDL season (${seasonVal.toFixed(1)}) differs from AI (${aiSeasonCheck.toFixed(1)}) by ${Math.round(gap*100)}%`);
-                        if (gap > 0.25) {
+                        if (gap > 0.25 && !isCrossValidated) {
                             console.log(`[V5.4] 🔴 Using AI season average instead of BDL`);
                             stats.season[statKey] = aiSeasonCheck;
                             stats.season.pts = aiSeasonCheck;
                             dataQualityScore -= 10;
                             dataQualityFactors.push('BDL data corrected by AI');
+                        } else if (gap > 0.25 && isCrossValidated) {
+                            console.log(`[V5.4] ✅ BDL+ESPN cross-validated — ignoring AI hallucination (${aiSeasonCheck.toFixed(1)})`);
                         }
                     } else {
                         console.log(`[V5.4] ✅ BDL season confirmed by AI (${aiSeasonCheck.toFixed(1)})`);
@@ -6389,7 +6394,7 @@ reasoning must explain your analysis`;
                     }
 
                     // ── Sharp Money (basic from odds data) ──
-                    if (Array.isArray(oddsAPIRaw) && oddsData.length > 0) {
+                    if (Array.isArray(oddsAPIRaw) && oddsAPIRaw.length > 0) {
                         // Group by book to get over/under pairs
                         const bookPairs = {};
                         oddsAPIRaw.forEach(o => {
@@ -6420,7 +6425,7 @@ reasoning must explain your analysis`;
                     }
 
                     // ── V8.0 Pinnacle Sharp Tracking ──
-                    if (Array.isArray(oddsAPIRaw) && oddsData.length > 0) {
+                    if (Array.isArray(oddsAPIRaw) && oddsAPIRaw.length > 0) {
                         // Build book pairs from the flat array
                         const pinnBookPairs = {};
                         oddsAPIRaw.forEach(o => {
@@ -6512,7 +6517,7 @@ reasoning must explain your analysis`;
 
                     // ── V8.0 Player Prop Lines (from OddsAPI data already fetched) ──
                     v7PlayerProps = null;
-                    if (Array.isArray(oddsAPIRaw) && oddsData.length > 0) {
+                    if (Array.isArray(oddsAPIRaw) && oddsAPIRaw.length > 0) {
                         // Aggregate prop lines from the OddsAPI array we already have
                         const bookPairs = {};
                         oddsAPIRaw.forEach(o => {
@@ -7154,16 +7159,15 @@ reasoning must explain your analysis`;
             const overResults = {}, underResults = {};
             
             // Build focused prompts for each side
-            const overPrompt = `ARGUE THE CASE FOR OVER ${params.line} ${market.replace('player_','').replace(/_/g,' ')} for ${params.player} vs ${params.opponent}. ` +
-                `Stats: Season=${stats?.season?.[getStatKey(market)]||'?'}, L10=${stats?.l10?.[getStatKey(market)]||'?'}, L5=${stats?.l5?.[getStatKey(market)]||'?'}. ` +
-                `Model projects ${v48Projection?.final?.toFixed(1)||'?'}. Defense: #${defenseData?.rank||'?'} (${defenseData?.tier||'?'}). ` +
-                `${bothSides.over.factors.slice(0,3).join('. ')}. ` +
-                `Rate the OVER case strength 1-100 and explain in 1 sentence.`;
+            const overPrompt = `You must argue FOR the OVER. Rate how strong the OVER case is from 50-95. ` +
+                `Player: ${params.player}, Line: ${params.line} ${market.replace('player_','').replace(/_/g,' ')} vs ${params.opponent}. ` +
+                `OVER evidence: ${bothSides.over.factors.slice(0,3).join('; ')}. Model=${v48Projection?.final?.toFixed(1)||'?'}. ` +
+                `Respond ONLY with a number 50-95 representing OVER strength, then one sentence.`;
             
-            const underPrompt = `ARGUE THE CASE FOR UNDER ${params.line} ${market.replace('player_','').replace(/_/g,' ')} for ${params.player} vs ${params.opponent}. ` +
-                `Stats: Season=${stats?.season?.[getStatKey(market)]||'?'}, L5=${stats?.l5?.[getStatKey(market)]||'?'}. ` +
-                `${bothSides.under.factors.slice(0,3).join('. ')}. ` +
-                `Rate the UNDER case strength 1-100 and explain in 1 sentence.`;
+            const underPrompt = `You must argue FOR the UNDER. Rate how strong the UNDER case is from 50-95. ` +
+                `Player: ${params.player}, Line: ${params.line} ${market.replace('player_','').replace(/_/g,' ')} vs ${params.opponent}. ` +
+                `UNDER evidence: ${bothSides.under.factors.slice(0,3).join('; ')}. L5 avg=${stats?.l5?.[getStatKey(market)]||'?'}. ` +
+                `Respond ONLY with a number 50-95 representing UNDER strength, then one sentence.`;
             
             try {
                 // Direct adversarial calls to fast engines via PROXY
@@ -7180,9 +7184,9 @@ reasoning must explain your analysis`;
                             const text = typeof data === 'string' ? data : data.response || data.text || data.content || JSON.stringify(data);
                             const confMatch = text.match(/(\d{2,3})%?/);
                             const conf = confMatch ? Math.min(95, Math.max(40, parseInt(confMatch[1]))) : 60;
-                            const pick = text.toUpperCase().includes('UNDER') && side === 'UNDER' ? 'UNDER' : 
-                                         text.toUpperCase().includes('OVER') && side === 'OVER' ? 'OVER' : side;
-                            return { engine: eng, side, result: { pick, confidence: conf } };
+                            // For adversarial synthesis: the pick IS the side being argued
+                            // The confidence represents how strong that side's case is
+                            return { engine: eng, side, result: { pick: side, confidence: conf } };
                         } catch(e) { return { engine: eng, side, result: { pick: side, confidence: 55 } }; }
                     };
                     
