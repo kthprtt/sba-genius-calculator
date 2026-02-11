@@ -38999,9 +38999,7 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
         // Short alias
         window.SBA = window.SBA_V47;
     </script>
-
-    <!-- V48 ULTIMATE V7.0 Console Module — Full Pipeline + All Fixes -->
-    <script>
+<script>
 // ═══════════════════════════════════════════════════════════════════════════════
 // SBA GENIUS V48 ULTIMATE V6.0 - FULL PROJECTION ENGINE + BLOWOUT CLEAN + STREAK SAFE
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -45050,6 +45048,14 @@ reasoning must explain your analysis`;
                         if (!rawGames?.length || !params.opponent) return null;
                         const oppName = params.opponent.toLowerCase();
                         const playerTeamId = rawGames[0]?.team?.id;
+                        console.log(`[V7.0] 🔍 Opp lookup: oppName="${oppName}", playerTeamId=${playerTeamId}, rawGames=${rawGames.length}`);
+                        
+                        // Debug: Show first game's structure
+                        if (rawGames[0]?.game) {
+                            const gm0 = rawGames[0].game;
+                            console.log(`[V7.0] 🔍 Game[0] keys: ${Object.keys(gm0).join(', ')}`);
+                            console.log(`[V7.0] 🔍 Game[0] home_team_id=${gm0.home_team_id}, home_team?.id=${gm0.home_team?.id}, visitor_team_id=${gm0.visitor_team_id}, visitor_team?.id=${gm0.visitor_team?.id}`);
+                        }
                         
                         // Collect all unique opponent team IDs from recent games
                         const oppTeamIds = new Set();
@@ -45065,6 +45071,7 @@ reasoning must explain your analysis`;
                         }
                         
                         // If we have opponent IDs, look up team details via BDL teams endpoint
+                        console.log(`[V7.0] 🔍 Found ${oppTeamIds.size} unique opponent team IDs: [${[...oppTeamIds].join(', ')}]`);
                         if (oppTeamIds.size > 0) {
                             try {
                                 const teamsRes = await fetch(`${baseUrl}/nba/v1/teams`, { headers: hdrs });
@@ -47031,6 +47038,4 @@ console.log('━━━━━━━━━━━━━━━━━━━━━━�
 console.log('V5.4.8: NBA defense updated to 2025-26 season (ESPN Hollinger)');
 console.log('GATES: 7 (G1-G7) | SPORTS: 12 | MARKETS: 274');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    </script>
-</body>
-</html>
+</script></body></html>
