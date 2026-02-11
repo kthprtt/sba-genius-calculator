@@ -1016,7 +1016,51 @@ const SBA_V47_ULTIMATE = (function() {
     };
 
     // AI Engine Weights
-    const weights = {claude:0.18,openai:0.16,perplexity:0.12,grok:0.08,deepseek:0.08,cohere:0.08,gemini:0.06,mistral:0.06,groq:0.06,together:0.06,youcom:0.06};
+    // V8.0 ENGINE WEIGHTING — Capability-based tiers + context-aware boosting
+    // Tier 1 (LIVE WEB + STRONG REASONING): perplexity, grok, claude — can verify live data
+    // Tier 2 (STRONG REASONING): openai, deepseek, gemini — excellent analytical ability
+    // Tier 3 (SOLID): cohere, mistral, together, groq, youcom — good but no live data access
+    const ENGINE_TIERS = {
+        // Tier 1: Live web search + elite reasoning (most reliable for current data)
+        perplexity: { base: 0.14, tier: 1, hasWeb: true, reasoning: 'strong', sharpBoost: 0.03 },
+        grok:       { base: 0.12, tier: 1, hasWeb: true, reasoning: 'strong', sharpBoost: 0.02 },
+        claude:     { base: 0.14, tier: 1, hasWeb: false, reasoning: 'elite', complexBoost: 0.04 },
+        // Tier 2: Strong reasoning, no web
+        openai:     { base: 0.11, tier: 2, hasWeb: false, reasoning: 'strong', complexBoost: 0.02 },
+        deepseek:   { base: 0.10, tier: 2, hasWeb: false, reasoning: 'strong', complexBoost: 0.02 },
+        gemini:     { base: 0.09, tier: 2, hasWeb: false, reasoning: 'strong' },
+        // Tier 3: Fast inference, more likely to echo prompt data
+        cohere:     { base: 0.05, tier: 3, parrot: true },
+        mistral:    { base: 0.05, tier: 3, parrot: true },
+        together:   { base: 0.05, tier: 3, parrot: true },
+        groq:       { base: 0.05, tier: 3, parrot: true },
+        youcom:     { base: 0.06, tier: 2, hasWeb: true }
+    };
+    
+    // Context-aware weight adjustment (called after sharp money + model available)
+    function getContextWeights(sharpSignal = null, modelDirection = null, isComplex = false) {
+        const w = {};
+        for (const [eng, cfg] of Object.entries(ENGINE_TIERS)) {
+            let weight = cfg.base;
+            // Boost web-enabled engines when live data matters
+            if (cfg.hasWeb) weight += 0.01;
+            // Boost elite reasoners for complex matchups (close lines, high variance)
+            if (cfg.reasoning === 'elite') weight += 0.01;
+            // V8.0: CONTEXTUAL BOOSTS
+            // When sharp money exists, boost web engines that can verify live data
+            if (sharpSignal && cfg.sharpBoost) weight += cfg.sharpBoost;
+            // When matchup is complex (high CV, close line), boost reasoning engines
+            if (isComplex && cfg.complexBoost) weight += cfg.complexBoost;
+            // Downweight parrot engines when sharp disagrees with model — need independent thinking
+            if (sharpSignal && modelDirection && cfg.parrot) weight *= 0.75;
+            w[eng] = weight;
+        }
+        // Normalize to 1.0
+        const total = Object.values(w).reduce((s,v) => s+v, 0);
+        for (const eng of Object.keys(w)) w[eng] = parseFloat((w[eng] / total).toFixed(4));
+        return w;
+    }
+    const weights = getContextWeights();
     const engines = Object.keys(weights);
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -3702,6 +3746,7 @@ MINUTES: [expected minutes]`,
                 // V48: Additional data for projection engine
                 bdlPlayerId: p.id,
                 bdlTeamId: p.team?.id || null,
+                position: p.position || null,
                 rawGames: allGamesForRaw, // V48 FIX: Includes DNP/low-min games for blowout detection
                 gameValues: gameValues, // Parsed stat values with dates
                 l5StdDev: l5.length > 1 ? Math.sqrt(l5.reduce((s, g) => s + Math.pow(g.value - l5Avg, 2), 0) / l5.length) : 0,
@@ -4019,6 +4064,7 @@ LAST_5: [num1, num2, num3, num4, num5]`,
             const v7GameScriptText = params._v7GameScript ? `\nGame Script: ${params._v7GameScript}` : '';
             const v7SpotsText = params._v7Spots ? `\nSituational Spots: ${params._v7Spots}` : '';
             const v7PropsText = params._v7Props ? `\nProp Market: ${params._v7Props}` : '';
+            const v7RefText = params._v7Referee ? `\nReferee: ${params._v7Referee}` : '';
 
             prompt = `${sportConfig.name} PLAYER PROP ANALYSIS:
 Player: ${params.player}
@@ -4027,7 +4073,7 @@ Opponent: ${params.opponent}
 
 STATS: ${statsText}
 ${hitText}
-${defText}${v48ProjText}${v48TeamText}${v48BlowoutText}${v48DefText}${v48PaceText}${v48VarText}${v48GTText}${v48AdvText}${v7MatrixText}${v7UsageText}${v7ClutchText}${v7ShootText}${v7QuarterText}${v7StyleText}${v7PosDefText}${v7BlowoutText}${v7InjText}${v7RollText}${v7SharpText}${v7GameScriptText}${v7SpotsText}${v7PropsText}
+${defText}${v48ProjText}${v48TeamText}${v48BlowoutText}${v48DefText}${v48PaceText}${v48VarText}${v48GTText}${v48AdvText}${v7MatrixText}${v7UsageText}${v7ClutchText}${v7ShootText}${v7QuarterText}${v7StyleText}${v7PosDefText}${v7BlowoutText}${v7InjText}${v7RollText}${v7SharpText}${v7GameScriptText}${v7SpotsText}${v7PropsText}${v7RefText}
 
 Analyze this prop bet. Based on the data, should the bettor take OVER, UNDER, or PASS?
 
@@ -4210,7 +4256,8 @@ reasoning must explain your analysis`;
     // ═══════════════════════════════════════════════════════════════════════════
     // AI COLLECTIVE - V4.5 COMPLETE REWRITE FOR UNDER FIX
     // ═══════════════════════════════════════════════════════════════════════════
-    function calculateAICollective(results) {
+    function calculateAICollective(results, overrideWeights = null) {
+        const activeWeights = overrideWeights || weights;
         let overScore = 0, underScore = 0;
         let overEngines = [], underEngines = [], passEngines = [], errorEngines = []; // V5.3 FIX 8
         let totalWeight = 0;
@@ -4224,7 +4271,7 @@ reasoning must explain your analysis`;
                 continue; // Don't count errors in consensus
             }
             
-            const w = weights[engine] || 0.05;
+            const w = activeWeights[engine] || 0.05;
             totalWeight += w;
             
             if (result.pick === 'OVER') { 
@@ -4257,7 +4304,7 @@ reasoning must explain your analysis`;
         if (consensusEngines.length > 0) {
             let weightedSum = 0, weightSum = 0;
             consensusEngines.forEach(engine => {
-                const w = weights[engine] || 0.05;
+                const w = activeWeights[engine] || 0.05;
                 const engineProb = results[engine]?.trueProb;
                 
                 let prob;
@@ -4308,7 +4355,7 @@ reasoning must explain your analysis`;
     // ═══════════════════════════════════════════════════════════════════════════
     // V5.3 MASTER SYNTHESIS - CALIBRATED TRUEPROB + STEAM MOVE WEIGHTING
     // ═══════════════════════════════════════════════════════════════════════════
-    function masterSynthesis(aiCollective, defenseData, hitRate, b2bData, homeAwayData, injuryData, market, minutesData = null, redditData = null, twitterData = null, lineMovementData = null, varianceFlag = false, paceData = null) {
+    function masterSynthesis(aiCollective, defenseData, hitRate, b2bData, homeAwayData, injuryData, market, minutesData = null, redditData = null, twitterData = null, lineMovementData = null, varianceFlag = false, paceData = null, refereeData = null) {
         // === V5.3 FIX 7: CALIBRATED TRUEPROB ===
         // Step 1: Stronger dampening to get realistic edges
         const rawProb = aiCollective.trueProb;
@@ -4480,6 +4527,17 @@ reasoning must explain your analysis`;
         }
         
         // Boost for strong consensus (reduced)
+        // V8.0: Referee tendencies
+        if (refereeData?.found && refereeData.totalsBias && refereeData.totalsBias !== 'NEUTRAL') {
+            const refAligns = (refereeData.totalsBias === aiCollective.direction);
+            if (refAligns) {
+                finalProb = Math.min(0.70, finalProb + 0.01);
+                adjustments.push(`Referee ${refereeData.referee} ${refereeData.totalsBias} +1%`);
+            } else {
+                finalProb = Math.max(0.35, finalProb - 0.005);
+                adjustments.push(`Referee ${refereeData.referee} ${refereeData.totalsBias} -0.5%`);
+            }
+        }
         if (aiCollective.agreement === 'STRONG' && confidence >= 90) {
             finalProb = Math.min(0.70, finalProb + 0.015);
             adjustments.push('Strong consensus +1.5%');
@@ -5859,6 +5917,20 @@ reasoning must explain your analysis`;
             console.log(`[V5.5] ⚪ Twitter: No sentiment data`);
         }
         
+        // V8.0: Referee Tendencies
+        let refereeData = { found: false };
+        try {
+            const teamAbbr = stats?.teamAbbr || '';
+            const refHome = homeAwayData?.location === 'HOME' ? teamAbbr : params.opponent;
+            const refAway = homeAwayData?.location === 'HOME' ? params.opponent : teamAbbr;
+            refereeData = await getRefereeTendencies(sport, refHome || params.opponent, refAway || 'OPP');
+            if (refereeData.found) {
+                const icon = refereeData.totalsBias === 'OVER' ? '🟢' : refereeData.totalsBias === 'UNDER' ? '🔴' : '⚪';
+                console.log(`[V8.0] ${icon} Referee: ${refereeData.referee} | Bias: ${refereeData.totalsBias} | Foul Rate: ${refereeData.foulRate} | Diff: ${refereeData.avgTotalDiff >= 0 ? '+' : ''}${refereeData.avgTotalDiff} pts`);
+                if (refereeData.notes) console.log(`[V8.0]    └─ ${refereeData.notes}`);
+            }
+        } catch(e) { /* referee optional */ }
+        
         // Odds
         const oddsData = await getOddsMultiSource(params.player, params.opponent, sport, market);
         // V8.0: Also fetch raw OddsAPI array for Sharp Money, Pinnacle, Props enrichment
@@ -6366,10 +6438,43 @@ reasoning must explain your analysis`;
                     }
 
                     // ── V11 Position Defense ──
+                    // ── V8.0 Position Defense (UPGRADED: position-specific from opponent profile) ──
                     if (defenseData?.found && stats?.position) {
                         const pos = stats.position?.toUpperCase() || 'PG';
-                        v7PositionDefense = { position: pos, teamRank: defenseData.rank, teamTier: defenseData.tier };
-                        console.log(`[V7.0] 🛡️ Position Defense: ${pos} vs ${defenseData.opponent} #${defenseData.rank} (${defenseData.tier})`);
+                        const posMap = { 'PG': 'guard', 'SG': 'guard', 'SF': 'forward', 'PF': 'forward', 'C': 'center', 'G': 'guard', 'F': 'forward' };
+                        const posType = posMap[pos] || 'forward';
+                        
+                        // Use opponent profile playtypes for position-specific defense quality
+                        let posDefAdj = 0;
+                        let posDefNote = '';
+                        if (v7OppProfile) {
+                            if (posType === 'guard') {
+                                const isoAllow = v7OppProfile.isolation?.ppp || 0;
+                                const pnrAllow = v7OppProfile.pnr_ball_handler?.ppp || 0;
+                                if (isoAllow > 0 && pnrAllow > 0) {
+                                    posDefAdj = ((isoAllow - 0.90) + (pnrAllow - 0.85)) * 2;
+                                    posDefNote = `ISO ${isoAllow.toFixed(2)}ppp, PnR ${pnrAllow.toFixed(2)}ppp`;
+                                }
+                            } else if (posType === 'forward') {
+                                const postAllow = v7OppProfile.postup?.ppp || 0;
+                                const cutAllow = v7OppProfile.cut?.ppp || 0;
+                                const transAllow = v7OppProfile.transition?.ppp || 0;
+                                if (postAllow > 0 || cutAllow > 0) {
+                                    posDefAdj = ((postAllow > 0 ? postAllow - 0.90 : 0) + (cutAllow > 0 ? cutAllow - 1.20 : 0) + (transAllow > 0 ? transAllow - 1.10 : 0)) * 1.5;
+                                    posDefNote = `Post ${postAllow.toFixed(2)}, Cut ${cutAllow.toFixed(2)}, Trans ${transAllow.toFixed(2)}`;
+                                }
+                            } else {
+                                const postAllow = v7OppProfile.postup?.ppp || 0;
+                                const cutAllow = v7OppProfile.cut?.ppp || 0;
+                                if (postAllow > 0 || cutAllow > 0) {
+                                    posDefAdj = ((postAllow > 0 ? postAllow - 0.90 : 0) + (cutAllow > 0 ? cutAllow - 1.20 : 0)) * 2;
+                                    posDefNote = `Post ${postAllow.toFixed(2)}, Cut ${cutAllow.toFixed(2)}`;
+                                }
+                            }
+                        }
+                        const posDefTier = posDefAdj > 0.3 ? 'WEAK_VS_POS' : posDefAdj < -0.3 ? 'STRONG_VS_POS' : defenseData.tier;
+                        v7PositionDefense = { position: pos, posType, teamRank: defenseData.rank, teamTier: defenseData.tier, posDefAdj: parseFloat(posDefAdj.toFixed(2)), posDefTier, posDefNote };
+                        console.log(`[V8.0] 🛡️ Position Defense: ${pos} (${posType}) vs ${defenseData.opponent} #${defenseData.rank} ${posDefTier} | ${posDefNote || 'team-level'} | Adj: ${posDefAdj >= 0 ? '+' : ''}${posDefAdj.toFixed(2)}`);
                     }
 
                     // ── V11 Blowout Risk ──
@@ -6685,6 +6790,8 @@ reasoning must explain your analysis`;
                 if (v7StyleMatchup?.score && Math.abs(v7StyleMatchup.score) > 0.02) { const sa = v7StyleMatchup.score * seasonAvg * 0.3; totalAdj += sa; adjList.push(`Style ${sa >= 0 ? '+' : ''}${sa.toFixed(1)}`); }
                 if (typeof v7GameScript !== 'undefined' && v7GameScript?.scriptAdj && Math.abs(v7GameScript.scriptAdj) >= 0.3) { totalAdj += v7GameScript.scriptAdj; adjList.push(`GameScript ${v7GameScript.scriptAdj >= 0 ? '+' : ''}${v7GameScript.scriptAdj.toFixed(1)}`); }
                 if (typeof v7Spots !== 'undefined' && v7Spots?.length > 0) { const spotAdj = v7Spots.reduce((s,sp) => s + sp.adj, 0); if (Math.abs(spotAdj) >= 0.2) { totalAdj += spotAdj; adjList.push(`Spots ${spotAdj >= 0 ? '+' : ''}${spotAdj.toFixed(1)}`); } }
+                if (v7PositionDefense?.posDefAdj && Math.abs(v7PositionDefense.posDefAdj) >= 0.1) { totalAdj += v7PositionDefense.posDefAdj; adjList.push(`PosDef ${v7PositionDefense.posDefAdj >= 0 ? '+' : ''}${v7PositionDefense.posDefAdj.toFixed(1)}`); }
+                if (refereeData?.found && refereeData.avgTotalDiff && Math.abs(refereeData.avgTotalDiff) >= 1.0) { const refAdj = refereeData.avgTotalDiff * (v48Advanced?.usage || 25) / 100 * 0.3; totalAdj += refAdj; adjList.push(`Ref ${refAdj >= 0 ? '+' : ''}${refAdj.toFixed(1)}`); }
                 console.log(`[V48] 📊 Adj: ${totalAdj>=0?'+':''}${totalAdj.toFixed(1)} → Final: ${finalProj.toFixed(1)}`);
                 if(adjList.length>0) console.log(`[V48]    ${adjList.join(' | ')}`);
                 console.log(`[V48] 🎯 Projection [${sport.toUpperCase()}]: ${finalProj.toFixed(1)} (${((finalProj/line-1)*100).toFixed(1)}% ${finalProj>line?'above':'below'} line)`);
@@ -6882,12 +6989,22 @@ reasoning must explain your analysis`;
             if (typeof v7GameScript !== 'undefined' && v7GameScript) aiParams._v7GameScript = `${v7GameScript.label}: Total=${v7GameScript.projTotal?.toFixed(0)}, Spread=${v7GameScript.spread > 0 ? '+':''}${v7GameScript.spread}, Adj=${v7GameScript.scriptAdj >= 0 ? '+':''}${v7GameScript.scriptAdj}`;
             if (typeof v7Spots !== 'undefined' && v7Spots?.length > 0) aiParams._v7Spots = v7Spots.map(s => `${s.name} (${s.adj >= 0 ? '+':''}${s.adj.toFixed(1)})`).join(', ');
             if (v7PlayerProps) aiParams._v7Props = `${v7PlayerProps.count} books @ ${v7PlayerProps.consensusLine} | Best Over: ${v7PlayerProps.bestOver.price > 0 ? '+':''}${v7PlayerProps.bestOver.price} (${v7PlayerProps.bestOver.book})`;
+            if (refereeData?.found) aiParams._v7Referee = `${refereeData.referee} | Bias: ${refereeData.totalsBias} | Fouls: ${refereeData.foulRate} | Diff: ${refereeData.avgTotalDiff >= 0 ? '+':''}${refereeData.avgTotalDiff}pts`;
             
             // V7.0: Diagnostic log — what data reaches AI engines
             const v7Fed = Object.keys(aiParams).filter(k => k.startsWith('_v7')).map(k => k.replace('_v7', ''));
             console.log(`[V7.0] 🤖 AI Engine Feed: ${v7Fed.length} V7 sources → [${v7Fed.join(', ')}]`);
         }
         
+        // V8.0: Recalculate engine weights with CONTEXT (sharp money, complexity)
+        const sharpSignal = v7SharpMoney?.lean || null;
+        const isComplex = (v48Projection?.cv > 25) || (Math.abs((v48Projection?.final || 0) - params.line) < 1.5);
+        const contextWeights = getContextWeights(sharpSignal, v48Projection?.direction, isComplex);
+        if (sharpSignal || isComplex) {
+            const tier1Wt = Object.entries(contextWeights).filter(([e]) => ENGINE_TIERS[e]?.tier === 1).reduce((s,[,w]) => s + w, 0);
+            const tier3Wt = Object.entries(contextWeights).filter(([e]) => ENGINE_TIERS[e]?.tier === 3).reduce((s,[,w]) => s + w, 0);
+            console.log(`[V8.0] ⚖️ Engine Weights: CONTEXTUAL | Sharp=${sharpSignal||'none'} Complex=${isComplex} | T1=${(tier1Wt*100).toFixed(0)}% T3=${(tier3Wt*100).toFixed(0)}%`);
+        }
         // ═══════════════════════════════════════════════════════════════════════
         // LAYER 1: AI ENGINES
         // ═══════════════════════════════════════════════════════════════════════
@@ -6918,7 +7035,7 @@ reasoning must explain your analysis`;
         console.log('  🔄 LAYER 2: AI Collective');
         console.log('══════════════════════════════════════════════════════════════════════');
         
-        const aiCollective = calculateAICollective(results);
+        const aiCollective = calculateAICollective(results, contextWeights);
         console.log(`[V5.4] 🤖 Consensus: ${aiCollective.direction} @ ${aiCollective.confidence}% (${aiCollective.agreement})`);
         console.log(`[V5.4] 📊 ${aiCollective.overEngines.length} OVER / ${aiCollective.underEngines.length} UNDER / ${aiCollective.passEngines.length} PASS`);
         
@@ -7027,7 +7144,7 @@ reasoning must explain your analysis`;
         console.log('══════════════════════════════════════════════════════════════════════');
         
         // V5.4: Pass all data factors to synthesis (handles all adjustments internally)
-        const master = masterSynthesis(aiCollective, defenseData, hitRate, b2bData, homeAwayData, injuryData, market, minutesData, redditData, twitterData, lineMovementData, varianceFlag, paceData);
+        const master = masterSynthesis(aiCollective, defenseData, hitRate, b2bData, homeAwayData, injuryData, market, minutesData, redditData, twitterData, lineMovementData, varianceFlag, paceData, refereeData);
         
         // V5.4 BUG #1 FIX: Only apply adjustments NOT handled by masterSynthesis
         // masterSynthesis already handles: defense, hitRate, b2b, homeAway, minutes, pace, steam, variance, reddit, twitter
