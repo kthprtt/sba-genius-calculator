@@ -6798,7 +6798,7 @@ reasoning must explain your analysis`;
                 if (typeof v7GameScript !== 'undefined' && v7GameScript?.scriptAdj && Math.abs(v7GameScript.scriptAdj) >= 0.3) { totalAdj += v7GameScript.scriptAdj; adjList.push(`GameScript ${v7GameScript.scriptAdj >= 0 ? '+' : ''}${v7GameScript.scriptAdj.toFixed(1)}`); }
                 if (typeof v7Spots !== 'undefined' && v7Spots?.length > 0) { const spotAdj = v7Spots.reduce((s,sp) => s + sp.adj, 0); if (Math.abs(spotAdj) >= 0.2) { totalAdj += spotAdj; adjList.push(`Spots ${spotAdj >= 0 ? '+' : ''}${spotAdj.toFixed(1)}`); } }
                 if (v7PositionDefense?.posDefAdj && Math.abs(v7PositionDefense.posDefAdj) >= 0.1) { totalAdj += v7PositionDefense.posDefAdj; adjList.push(`PosDef ${v7PositionDefense.posDefAdj >= 0 ? '+' : ''}${v7PositionDefense.posDefAdj.toFixed(1)}`); }
-                if (refereeData?.found && refereeData.avgTotalDiff && Math.abs(refereeData.avgTotalDiff) >= 1.0) { const refAdj = refereeData.avgTotalDiff * (v48Advanced?.usage || 25) / 100 * 0.3; totalAdj += refAdj; adjList.push(`Ref ${refAdj >= 0 ? '+' : ''}${refAdj.toFixed(1)}`); }
+                if (refereeData?.found && refereeData.avgTotalDiff && Math.abs(refereeData.avgTotalDiff) >= 1.0) { const refAdj = refereeData.avgTotalDiff * (((advancedStats?.usagePct || 0.25) * 100)) / 100 * 0.3; totalAdj += refAdj; adjList.push(`Ref ${refAdj >= 0 ? '+' : ''}${refAdj.toFixed(1)}`); }
                 console.log(`[V48] 📊 Adj: ${totalAdj>=0?'+':''}${totalAdj.toFixed(1)} → Final: ${finalProj.toFixed(1)}`);
                 if(adjList.length>0) console.log(`[V48]    ${adjList.join(' | ')}`);
                 console.log(`[V48] 🎯 Projection [${sport.toUpperCase()}]: ${finalProj.toFixed(1)} (${((finalProj/line-1)*100).toFixed(1)}% ${finalProj>line?'above':'below'} line)`);
@@ -7831,7 +7831,7 @@ reasoning must explain your analysis`;
             bestBookOdds: coach.bestOdds || null,
             bestBook: coach.bestBook || null,
             sharpSignal: v7SharpMoney?.lean || null,
-            pinnacleSignal: v7PinnacleData?.lean || null,
+            pinnacleSignal: v7SharpMoney?.pinnacle?.sharpLean || null,
             refereeData: refereeData?.found ? { name: refereeData.referee, bias: refereeData.totalsBias } : null,
             engineVotes: Object.entries(results).map(([eng, r]) => ({ engine: eng, pick: r.pick, confidence: r.confidence })),
             bothSidesProb: bothSides ? { over: bothSides.over?.trueProb, under: bothSides.under?.trueProb } : null,
