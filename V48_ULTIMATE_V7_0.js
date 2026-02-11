@@ -4016,6 +4016,8 @@ LAST_5: [num1, num2, num3, num4, num5]`,
             const v7InjText = params._v7InjuryBoost ? `\nInjury Usage Boost: ${params._v7InjuryBoost}` : '';
             const v7RollText = params._v7Rolling ? `\nRolling Stats: ${params._v7Rolling}` : '';
             const v7SharpText = params._v7Sharp ? `\nSharp Money: ${params._v7Sharp}` : '';
+            const v7GameScriptText = params._v7GameScript ? `\nGame Script: ${params._v7GameScript}` : '';
+            const v7SpotsText = params._v7Spots ? `\nSituational Spots: ${params._v7Spots}` : '';
 
             prompt = `${sportConfig.name} PLAYER PROP ANALYSIS:
 Player: ${params.player}
@@ -4024,7 +4026,7 @@ Opponent: ${params.opponent}
 
 STATS: ${statsText}
 ${hitText}
-${defText}${v48ProjText}${v48TeamText}${v48BlowoutText}${v48DefText}${v48PaceText}${v48VarText}${v48GTText}${v48AdvText}${v7MatrixText}${v7UsageText}${v7ClutchText}${v7ShootText}${v7QuarterText}${v7StyleText}${v7PosDefText}${v7BlowoutText}${v7InjText}${v7RollText}${v7SharpText}
+${defText}${v48ProjText}${v48TeamText}${v48BlowoutText}${v48DefText}${v48PaceText}${v48VarText}${v48GTText}${v48AdvText}${v7MatrixText}${v7UsageText}${v7ClutchText}${v7ShootText}${v7QuarterText}${v7StyleText}${v7PosDefText}${v7BlowoutText}${v7InjText}${v7RollText}${v7SharpText}${v7GameScriptText}${v7SpotsText}
 
 Analyze this prop bet. Based on the data, should the bettor take OVER, UNDER, or PASS?
 
@@ -4960,8 +4962,28 @@ reasoning must explain your analysis`;
         const sport = params.sport || 'nba';
         const market = params.market || 'player_points';
         const player = params.player;
-        const line = params.line;
+        let line = params.line;
         const opponent = params.opponent;
+        
+        // ── V8.0 AUTO LINE DETECTION ──
+        if (!line || line === 0 || line === '0') {
+            try {
+                console.log(`[V8.0] 🔍 Auto-detecting line from OddsAPI...`);
+                const autoOdds = await getOddsAPIPlayerProps(sport, player, market, null);
+                if (autoOdds?.found && autoOdds?.odds?.length > 0) {
+                    // Find most common line across books
+                    const lineCounts = {};
+                    autoOdds.odds.forEach(o => { const pt = o.point || o.line; if (pt) lineCounts[pt] = (lineCounts[pt]||0) + 1; });
+                    const bestLine = Object.entries(lineCounts).sort((a,b) => b[1]-a[1])[0];
+                    if (bestLine) {
+                        line = parseFloat(bestLine[0]);
+                        params.line = line;
+                        console.log(`[V8.0] ✅ Auto Line: ${line} (${bestLine[1]} books agree)`);
+                    }
+                }
+                if (!line) console.log(`[V8.0] ⚠️ No line found — please provide manually`);
+            } catch(e) { console.log(`[V8.0] ⚠️ Auto line detection failed: ${e.message}`); }
+        }
         
         console.log('');
         console.log('╔═══════════════════════════════════════════════════════════════════════════════╗');
@@ -5435,7 +5457,7 @@ reasoning must explain your analysis`;
         
         console.log('\n');
         console.log('╔═══════════════════════════════════════════════════════════════════════════════╗');
-        console.log('║   🏆 SBA GENIUS V48 ULTIMATE V7.0 - FULL PIPELINE + 17-ENGINE + DNP FIX 🏆 ║');
+        console.log('║   🏆 SBA GENIUS V48 ULTIMATE V8.0 - BOTH SIDES + FULL PIPELINE 🏆         ║');
         console.log('╠═══════════════════════════════════════════════════════════════════════════════╣');
         console.log(`║  ${displaySubject} | ${statDisplay} @ ${params.line} ${isPlayerProp ? 'vs ' + (params.opponent || 'Unknown') : ''}`.padEnd(78) + '║');
         console.log(`║  Sport: ${sportConfig.name} | Market: ${market} | Type: ${marketType.toUpperCase()}`.padEnd(78) + '║');
@@ -5867,6 +5889,7 @@ reasoning must explain your analysis`;
         let v7PositionDefense = null, v7BlowoutRisk = null;
         let v7InjuryBoost = null, v7Situational = null;
         let v7SharpMoney = null;
+        let v7GameScript = null, v7Spots = [], v7PlayerProps = null;
         
         if (isPlayerProp && stats) {
             // ══════════════════════════════════════════════════════════════════
@@ -6229,25 +6252,66 @@ reasoning must explain your analysis`;
                         if (v7RollingStats) console.log(`[V7.0] ✅ Rolling: L5 mean=${v7RollingStats.mean}, median=${v7RollingStats.median}, std=${v7RollingStats.std?.toFixed(1)}, hitRate=${v7RollingStats.hitRate}%`);
                     }
 
-                    // ── V29 Style Matchup ──
-                    if (v7Matrix && v7OppProfile && v7Shooting) {
+                    // ── V29 Style Matchup (EXPANDED V8.0) ──
+                    if (v7Matrix || v7OppProfile || v7Shooting) {
                         const signals = [];
                         let totalScore = 0, totalWeight = 0;
-                        // Shot quality signal
-                        if (v7Matrix.sd_overall) {
-                            const uncontested = v7Matrix.sd_overall.fg_pct_uncontested || v7Matrix.sd_overall.uncontested_fg_pct || 0;
-                            if (uncontested > 0.55) { signals.push({ name: 'Shot Quality', adj: 0.05, weight: 1, note: `${(uncontested*100).toFixed(0)}% uncontested` }); }
+                        // 1. Shooting efficiency by zone
+                        if (v7Shooting) {
+                            const paintPct = v7Shooting.pctFromPaint || 0;
+                            const rimFg = v7Shooting.rimFgPct || 0;
+                            if (paintPct > 0.45 && rimFg > 0.55) signals.push({ name: 'Paint Dominance', adj: 0.04, weight: 1.5, note: `${(paintPct*100).toFixed(0)}% from paint, ${(rimFg*100).toFixed(0)}% FG` });
+                            if (v7Shooting.pctFrom3 > 0.35) signals.push({ name: '3PT Volume', adj: 0.02, weight: 1, note: `${(v7Shooting.pctFrom3*100).toFixed(0)}% shots from 3` });
                         }
-                        // PnR handler efficiency
-                        if (v7Matrix.pt_pnr_handler) {
-                            const ppp = v7Matrix.pt_pnr_handler.ppp || v7Matrix.pt_pnr_handler.pts_per_possession || 0;
-                            if (ppp > 1.0) { signals.push({ name: 'PnR Efficiency', adj: 0.03, weight: 1, note: `${ppp.toFixed(2)} PPP` }); }
+                        // 2. Playtype efficiency (use freq and fga from matrix)
+                        if (v7Matrix?.pt_isolation) {
+                            const iso = v7Matrix.pt_isolation;
+                            const ppp = iso.ppp || iso.pts_per_possession || (iso.pts && iso.poss ? iso.pts/iso.poss : 0);
+                            if (ppp > 0.95) signals.push({ name: 'ISO Efficiency', adj: 0.03, weight: 1.2, note: `${ppp.toFixed(2)} PPP` });
+                        }
+                        if (v7Matrix?.pt_pnr_handler) {
+                            const pnr = v7Matrix.pt_pnr_handler;
+                            const ppp = pnr.ppp || pnr.pts_per_possession || (pnr.pts && pnr.poss ? pnr.pts/pnr.poss : 0);
+                            if (ppp > 0.90) signals.push({ name: 'PnR Handler', adj: 0.03, weight: 1.3, note: `${ppp.toFixed(2)} PPP` });
+                        }
+                        if (v7Matrix?.pt_transition) {
+                            const trans = v7Matrix.pt_transition;
+                            const ppp = trans.ppp || trans.pts_per_possession || (trans.pts && trans.poss ? trans.pts/trans.poss : 0);
+                            if (ppp > 1.05) signals.push({ name: 'Transition', adj: 0.02, weight: 1, note: `${ppp.toFixed(2)} PPP` });
+                        }
+                        // 3. Opponent defensive weakness matching
+                        if (v7OppProfile && v7Matrix) {
+                            const oppWeak = Object.entries(v7OppProfile).sort((a,b) => (b[1]?.ppp||0)-(a[1]?.ppp||0))[0];
+                            if (oppWeak && v7Matrix[`pt_${oppWeak[0]}`]) {
+                                const playerPPP = v7Matrix[`pt_${oppWeak[0]}`]?.ppp || 0;
+                                const oppAllowPPP = oppWeak[1]?.ppp || 0;
+                                if (playerPPP > 0.9 && oppAllowPPP > 1.0) {
+                                    signals.push({ name: `Exploit ${oppWeak[0]}`, adj: 0.04, weight: 1.5, note: `Player ${playerPPP.toFixed(2)} vs Opp allows ${oppAllowPPP.toFixed(2)}` });
+                                }
+                            }
+                        }
+                        // 4. Shot dashboard quality
+                        if (v7Matrix?.sd_overall) {
+                            const sd = v7Matrix.sd_overall;
+                            const efg = sd.efg_pct || sd.effective_fg_pct || 0;
+                            if (efg > 0.52) signals.push({ name: 'Shot Quality', adj: 0.03, weight: 1, note: `${(efg*100).toFixed(1)}% eFG` });
+                        }
+                        // 5. Drives + FT rate
+                        if (v7Matrix?.tk_drives) {
+                            const drives = v7Matrix.tk_drives.drives || v7Matrix.tk_drives.drives_per_game || 0;
+                            if (drives > 12) signals.push({ name: 'High Drives', adj: 0.02, weight: 0.8, note: `${drives.toFixed(1)} drives/gm` });
+                        }
+                        // 6. Hustle - contested shots defended
+                        if (v7Matrix?.hustle) {
+                            const contested = v7Matrix.hustle.contested_shots || v7Matrix.hustle.contested_shots_per_game || 0;
+                            if (contested > 6) signals.push({ name: 'Hustle Factor', adj: -0.02, weight: 0.5, note: `${contested.toFixed(0)} contested/gm (more effort on D)` });
                         }
                         signals.forEach(s => { totalScore += s.adj * s.weight; totalWeight += s.weight; });
                         const score = totalWeight > 0 ? totalScore / totalWeight : 0;
                         const clampedScore = Math.max(-0.15, Math.min(0.15, score));
                         v7StyleMatchup = { score: clampedScore, quality: Math.abs(clampedScore) > 0.05 ? 'STRONG' : Math.abs(clampedScore) > 0.02 ? 'MODERATE' : 'WEAK', favors: clampedScore > 0 ? 'OVER' : clampedScore < 0 ? 'UNDER' : 'NEUTRAL', signals };
-                        console.log(`[V7.0] 🎯 Style Matchup: ${(clampedScore*100).toFixed(1)}% → ${v7StyleMatchup.favors} (${v7StyleMatchup.quality})`);
+                        console.log(`[V7.0] 🎯 Style Matchup: ${(clampedScore*100).toFixed(1)}% → ${v7StyleMatchup.favors} (${v7StyleMatchup.quality}) [${signals.length} signals]`);
+                        if (signals.length > 0) signals.forEach(s => console.log(`[V7.0]    └─ ${s.name}: ${(s.adj*100).toFixed(1)}% — ${s.note}`));
                     }
 
                     // ── V11 Position Defense ──
@@ -6305,7 +6369,91 @@ reasoning must explain your analysis`;
                         }
                     }
 
-                    console.log(`[V7.0] ✅ Full enrichment complete: Matrix=${!!v7Matrix}, Advanced=${!!v7Advanced}, Shooting=${!!v7Shooting}, Clutch=${!!v7Clutch}, OppProfile=${!!v7OppProfile}, Quarters=${!!v7Quarters}`);
+                    // ── V8.0 Pinnacle Sharp Tracking ──
+                    if (oddsData?.found && oddsData?.odds && Array.isArray(oddsData.odds)) {
+                        const pinnacle = oddsData.odds.find(o => o.book?.toLowerCase().includes('pinnacle'));
+                        if (pinnacle) {
+                            const pOver = pinnacle.over ? Math.abs(pinnacle.over) : 0;
+                            const pUnder = pinnacle.under ? Math.abs(pinnacle.under) : 0;
+                            const juiceDiff = pOver - pUnder;
+                            const sharpLean = juiceDiff > 5 ? 'UNDER' : juiceDiff < -5 ? 'OVER' : 'NEUTRAL';
+                            // Check for steam move (Pinnacle disagrees with market consensus)
+                            const avgOverJuice = oddsData.odds.reduce((s,o) => s + (Math.abs(o.over||0)), 0) / oddsData.odds.length;
+                            const steamMove = Math.abs(pOver - avgOverJuice) > 8;
+                            v7SharpMoney = v7SharpMoney || {};
+                            v7SharpMoney.pinnacle = { over: pinnacle.over, under: pinnacle.under, juiceDiff, sharpLean, steamMove };
+                            console.log(`[V8.0] 🦈 Pinnacle: Over ${pinnacle.over} / Under ${pinnacle.under} → ${sharpLean}${steamMove ? ' ⚡STEAM MOVE' : ''}`);
+                        }
+                    }
+
+                    // ── V8.0 Game Script Adjustment ──
+                    v7GameScript = null;
+                    if (v48TeamIntel && oddsData?.spread) {
+                        const spread = parseFloat(oddsData.spread);
+                        const projTotal = v48TeamIntel?.projectedTotal || 220;
+                        const isFavorite = spread < 0;
+                        const absSpread = Math.abs(spread);
+                        // High-total + close game = more possessions for player
+                        // Blowout favorite = garbage time risk
+                        // Trailing team = more volume in catch-up mode
+                        let scriptAdj = 0;
+                        if (projTotal > 230 && absSpread < 5) { scriptAdj += 0.8; } // Shootout
+                        if (projTotal < 210 && absSpread > 8) { scriptAdj -= 1.2; } // Low-scoring blowout
+                        if (!isFavorite && absSpread >= 5 && absSpread <= 10) { scriptAdj += 0.5; } // Underdog catch-up volume
+                        if (isFavorite && absSpread >= 10) { scriptAdj -= 1.5; } // Heavy favorite garbage time
+                        if (paceData?.paceImpact === 'FAST' && projTotal > 225) { scriptAdj += 0.5; }
+                        if (paceData?.paceImpact === 'SLOW' && projTotal < 215) { scriptAdj -= 0.3; }
+                        v7GameScript = { spread, projTotal, isFavorite, scriptAdj: parseFloat(scriptAdj.toFixed(1)), label: scriptAdj > 0.5 ? 'BOOST' : scriptAdj < -0.5 ? 'SUPPRESS' : 'NEUTRAL' };
+                        if (Math.abs(scriptAdj) >= 0.3) console.log(`[V8.0] 📜 Game Script: ${v7GameScript.label} (${scriptAdj >= 0 ? '+' : ''}${scriptAdj.toFixed(1)}) | Total=${projTotal.toFixed(0)}, Spread=${spread > 0 ? '+' : ''}${spread}`);
+                    }
+
+                    // ── V8.0 Situational Spots ──
+                    v7Spots = [];
+                    if (sport === 'nba' || sport === 'nhl') {
+                        // Spotlight: national TV, rivalry, playoff implications
+                        if (v48TeamIntel) {
+                            const wins = v48Standings?.wins || 0, losses = v48Standings?.losses || 0;
+                            const pctg = wins / (wins + losses || 1);
+                            if (pctg > 0.6 && pctg < 0.7) v7Spots.push({ name: 'Playoff Race', adj: 0.5, note: `${wins}-${losses} record, fighting for seeding` });
+                        }
+                        // Revenge game (check if opponent in last 5 opponents)
+                        const recentOpps = (stats.rawGames || []).slice(0,5).map(g => {
+                            const ht = g.game?.home_team_id, vt = g.game?.visitor_team_id, pid = stats.bdlTeamId;
+                            return ht === pid ? vt : ht;
+                        }).filter(Boolean);
+                        // Division rivalry (same division check via simple heuristic)
+                        if (opponent) {
+                            const eastDivs = { 'ATL':1,'BOS':2,'BKN':2,'CHA':1,'CHI':3,'CLE':3,'DET':3,'IND':3,'MIA':1,'MIL':3,'NYK':2,'ORL':1,'PHI':2,'TOR':2,'WAS':1 };
+                            const westDivs = { 'DAL':4,'DEN':5,'GSW':6,'HOU':4,'LAC':6,'LAL':6,'MEM':4,'MIN':5,'NOP':4,'OKC':5,'PHX':6,'POR':5,'SAC':6,'SAS':4,'UTA':5 };
+                            const allDivs = {...eastDivs, ...westDivs};
+                            const teamDiv = allDivs[stats.team?.toUpperCase()];
+                            const oppDiv = allDivs[opponent?.toUpperCase()];
+                            if (teamDiv && oppDiv && teamDiv === oppDiv) v7Spots.push({ name: 'Division Rivalry', adj: 0.3, note: 'Same division matchup' });
+                        }
+                    }
+                    if (v7Spots.length > 0) {
+                        const spotAdj = v7Spots.reduce((s,sp) => s + sp.adj, 0);
+                        console.log(`[V8.0] 🎯 Situational Spots: ${v7Spots.map(s=>s.name).join(', ')} (${spotAdj >= 0 ? '+' : ''}${spotAdj.toFixed(1)})`);
+                    }
+
+                    // ── V8.0 BDL Player Props ──
+                    v7PlayerProps = null;
+                    try {
+                        const ppRes = await fetch(`https://api.balldontlie.io/nba/v1/player_props?player_ids[]=${bdlPlayerId}`, { headers: hdrs });
+                        if (ppRes.ok) {
+                            const ppData = await ppRes.json();
+                            const props = ppData?.data || [];
+                            if (props.length > 0) {
+                                const relevant = props.filter(p => p.stat_type?.toLowerCase().includes(statKey) || p.market?.toLowerCase().includes(market.replace('player_', '')));
+                                if (relevant.length > 0) {
+                                    v7PlayerProps = { count: relevant.length, props: relevant.slice(0, 5) };
+                                    console.log(`[V8.0] 📋 BDL Props: ${relevant.length} found for ${statKey}`);
+                                }
+                            }
+                        }
+                    } catch(e) { /* BDL props may require GOAT tier */ }
+
+                    console.log(`[V7.0] ✅ Full enrichment complete: Matrix=${!!v7Matrix}, Advanced=${!!v7Advanced}, Shooting=${!!v7Shooting}, Clutch=${!!v7Clutch}, OppProfile=${!!v7OppProfile}, GameScript=${!!v7GameScript}, Spots=${v7Spots.length}`);
                 }
 
                 const hasMin = ['nba','wnba','ncaab','nhl'].includes(sport);
@@ -6431,24 +6579,81 @@ reasoning must explain your analysis`;
                 if (v7InjuryBoost?.boost > 0) { totalAdj += v7InjuryBoost.boost; adjList.push(`InjuryBoost +${v7InjuryBoost.boost.toFixed(1)}`); }
                 if (v7BlowoutRisk?.adjustment && Math.abs(v7BlowoutRisk.adjustment) >= 0.5) { totalAdj += v7BlowoutRisk.adjustment; adjList.push(`BlowoutRisk ${v7BlowoutRisk.adjustment >= 0 ? '+' : ''}${v7BlowoutRisk.adjustment.toFixed(1)}`); }
                 if (v7StyleMatchup?.score && Math.abs(v7StyleMatchup.score) > 0.02) { const sa = v7StyleMatchup.score * seasonAvg * 0.3; totalAdj += sa; adjList.push(`Style ${sa >= 0 ? '+' : ''}${sa.toFixed(1)}`); }
+                if (typeof v7GameScript !== 'undefined' && v7GameScript?.scriptAdj && Math.abs(v7GameScript.scriptAdj) >= 0.3) { totalAdj += v7GameScript.scriptAdj; adjList.push(`GameScript ${v7GameScript.scriptAdj >= 0 ? '+' : ''}${v7GameScript.scriptAdj.toFixed(1)}`); }
+                if (typeof v7Spots !== 'undefined' && v7Spots?.length > 0) { const spotAdj = v7Spots.reduce((s,sp) => s + sp.adj, 0); if (Math.abs(spotAdj) >= 0.2) { totalAdj += spotAdj; adjList.push(`Spots ${spotAdj >= 0 ? '+' : ''}${spotAdj.toFixed(1)}`); } }
                 console.log(`[V48] 📊 Adj: ${totalAdj>=0?'+':''}${totalAdj.toFixed(1)} → Final: ${finalProj.toFixed(1)}`);
                 if(adjList.length>0) console.log(`[V48]    ${adjList.join(' | ')}`);
                 console.log(`[V48] 🎯 Projection [${sport.toUpperCase()}]: ${finalProj.toFixed(1)} (${((finalProj/line-1)*100).toFixed(1)}% ${finalProj>line?'above':'below'} line)`);
                 
                 v48Projection = { base:baseProj, final:finalProj, adjustments:totalAdj, variance:varianceLabel, cv:cvClean, smartL5, smartL10, blowoutGamesInL5, direction:finalProj>line?'OVER':'UNDER', edge:Math.abs(finalProj-line), edgePct:Math.abs((finalProj/line-1)*100), teamIntel:v48TeamIntel, advancedStats, weights:{seasonAvg:bW.s,recentForm:bW.r,matchupHistory:bW.m,l10Form:bW.l}, adjustmentDetails:adjList, sport };
                 
-                // ── Situational H2H (all sports with game values) ──
+                // ── Situational H2H (EXPANDED V8.0 — 10 filters) ──
                 const gVals = stats.gameValues || [];
+                const rawG = stats.rawGames || [];
                 if (gVals.length >= 5) {
                     const all=gVals.slice(0,15).map(g=>g.value), oc=all.filter(v=>v>line).length;
                     const l5V=gVals.slice(0,5).map(g=>g.value), l10V=gVals.slice(0,10).map(g=>g.value);
-                    const sf=[
-                        {name:'All',avg:all.reduce((a,b)=>a+b,0)/all.length,total:all.length,overCount:oc,dir:oc>all.length/2?'OVER':'UNDER'},
-                        {name:'L5',avg:l5V.reduce((a,b)=>a+b,0)/l5V.length,total:l5V.length,overCount:l5V.filter(v=>v>line).length,dir:l5V.filter(v=>v>line).length>2.5?'OVER':'UNDER'},
-                        {name:'L10',avg:l10V.reduce((a,b)=>a+b,0)/l10V.length,total:l10V.length,overCount:l10V.filter(v=>v>line).length,dir:l10V.filter(v=>v>line).length>5?'OVER':'UNDER'}
-                    ];
-                    console.log(`[V48] 🎯 Sit H2H: HR=${(oc/all.length*100).toFixed(1)}%, Avg=${(all.reduce((a,b)=>a+b,0)/all.length).toFixed(1)}`);
-                    sf.forEach(f=>console.log(`[V48]    ${f.name}: ${f.avg.toFixed(1)} avg, ${f.overCount}/${f.total} (${(f.overCount/f.total*100).toFixed(0)}%) ${f.dir}`));
+                    const mkFilter = (name,vals) => {
+                        if (vals.length < 2) return null;
+                        const avg = vals.reduce((a,b)=>a+b,0)/vals.length;
+                        const overC = vals.filter(v=>v>line).length;
+                        return {name,avg:parseFloat(avg.toFixed(1)),total:vals.length,overCount:overC,dir:overC>vals.length/2?'OVER':'UNDER',pct:parseFloat((overC/vals.length*100).toFixed(1))};
+                    };
+                    const sf = [
+                        mkFilter('All', all),
+                        mkFilter('L5', l5V),
+                        mkFilter('L10', l10V),
+                    ].filter(Boolean);
+                    // Home/Away filter (need team info from rawGames)
+                    const teamAbbr = stats.team?.toLowerCase() || '';
+                    if (rawG.length > 0 && teamAbbr) {
+                        const homeVals = [], awayVals = [];
+                        gVals.slice(0,15).forEach((g,i) => {
+                            const rg = rawG[i];
+                            if (!rg?.game) return;
+                            const isHome = (rg.game.home_team_id === stats.bdlTeamId) || 
+                                          (rg.team?.abbreviation?.toLowerCase() === teamAbbr && rg.game.home_team?.abbreviation?.toLowerCase() === teamAbbr);
+                            if (isHome) homeVals.push(g.value); else awayVals.push(g.value);
+                        });
+                        const hf = mkFilter('Home', homeVals); if (hf) sf.push(hf);
+                        const af = mkFilter('Away', awayVals); if (af) sf.push(af);
+                    }
+                    // Rest filter (B2B vs rested)
+                    if (gVals.length > 1) {
+                        const b2bVals = [], restedVals = [];
+                        for (let i=0; i<Math.min(15,gVals.length)-1; i++) {
+                            const d1 = new Date(gVals[i].date), d2 = new Date(gVals[i+1]?.date);
+                            const diff = Math.abs(d1-d2)/(1000*60*60*24);
+                            if (diff <= 1.5) b2bVals.push(gVals[i].value); else restedVals.push(gVals[i].value);
+                        }
+                        const bf = mkFilter('B2B', b2bVals); if (bf) sf.push(bf);
+                        const rf = mkFilter('Rested (2+d)', restedVals); if (rf) sf.push(rf);
+                    }
+                    // Volume filter (high min vs low min games)
+                    if (rawG.length > 0) {
+                        const highMinVals = [], lowMinVals = [];
+                        gVals.slice(0,15).forEach((g,i) => {
+                            const rg = rawG[i];
+                            const mins = rg?.min ? parseInt(rg.min) || parseFloat(rg.min?.split(':')[0]) : 0;
+                            if (mins >= 32) highMinVals.push(g.value); else lowMinVals.push(g.value);
+                        });
+                        const hm = mkFilter('High Min (32+)', highMinVals); if (hm) sf.push(hm);
+                    }
+                    // Competitive games filter (margin < 10)
+                    if (rawG.length > 0) {
+                        const compVals = [], blowVals = [];
+                        gVals.slice(0,15).forEach((g,i) => {
+                            const rg = rawG[i];
+                            if (!rg?.game) return;
+                            const hs = rg.game.home_team_score || 0, vs = rg.game.visitor_team_score || 0;
+                            const margin = Math.abs(hs - vs);
+                            if (margin <= 10) compVals.push(g.value); else blowVals.push(g.value);
+                        });
+                        const cf = mkFilter('Competitive (≤10)', compVals); if (cf) sf.push(cf);
+                        const blf = mkFilter('Blowout (>10)', blowVals); if (blf) sf.push(blf);
+                    }
+                    console.log(`[V48] 🎯 Sit H2H: HR=${(oc/all.length*100).toFixed(1)}%, Avg=${(all.reduce((a,b)=>a+b,0)/all.length).toFixed(1)} [${sf.length} filters]`);
+                    sf.forEach(f=>console.log(`[V48]    ${f.name}: ${f.avg.toFixed(1)} avg, ${f.overCount}/${f.total} (${f.pct}%) ${f.dir}`));
                     v48Projection.situationalH2H = { filters:sf, hitRate:parseFloat((oc/all.length*100).toFixed(1)) };
                 }
             } catch(e) { console.log(`[V48] ⚠️ Player projection error: ${e.message}`); console.log(e.stack); }
@@ -6564,12 +6769,14 @@ reasoning must explain your analysis`;
                 aiParams._v7Matrix = mParts.length > 0 ? mParts.join(', ') : `${Object.keys(v7Matrix).length} categories loaded`;
             }
             if (v7Quarters?.usageDiff) aiParams._v7Quarters = `1H vs 2H: Usage ${v7Quarters.usageDiff}%, EFG ${v7Quarters.efgDiff}%`;
-            if (v7StyleMatchup) aiParams._v7Style = `${(v7StyleMatchup.score*100).toFixed(1)}% ${v7StyleMatchup.favors} (${v7StyleMatchup.quality})`;
+            if (v7StyleMatchup) aiParams._v7Style = `${(v7StyleMatchup.score*100).toFixed(1)}% ${v7StyleMatchup.favors} (${v7StyleMatchup.quality}), signals: ${v7StyleMatchup.signals?.map(s=>s.name).join(', ')||'none'}`;
             if (v7PositionDefense) aiParams._v7PosDefense = `${v7PositionDefense.position} vs #${v7PositionDefense.teamRank} (${v7PositionDefense.teamTier})`;
             if (v7BlowoutRisk && v7BlowoutRisk.risk !== 'Low') aiParams._v7Blowout = `${v7BlowoutRisk.risk} risk (spread ${v7BlowoutRisk.spread}), adj ${v7BlowoutRisk.adjustment}`;
             if (v7InjuryBoost) aiParams._v7InjuryBoost = `+${v7InjuryBoost.boost} from ${v7InjuryBoost.count} OUT (${v7InjuryBoost.names.join(', ')})`;
             if (v7RollingStats) aiParams._v7Rolling = `mean=${v7RollingStats.mean}, median=${v7RollingStats.median}, std=${v7RollingStats.std}, hitRate=${v7RollingStats.hitRate}%`;
-            if (v7SharpMoney) aiParams._v7Sharp = `${v7SharpMoney.direction} (${v7SharpMoney.overPct}%)`;
+            if (v7SharpMoney) aiParams._v7Sharp = `${v7SharpMoney.direction} (${v7SharpMoney.overPct}%)${v7SharpMoney.pinnacle ? ' | Pinnacle: ' + v7SharpMoney.pinnacle.sharpLean + (v7SharpMoney.pinnacle.steamMove ? ' ⚡STEAM' : '') : ''}`;
+            if (typeof v7GameScript !== 'undefined' && v7GameScript) aiParams._v7GameScript = `${v7GameScript.label}: Total=${v7GameScript.projTotal?.toFixed(0)}, Spread=${v7GameScript.spread > 0 ? '+':''}${v7GameScript.spread}, Adj=${v7GameScript.scriptAdj >= 0 ? '+':''}${v7GameScript.scriptAdj}`;
+            if (typeof v7Spots !== 'undefined' && v7Spots?.length > 0) aiParams._v7Spots = v7Spots.map(s => `${s.name} (${s.adj >= 0 ? '+':''}${s.adj.toFixed(1)})`).join(', ');
             
             // V7.0: Diagnostic log — what data reaches AI engines
             const v7Fed = Object.keys(aiParams).filter(k => k.startsWith('_v7')).map(k => k.replace('_v7', ''));
@@ -6756,6 +6963,86 @@ reasoning must explain your analysis`;
             if (master.adjustments.length > 0) {
                 console.log(`[V5.4] 📈 Adjustments: ${master.adjustments.join(', ')}`);
             }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // V8.0 LAYER 3.5: BOTH SIDES ANALYSIS
+        // ═══════════════════════════════════════════════════════════════════════
+        let bothSides = null;
+        if (isPlayerProp && master && aiCollective) {
+            console.log('\n══════════════════════════════════════════════════════════════════════');
+            console.log('  🔄 LAYER 3.5: Both Sides Analysis');
+            console.log('══════════════════════════════════════════════════════════════════════');
+            
+            const overProb = master.finalProb || 0.5;
+            const underProb = 1 - overProb;
+            const overEngines = aiCollective.overEngines?.length || 0;
+            const underEngines = aiCollective.underEngines?.length || 0;
+            const totalEngines = overEngines + underEngines || 1;
+            
+            // Over case
+            const overFactors = [];
+            if (v48Projection) {
+                if (v48Projection.final > parseFloat(params.line)) overFactors.push(`Model projects ${v48Projection.final?.toFixed(1)} (${((v48Projection.final/params.line-1)*100).toFixed(1)}% above)`);
+                if (v48Projection.situationalH2H?.hitRate > 55) overFactors.push(`${v48Projection.situationalH2H.hitRate}% hit rate over line`);
+            }
+            if (defenseData?.tier === 'WEAK') overFactors.push(`${opponent} weak defense #${defenseData.rank}`);
+            if (v7InjuryBoost?.boost > 0) overFactors.push(`+${v7InjuryBoost.boost} injury boost (${v7InjuryBoost.count} teammates OUT)`);
+            if (paceData?.paceImpact === 'FAST') overFactors.push('Fast pace environment');
+            if (typeof v7GameScript !== 'undefined' && v7GameScript?.scriptAdj > 0) overFactors.push(`Game script favors scoring (+${v7GameScript.scriptAdj})`);
+            
+            // Under case
+            const underFactors = [];
+            if (v48Projection && v48Projection.final < parseFloat(params.line)) underFactors.push(`Model projects ${v48Projection.final?.toFixed(1)} (${((1-v48Projection.final/params.line)*100).toFixed(1)}% below)`);
+            if (defenseData?.tier === 'ELITE') underFactors.push(`${opponent} elite defense #${defenseData.rank}`);
+            if (paceData?.paceImpact === 'SLOW') underFactors.push('Slow pace environment');
+            if (v7BlowoutRisk?.risk === 'High') underFactors.push(`Blowout risk (spread ${v7BlowoutRisk.spread})`);
+            if (typeof v7GameScript !== 'undefined' && v7GameScript?.scriptAdj < 0) underFactors.push(`Game script suppresses scoring (${v7GameScript.scriptAdj})`);
+            if (v48Projection?.cv > 35) underFactors.push(`High variance (CV=${v48Projection.cv}%)`);
+            const l5Avg = parseFloat(stats?.l5?.[getStatKey(market)] || 0);
+            if (l5Avg < parseFloat(params.line) * 0.9) underFactors.push(`L5 avg ${l5Avg.toFixed(1)} trending below line`);
+            
+            // Feel-Like Odds per side
+            const overImplied = overProb;
+            const underImplied = underProb;
+            const overFL = overImplied >= 0.5 ? Math.round(-100 * overImplied / (1 - overImplied)) : Math.round(100 * (1 - overImplied) / overImplied);
+            const underFL = underImplied >= 0.5 ? Math.round(-100 * underImplied / (1 - underImplied)) : Math.round(100 * (1 - underImplied) / underImplied);
+            
+            bothSides = {
+                over: { prob: (overProb * 100).toFixed(1), engines: overEngines, factors: overFactors, feelLike: overFL > 0 ? `+${overFL}` : `${overFL}` },
+                under: { prob: (underProb * 100).toFixed(1), engines: underEngines, factors: underFactors, feelLike: underFL > 0 ? `+${underFL}` : `${underFL}` }
+            };
+            
+            console.log(`[V8.0] 🟢 OVER CASE: ${bothSides.over.prob}% | ${overEngines} engines | FL: ${bothSides.over.feelLike}`);
+            overFactors.forEach(f => console.log(`[V8.0]    ✅ ${f}`));
+            console.log(`[V8.0] 🔴 UNDER CASE: ${bothSides.under.prob}% | ${underEngines} engines | FL: ${bothSides.under.feelLike}`);
+            underFactors.forEach(f => console.log(`[V8.0]    ✅ ${f}`));
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // V8.0: SBA vs BOOKS CONVICTION SCORING
+        // ═══════════════════════════════════════════════════════════════════════
+        let convictionScore = null;
+        if (master && v48Projection) {
+            const sbaConf = master.finalProb || 0.5;
+            const modelEdge = v48Projection ? Math.abs(v48Projection.final - parseFloat(params.line)) : 0;
+            const aiAgreement = aiCollective?.confidence || 50;
+            const streakTier = v48StreakSafe?.tier || 0;
+            
+            // SBA independent conviction (0-100)
+            const sbaScore = Math.min(100, Math.round(
+                (sbaConf * 30) + // True probability weight
+                (Math.min(modelEdge / parseFloat(params.line) * 100, 20) * 1.5) + // Model edge weight
+                (aiAgreement * 0.2) + // AI agreement weight
+                (streakTier * 8) // Streak tier bonus
+            ));
+            
+            // Books conviction (from implied probability)
+            const booksImplied = 0.5; // Will be updated with real odds later
+            const booksScore = Math.round(Math.abs(booksImplied - 0.5) * 200);
+            
+            convictionScore = { sba: sbaScore, books: booksScore, gap: sbaScore - booksScore, label: sbaScore > 70 ? 'HIGH' : sbaScore > 50 ? 'MODERATE' : 'LOW' };
+            console.log(`[V8.0] 💪 Conviction: SBA=${sbaScore}/100 (${convictionScore.label}) vs Books=${booksScore}/100 | Gap=${convictionScore.gap}`);
         }
 
         // ═══════════════════════════════════════════════════════════════════════
@@ -6946,6 +7233,49 @@ reasoning must explain your analysis`;
             }
         }
         
+        // ═══ V8.0: V31 PROP ARB SCANNER ═══
+        if (oddsAPIData?.odds?.length > 0 && isPlayerProp) {
+            const allOdds = oddsAPIData.odds;
+            // Find best over and best under at same line for arb opportunity
+            const lineGroups = {};
+            allOdds.forEach(o => {
+                const pt = o.point || o.line || parseFloat(params.line);
+                if (!lineGroups[pt]) lineGroups[pt] = { overs: [], unders: [] };
+                if (o.over) lineGroups[pt].overs.push({ book: o.book, price: o.over });
+                if (o.under) lineGroups[pt].unders.push({ book: o.book, price: o.under });
+            });
+            Object.entries(lineGroups).forEach(([ln, group]) => {
+                if (group.overs.length > 0 && group.unders.length > 0) {
+                    const bestOver = group.overs.sort((a,b) => b.price - a.price)[0];
+                    const bestUnder = group.unders.sort((a,b) => b.price - a.price)[0];
+                    const overImplied = americanToImplied(bestOver.price);
+                    const underImplied = americanToImplied(bestUnder.price);
+                    const totalImplied = overImplied + underImplied;
+                    if (totalImplied < 1.0) {
+                        const arbPct = ((1 - totalImplied) * 100).toFixed(2);
+                        console.log(`[V8.0] 🚨 PROP ARB FOUND @ ${ln}: Over ${formatAmerican(bestOver.price)} (${bestOver.book}) + Under ${formatAmerican(bestUnder.price)} (${bestUnder.book}) = ${arbPct}% arb!`);
+                    }
+                }
+            });
+        }
+        
+        // ═══ V8.0: BETBURGER LIVE ARB CHECK ═══
+        if (typeof window !== 'undefined' && window.BETBURGER_API && isPlayerProp) {
+            try {
+                const bbResult = await window.BETBURGER_API.scanProp(params.player, market, parseFloat(params.line), sport);
+                if (bbResult?.arbs?.length > 0) {
+                    console.log(`[V8.0] 🎯 BetBurger: ${bbResult.arbs.length} arb(s) found!`);
+                    bbResult.arbs.slice(0, 3).forEach(a => console.log(`[V8.0]    └─ ${a.book1} vs ${a.book2}: ${a.profit}% profit`));
+                }
+            } catch(e) { /* BetBurger not configured */ }
+        }
+        
+        // Update conviction with real book odds
+        if (convictionScore && realImpliedProb) {
+            convictionScore.books = Math.round(Math.abs(realImpliedProb - 0.5) * 200);
+            convictionScore.gap = convictionScore.sba - convictionScore.books;
+        }
+        
         const coach = coachK(params, master, stats, hitRate, oddsData, injuryData, sport, market, aiCollective, dataQualityScore, realImpliedProb, realImpliedIsDirectMatch, lineMismatchPenalty);
         console.log(`[V5.4] ✅ ${coach.verdict} | ${coach.unitSizing} units | Edge: ${coach.edge}%`);
         console.log(`[V5.4]    TrueProb: ${coach.trueProb}% vs Implied: ${coach.impliedProb}%`);
@@ -7054,12 +7384,42 @@ reasoning must explain your analysis`;
                 if (paceImpact === 'SLOW' && master.finalPick === 'UNDER') whyParts.push('slow pace environment');
                 if (parseFloat(l5) > line && master.finalPick === 'OVER') whyParts.push(`averaging ${l5} over last 5`);
                 if (parseFloat(l5) < line && master.finalPick === 'UNDER') whyParts.push(`only ${l5} over last 5`);
+                if (v7InjuryBoost?.boost > 0 && master.finalPick === 'OVER') whyParts.push(`+${v7InjuryBoost.boost} from ${v7InjuryBoost.count} teammates OUT`);
+                if (typeof v7GameScript !== 'undefined' && v7GameScript?.scriptAdj > 0.5 && master.finalPick === 'OVER') whyParts.push(`game script boost (+${v7GameScript.scriptAdj})`);
+                if (typeof v7GameScript !== 'undefined' && v7GameScript?.scriptAdj < -0.5 && master.finalPick === 'UNDER') whyParts.push(`game script suppresses (${v7GameScript.scriptAdj})`);
+                if (v7SharpMoney?.pinnacle?.steamMove) whyParts.push(`Pinnacle steam move ${v7SharpMoney.pinnacle.sharpLean}`);
+                if (typeof v7Spots !== 'undefined' && v7Spots?.length > 0) whyParts.push(v7Spots.map(s=>s.name).join(', '));
                 const whyStr = whyParts.length > 0 ? ` Key factors: ${whyParts.join(', ')}.` : '';
                 
                 coachNarrative = `🎙️ Coach K: "${sizingWord} ${master.finalPick} ${line} for ${playerName}.${whyStr} ` +
                     `${coach.unitSizing} units at ${coach.edge}% edge."`;
+                
+                // V8.0: Expert mode with detailed breakdown
+                const coachExpert = `🎙️ EXPERT: "${playerName} ${statName} ${master.finalPick} ${line}. ` +
+                    `Model: ${v48Projection?.final?.toFixed(1) || '?'} (${v48Projection?.edgePct?.toFixed(1) || '?'}% edge). ` +
+                    `AI: ${aiCollective.overEngines.length}/${aiCollective.underEngines.length + aiCollective.overEngines.length} ${aiCollective.direction} @${aiCollective.rawTrueProb ? (aiCollective.rawTrueProb*100).toFixed(0) : '?'}%. ` +
+                    `True prob ${(master.finalProb*100).toFixed(1)}% vs implied ${realImpliedProb ? (realImpliedProb*100).toFixed(1) : '?'}%. ` +
+                    `${convictionScore ? `Conviction: ${convictionScore.sba}/100.` : ''} ${whyStr}"`;
             }
             console.log(`║  ${coachNarrative}`.substring(0, 78).padEnd(78) + '║');
+            // V8.0: Expert mode (always shown below plain)
+            if (typeof coachExpert !== 'undefined' && coachExpert) {
+                console.log('╠═══════════════════════════════════════════════════════════════════════════════╣');
+                console.log(`║  ${coachExpert}`.substring(0, 78).padEnd(78) + '║');
+            }
+            
+            // V8.0: Both Sides Summary in output
+            if (bothSides) {
+                console.log('╠═══════════════════════════════════════════════════════════════════════════════╣');
+                console.log(`║  🔄 BOTH SIDES: OVER ${bothSides.over.prob}% (${bothSides.over.engines}eng, FL:${bothSides.over.feelLike}) | UNDER ${bothSides.under.prob}% (${bothSides.under.engines}eng, FL:${bothSides.under.feelLike})`.padEnd(78) + '║');
+                if (bothSides.over.factors.length > 0) console.log(`║  🟢 OVER: ${bothSides.over.factors.slice(0,2).join('; ')}`.substring(0, 78).padEnd(78) + '║');
+                if (bothSides.under.factors.length > 0) console.log(`║  🔴 UNDER: ${bothSides.under.factors.slice(0,2).join('; ')}`.substring(0, 78).padEnd(78) + '║');
+            }
+            
+            // V8.0: Conviction Score
+            if (convictionScore) {
+                console.log(`║  💪 CONVICTION: SBA=${convictionScore.sba}/100 (${convictionScore.label}) vs Books=${convictionScore.books}/100`.padEnd(78) + '║');
+            }
             
             // ═══ V5.5.1: PREDICTION CONFIDENCE CONTEXT ═══
             console.log('╠═══════════════════════════════════════════════════════════════════════════════╣');
