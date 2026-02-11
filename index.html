@@ -45325,8 +45325,9 @@ reasoning must explain your analysis`;
                     }
 
                     // ── V11 Blowout Risk ──
-                    if (oddsData?.found && oddsData?.spread) {
-                        const spread = parseFloat(oddsData.spread || 0);
+                    const brSpread = oddsData?.spread || minutesData?.spreadEstimate || null;
+                    if (brSpread) {
+                        const spread = parseFloat(brSpread);
                         const absSpread = Math.abs(spread);
                         const risk = absSpread >= 12 ? 'High' : absSpread >= 7 ? 'Medium' : 'Low';
                         const garbageProb = absSpread >= 12 ? 0.4 : absSpread >= 7 ? 0.2 : 0.05;
@@ -45350,49 +45351,67 @@ reasoning must explain your analysis`;
                     }
 
                     // ── Sharp Money (basic from odds data) ──
-                    if (oddsData?.found && oddsData?.odds) {
-                        const odds = oddsData.odds;
-                        let overBooks = 0, underBooks = 0, sharpSignals = [];
-                        if (Array.isArray(odds)) {
-                            odds.forEach(o => {
-                                if (o.over && o.under) {
-                                    const overJuice = Math.abs(o.over);
-                                    const underJuice = Math.abs(o.under);
-                                    if (overJuice > underJuice + 10) underBooks++;
-                                    else if (underJuice > overJuice + 10) overBooks++;
-                                }
-                            });
-                        }
+                    if (Array.isArray(oddsData) && oddsData.length > 0) {
+                        // Group by book to get over/under pairs
+                        const bookPairs = {};
+                        oddsData.forEach(o => {
+                            if (!bookPairs[o.book]) bookPairs[o.book] = {};
+                            if (o.name === 'Over') bookPairs[o.book].over = o.price;
+                            if (o.name === 'Under') bookPairs[o.book].under = o.price;
+                            bookPairs[o.book].point = o.point;
+                        });
+                        let overBooks = 0, underBooks = 0;
+                        Object.values(bookPairs).forEach(bp => {
+                            if (bp.over && bp.under) {
+                                const overJuice = Math.abs(bp.over);
+                                const underJuice = Math.abs(bp.under);
+                                if (overJuice > underJuice + 10) underBooks++;
+                                else if (underJuice > overJuice + 10) overBooks++;
+                            }
+                        });
                         const totalBooks = overBooks + underBooks;
                         if (totalBooks > 0) {
                             const overPct = Math.round(overBooks / totalBooks * 100);
                             const direction = overPct > 60 ? 'OVER' : overPct < 40 ? 'UNDER' : 'NEUTRAL';
-                            v7SharpMoney = { direction, overPct, signals: sharpSignals.length, totalBooks };
+                            v7SharpMoney = { direction, overPct, signals: 0, totalBooks };
                             console.log(`[V7.0] 💰 Sharp Money: ${direction} (${overPct}% lean from ${totalBooks} books)`);
                         }
                     }
 
                     // ── V8.0 Pinnacle Sharp Tracking ──
-                    if (oddsData?.found && oddsData?.odds && Array.isArray(oddsData.odds)) {
-                        const pinnacle = oddsData.odds.find(o => o.book?.toLowerCase().includes('pinnacle'));
-                        if (pinnacle) {
-                            const pOver = pinnacle.over ? Math.abs(pinnacle.over) : 0;
-                            const pUnder = pinnacle.under ? Math.abs(pinnacle.under) : 0;
-                            const juiceDiff = pOver - pUnder;
+                    if (Array.isArray(oddsData) && oddsData.length > 0) {
+                        // Build book pairs from the flat array
+                        const pinnBookPairs = {};
+                        oddsData.forEach(o => {
+                            if (!pinnBookPairs[o.book]) pinnBookPairs[o.book] = {};
+                            if (o.name === 'Over') pinnBookPairs[o.book].over = o.price;
+                            if (o.name === 'Under') pinnBookPairs[o.book].under = o.price;
+                        });
+                        // Look for Pinnacle or sharp books
+                        const sharpBooks = ['Pinnacle', 'Circa', 'Bet365', 'BetOnline.ag'];
+                        let sharpFound = null;
+                        for (const sb of sharpBooks) {
+                            const match = Object.entries(pinnBookPairs).find(([name]) => name.toLowerCase().includes(sb.toLowerCase()));
+                            if (match && match[1].over && match[1].under) { sharpFound = { name: match[0], ...match[1] }; break; }
+                        }
+                        if (sharpFound) {
+                            const juiceDiff = Math.abs(sharpFound.over) - Math.abs(sharpFound.under);
                             const sharpLean = juiceDiff > 5 ? 'UNDER' : juiceDiff < -5 ? 'OVER' : 'NEUTRAL';
-                            // Check for steam move (Pinnacle disagrees with market consensus)
-                            const avgOverJuice = oddsData.odds.reduce((s,o) => s + (Math.abs(o.over||0)), 0) / oddsData.odds.length;
-                            const steamMove = Math.abs(pOver - avgOverJuice) > 8;
+                            // Steam move: sharp book disagrees with market avg
+                            const allOvers = Object.values(pinnBookPairs).filter(b => b.over).map(b => Math.abs(b.over));
+                            const avgOverJuice = allOvers.reduce((s,v) => s+v, 0) / allOvers.length;
+                            const steamMove = Math.abs(Math.abs(sharpFound.over) - avgOverJuice) > 8;
                             v7SharpMoney = v7SharpMoney || {};
-                            v7SharpMoney.pinnacle = { over: pinnacle.over, under: pinnacle.under, juiceDiff, sharpLean, steamMove };
-                            console.log(`[V8.0] 🦈 Pinnacle: Over ${pinnacle.over} / Under ${pinnacle.under} → ${sharpLean}${steamMove ? ' ⚡STEAM MOVE' : ''}`);
+                            v7SharpMoney.pinnacle = { book: sharpFound.name, over: sharpFound.over, under: sharpFound.under, juiceDiff, sharpLean, steamMove };
+                            console.log(`[V8.0] 🦈 ${sharpFound.name}: Over ${sharpFound.over} / Under ${sharpFound.under} → ${sharpLean}${steamMove ? ' ⚡STEAM MOVE' : ''}`);
                         }
                     }
 
                     // ── V8.0 Game Script Adjustment ──
                     v7GameScript = null;
-                    if (v48TeamIntel && oddsData?.spread) {
-                        const spread = parseFloat(oddsData.spread);
+                    const gsSpread = minutesData?.spreadEstimate || oddsData?.spread || null;
+                    if (v48TeamIntel && gsSpread) {
+                        const spread = parseFloat(gsSpread);
                         const projTotal = v48TeamIntel?.projectedTotal || 220;
                         const isFavorite = spread < 0;
                         const absSpread = Math.abs(spread);
@@ -45413,18 +45432,14 @@ reasoning must explain your analysis`;
                     // ── V8.0 Situational Spots ──
                     v7Spots = [];
                     if (sport === 'nba' || sport === 'nhl') {
-                        // Spotlight: national TV, rivalry, playoff implications
-                        if (v48TeamIntel) {
-                            const wins = v48StandingsData?.wins || 0, losses = v48StandingsData?.losses || 0;
+                        // Playoff Race (teams between .450 and .650 are fighting for seeding)
+                        if (v48StandingsData) {
+                            const wins = v48StandingsData.wins || 0, losses = v48StandingsData.losses || 0;
                             const pctg = wins / (wins + losses || 1);
-                            if (pctg > 0.6 && pctg < 0.7) v7Spots.push({ name: 'Playoff Race', adj: 0.5, note: `${wins}-${losses} record, fighting for seeding` });
+                            if (pctg >= 0.450 && pctg <= 0.650) v7Spots.push({ name: 'Playoff Race', adj: 0.4, note: `${wins}-${losses} record (.${(pctg*1000).toFixed(0)}), fighting for seeding` });
+                            if (pctg > 0.650) v7Spots.push({ name: 'Elite Team', adj: 0.2, note: `${wins}-${losses} — top contender motivation` });
                         }
-                        // Revenge game (check if opponent in last 5 opponents)
-                        const recentOpps = (stats.rawGames || []).slice(0,5).map(g => {
-                            const ht = g.game?.home_team_id, vt = g.game?.visitor_team_id, pid = stats.bdlTeamId;
-                            return ht === pid ? vt : ht;
-                        }).filter(Boolean);
-                        // Division rivalry (same division check via simple heuristic)
+                        // Division rivalry
                         const spotOpp = params.opponent || '';
                         if (spotOpp) {
                             const eastDivs = { 'ATL':1,'BOS':2,'BKN':2,'CHA':1,'CHI':3,'CLE':3,'DET':3,'IND':3,'MIA':1,'MIL':3,'NYK':2,'ORL':1,'PHI':2,'TOR':2,'WAS':1 };
@@ -45433,7 +45448,18 @@ reasoning must explain your analysis`;
                             const teamDiv = allDivs[stats.team?.toUpperCase()];
                             const oppDiv = allDivs[spotOpp.toUpperCase()];
                             if (teamDiv && oppDiv && teamDiv === oppDiv) v7Spots.push({ name: 'Division Rivalry', adj: 0.3, note: 'Same division matchup' });
+                            // Conference rivalry (same conference but diff division)
+                            const teamConf = eastDivs[stats.team?.toUpperCase()] ? 'EAST' : westDivs[stats.team?.toUpperCase()] ? 'WEST' : null;
+                            const oppConf = eastDivs[spotOpp.toUpperCase()] ? 'EAST' : westDivs[spotOpp.toUpperCase()] ? 'WEST' : null;
+                            if (teamConf && oppConf && teamConf === oppConf && teamDiv !== oppDiv) v7Spots.push({ name: 'Conference Game', adj: 0.15, note: `${teamConf} conference matchup` });
                         }
+                        // Home game boost
+                        const gameInfo = stats.rawGames?.[0]?.game;
+                        if (gameInfo && stats.bdlTeamId && gameInfo.home_team_id === stats.bdlTeamId) {
+                            v7Spots.push({ name: 'Home Game', adj: 0.2, note: 'Playing at home' });
+                        }
+                        // Back-to-back detection
+                        if (b2bData?.isB2B) v7Spots.push({ name: 'Back-to-Back', adj: -0.5, note: 'B2B fatigue risk' });
                     }
                     if (v7Spots.length > 0) {
                         const spotAdj = v7Spots.reduce((s,sp) => s + sp.adj, 0);
@@ -45457,7 +45483,7 @@ reasoning must explain your analysis`;
                         }
                     } catch(e) { /* BDL props may require GOAT tier */ }
 
-                    console.log(`[V7.0] ✅ Full enrichment complete: Matrix=${!!v7Matrix}, Advanced=${!!v7Advanced}, Shooting=${!!v7Shooting}, Clutch=${!!v7Clutch}, OppProfile=${!!v7OppProfile}, GameScript=${!!v7GameScript}, Spots=${v7Spots.length}`);
+                    console.log(`[V7.0] ✅ Full enrichment complete: Matrix=${!!v7Matrix}, Advanced=${!!v7Advanced}, Shooting=${!!v7Shooting}, Clutch=${!!v7Clutch}, OppProfile=${!!v7OppProfile}, Sharp=${!!v7SharpMoney}, GameScript=${!!v7GameScript}, Spots=${v7Spots.length}`);
                 }
 
                 const hasMin = ['nba','wnba','ncaab','nhl'].includes(sport);
@@ -46238,16 +46264,16 @@ reasoning must explain your analysis`;
         }
         
         // ═══ V8.0: V31 PROP ARB SCANNER ═══
-        if (oddsAPIData?.odds?.length > 0 && isPlayerProp) {
-            const allOdds = oddsAPIData.odds;
-            // Find best over and best under at same line for arb opportunity
+        if (Array.isArray(oddsAPIData) && oddsAPIData.length > 0 && isPlayerProp) {
+            // Group by line, then by book to find over/under pairs
             const lineGroups = {};
-            allOdds.forEach(o => {
-                const pt = o.point || o.line || parseFloat(params.line);
+            oddsAPIData.forEach(o => {
+                const pt = o.point || parseFloat(params.line);
                 if (!lineGroups[pt]) lineGroups[pt] = { overs: [], unders: [] };
-                if (o.over) lineGroups[pt].overs.push({ book: o.book, price: o.over });
-                if (o.under) lineGroups[pt].unders.push({ book: o.book, price: o.under });
+                if (o.name === 'Over') lineGroups[pt].overs.push({ book: o.book, price: o.price });
+                if (o.name === 'Under') lineGroups[pt].unders.push({ book: o.book, price: o.price });
             });
+            let arbFound = false;
             Object.entries(lineGroups).forEach(([ln, group]) => {
                 if (group.overs.length > 0 && group.unders.length > 0) {
                     const bestOver = group.overs.sort((a,b) => b.price - a.price)[0];
@@ -46258,9 +46284,11 @@ reasoning must explain your analysis`;
                     if (totalImplied < 1.0) {
                         const arbPct = ((1 - totalImplied) * 100).toFixed(2);
                         console.log(`[V8.0] 🚨 PROP ARB FOUND @ ${ln}: Over ${formatAmerican(bestOver.price)} (${bestOver.book}) + Under ${formatAmerican(bestUnder.price)} (${bestUnder.book}) = ${arbPct}% arb!`);
+                        arbFound = true;
                     }
                 }
             });
+            if (!arbFound) console.log(`[V8.0] 🔍 Prop Arb Scan: No arb found across ${Object.keys(lineGroups).length} line(s)`);
         }
         
         // ═══ V8.0: BETBURGER LIVE ARB CHECK ═══
