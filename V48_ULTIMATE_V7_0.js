@@ -5000,7 +5000,7 @@ reasoning must explain your analysis`;
         // Parallel fetch: stats, defense, injury, pace, odds — NO AI engines
         console.log('[PRE] ⚡ Fetching stats + context in parallel...');
         
-        const [stats, defenseData, injuryData, paceData, oddsData, scheduleData] = await Promise.all([
+        const [stats, defenseData, injuryData, paceData, oddsAPIRaw, scheduleData] = await Promise.all([
             // Stats from BDL + ESPN
             (async () => {
                 try {
@@ -5075,8 +5075,8 @@ reasoning must explain your analysis`;
         console.log('');
         console.log('── ODDS ───────────────────────────────────────────────');
         let bestBook = null, pinnaclePrice = null, bookCount = 0;
-        if (oddsData && oddsData.length > 0) {
-            const overOdds = oddsData.filter(o => o.name === 'Over' && Math.abs(o.point - line) <= 0.5);
+        if (oddsAPIRaw && oddsAPIRaw.length > 0) {
+            const overOdds = oddsAPIRaw.filter(o => o.name === 'Over' && Math.abs(o.point - line) <= 0.5);
             bookCount = overOdds.length;
             if (bookCount > 0) {
                 const sorted = [...overOdds].sort((a, b) => b.price - a.price);
@@ -6389,10 +6389,10 @@ reasoning must explain your analysis`;
                     }
 
                     // ── Sharp Money (basic from odds data) ──
-                    if (Array.isArray(oddsData) && oddsData.length > 0) {
+                    if (Array.isArray(oddsAPIRaw) && oddsData.length > 0) {
                         // Group by book to get over/under pairs
                         const bookPairs = {};
-                        oddsData.forEach(o => {
+                        oddsAPIRaw.forEach(o => {
                             if (!bookPairs[o.book]) bookPairs[o.book] = {};
                             if (o.name === 'Over') bookPairs[o.book].over = o.price;
                             if (o.name === 'Under') bookPairs[o.book].under = o.price;
@@ -6413,14 +6413,17 @@ reasoning must explain your analysis`;
                             const direction = overPct > 60 ? 'OVER' : overPct < 40 ? 'UNDER' : 'NEUTRAL';
                             v7SharpMoney = { direction, overPct, signals: 0, totalBooks };
                             console.log(`[V7.0] 💰 Sharp Money: ${direction} (${overPct}% lean from ${totalBooks} books)`);
+                        } else {
+                            const pairCount = Object.values(bookPairs).filter(bp => bp.over && bp.under).length;
+                            console.log(`[V7.0] 💰 Sharp Money: NEUTRAL — ${pairCount} books, juice spread tight (no lean >10pts)`);
                         }
                     }
 
                     // ── V8.0 Pinnacle Sharp Tracking ──
-                    if (Array.isArray(oddsData) && oddsData.length > 0) {
+                    if (Array.isArray(oddsAPIRaw) && oddsData.length > 0) {
                         // Build book pairs from the flat array
                         const pinnBookPairs = {};
-                        oddsData.forEach(o => {
+                        oddsAPIRaw.forEach(o => {
                             if (!pinnBookPairs[o.book]) pinnBookPairs[o.book] = {};
                             if (o.name === 'Over') pinnBookPairs[o.book].over = o.price;
                             if (o.name === 'Under') pinnBookPairs[o.book].under = o.price;
@@ -6458,13 +6461,16 @@ reasoning must explain your analysis`;
                         // Trailing team = more volume in catch-up mode
                         let scriptAdj = 0;
                         if (projTotal > 230 && absSpread < 5) { scriptAdj += 0.8; } // Shootout
+                        else if (projTotal > 225 && absSpread < 8) { scriptAdj += 0.5; } // High total, competitive
                         if (projTotal < 210 && absSpread > 8) { scriptAdj -= 1.2; } // Low-scoring blowout
                         if (!isFavorite && absSpread >= 5 && absSpread <= 10) { scriptAdj += 0.5; } // Underdog catch-up volume
                         if (isFavorite && absSpread >= 10) { scriptAdj -= 1.5; } // Heavy favorite garbage time
+                        else if (isFavorite && absSpread >= 7) { scriptAdj -= 0.4; } // Moderate favorite, some blowout risk
                         if (paceData?.paceImpact === 'FAST' && projTotal > 225) { scriptAdj += 0.5; }
                         if (paceData?.paceImpact === 'SLOW' && projTotal < 215) { scriptAdj -= 0.3; }
-                        v7GameScript = { spread, projTotal, isFavorite, scriptAdj: parseFloat(scriptAdj.toFixed(1)), label: scriptAdj > 0.5 ? 'BOOST' : scriptAdj < -0.5 ? 'SUPPRESS' : 'NEUTRAL' };
-                        if (Math.abs(scriptAdj) >= 0.3) console.log(`[V8.0] 📜 Game Script: ${v7GameScript.label} (${scriptAdj >= 0 ? '+' : ''}${scriptAdj.toFixed(1)}) | Total=${projTotal.toFixed(0)}, Spread=${spread > 0 ? '+' : ''}${spread}`);
+                        if (paceData?.paceImpact === 'SLOW' && projTotal > 225) { scriptAdj -= 0.2; } // Slow pace but high total = fewer possessions than implied
+                        v7GameScript = { spread, projTotal, isFavorite, scriptAdj: parseFloat(scriptAdj.toFixed(1)), label: scriptAdj > 0.3 ? 'BOOST' : scriptAdj < -0.3 ? 'SUPPRESS' : 'NEUTRAL' };
+                        console.log(`[V8.0] 📜 Game Script: ${v7GameScript.label} (${scriptAdj >= 0 ? '+' : ''}${scriptAdj.toFixed(1)}) | Total=${projTotal.toFixed(0)}, Spread=${spread > 0 ? '+' : ''}${spread}`);
                     }
 
                     // ── V8.0 Situational Spots ──
@@ -6506,10 +6512,10 @@ reasoning must explain your analysis`;
 
                     // ── V8.0 Player Prop Lines (from OddsAPI data already fetched) ──
                     v7PlayerProps = null;
-                    if (Array.isArray(oddsData) && oddsData.length > 0) {
+                    if (Array.isArray(oddsAPIRaw) && oddsData.length > 0) {
                         // Aggregate prop lines from the OddsAPI array we already have
                         const bookPairs = {};
-                        oddsData.forEach(o => {
+                        oddsAPIRaw.forEach(o => {
                             if (!bookPairs[o.book]) bookPairs[o.book] = { book: o.book, line: o.point };
                             if (o.name === 'Over') bookPairs[o.book].over = o.price;
                             if (o.name === 'Under') bookPairs[o.book].under = o.price;
@@ -7138,7 +7144,6 @@ reasoning must explain your analysis`;
         // V8.0 LAYER 3.7: 14-ENGINE BOTH SIDES SYNTHESIS
         // ═══════════════════════════════════════════════════════════════════════
         let synthResult = null;
-        console.log(`[V8.0] 🧪 Synth check: isPlayerProp=${!!isPlayerProp}, master=${!!master}, bothSides=${!!bothSides}`);
         if (isPlayerProp && master && bothSides) {
             console.log('\n══════════════════════════════════════════════════════════════════════');
             console.log('  🧪 LAYER 3.7: 14-Engine Synthesis (Both Sides)');
@@ -7161,20 +7166,31 @@ reasoning must explain your analysis`;
                 `Rate the UNDER case strength 1-100 and explain in 1 sentence.`;
             
             try {
-                const synthCalls = synthEngines.flatMap(eng => [
-                    (async () => { 
+                // Direct adversarial calls to fast engines via PROXY
+                const synthCalls = synthEngines.flatMap(eng => {
+                    const makeCall = async (side, prompt) => {
                         try {
-                            const r = await callEngine(eng, {...aiParams, _synthSide: 'OVER', _synthPrompt: overPrompt}, stats, hitRate, oddsData, defenseData, sport, market);
-                            return { engine: eng, side: 'OVER', result: r };
-                        } catch(e) { return { engine: eng, side: 'OVER', result: { pick: 'PASS', confidence: 50, error: true } }; }
-                    })(),
-                    (async () => {
-                        try {
-                            const r = await callEngine(eng, {...aiParams, _synthSide: 'UNDER', _synthPrompt: underPrompt}, stats, hitRate, oddsData, defenseData, sport, market);
-                            return { engine: eng, side: 'UNDER', result: r };
-                        } catch(e) { return { engine: eng, side: 'UNDER', result: { pick: 'PASS', confidence: 50, error: true } }; }
-                    })()
-                ]);
+                            const res = await fetch(`${PROXY}/api/ai/${eng}`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ prompt, maxTokens: 300 })
+                            });
+                            if (!res.ok) return { engine: eng, side, result: { pick: side, confidence: 55 } };
+                            const data = await res.json();
+                            const text = typeof data === 'string' ? data : data.response || data.text || data.content || JSON.stringify(data);
+                            const confMatch = text.match(/(\d{2,3})%?/);
+                            const conf = confMatch ? Math.min(95, Math.max(40, parseInt(confMatch[1]))) : 60;
+                            const pick = text.toUpperCase().includes('UNDER') && side === 'UNDER' ? 'UNDER' : 
+                                         text.toUpperCase().includes('OVER') && side === 'OVER' ? 'OVER' : side;
+                            return { engine: eng, side, result: { pick, confidence: conf } };
+                        } catch(e) { return { engine: eng, side, result: { pick: side, confidence: 55 } }; }
+                    };
+                    
+                    return [
+                        makeCall('OVER', overPrompt),
+                        makeCall('UNDER', underPrompt)
+                    ];
+                });
                 
                 const synthResults = await Promise.all(synthCalls);
                 
