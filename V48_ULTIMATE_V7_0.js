@@ -4005,6 +4005,9 @@ LAST_5: [num1, num2, num3, num4, num5]`,
             const v48GTText = params._v48GameTotal ? `\nGame Total O/U: ${params._v48GameTotal}` : '';
             const v48AdvText = params._v48Advanced ? (params._v48Advanced.sport==='nhl' ? `\nNHL Advanced: Corsi=${params._v48Advanced.corsiPct}%, xGF=${params._v48Advanced.xGFPct}%` : params._v48Advanced.usagePct ? `\nUsage: ${(params._v48Advanced.usagePct*100).toFixed(1)}%` : '') : '';
             // V7.0: Enhanced context for AI engines
+            const v7MatrixText = params._v7Matrix ? `\nAdvanced Matrix: ${params._v7Matrix}` : '';
+            const v7UsageText = params._v7Usage ? `\nUsage: ${params._v7Usage}` : '';
+            const v7ClutchText = params._v7Clutch ? `\nClutch: ${params._v7Clutch}` : '';
             const v7ShootText = params._v7Shooting ? `\nShooting: ${params._v7Shooting}` : '';
             const v7QuarterText = params._v7Quarters ? `\nQuarter Breakdown: ${params._v7Quarters}` : '';
             const v7StyleText = params._v7Style ? `\nStyle Matchup: ${params._v7Style}` : '';
@@ -4021,7 +4024,7 @@ Opponent: ${params.opponent}
 
 STATS: ${statsText}
 ${hitText}
-${defText}${v48ProjText}${v48TeamText}${v48BlowoutText}${v48DefText}${v48PaceText}${v48VarText}${v48GTText}${v48AdvText}${v7ShootText}${v7QuarterText}${v7StyleText}${v7PosDefText}${v7BlowoutText}${v7InjText}${v7RollText}${v7SharpText}
+${defText}${v48ProjText}${v48TeamText}${v48BlowoutText}${v48DefText}${v48PaceText}${v48VarText}${v48GTText}${v48AdvText}${v7MatrixText}${v7UsageText}${v7ClutchText}${v7ShootText}${v7QuarterText}${v7StyleText}${v7PosDefText}${v7BlowoutText}${v7InjText}${v7RollText}${v7SharpText}
 
 Analyze this prop bet. Based on the data, should the bettor take OVER, UNDER, or PASS?
 
@@ -6038,19 +6041,44 @@ reasoning must explain your analysis`;
                     const hdrs = { 'Authorization': BDL_KEY };
                     
                     // Find opponent team BDL ID from game data
-                    const oppTeamId = (() => {
-                        if (!rawGames?.length) return null;
-                        for (const g of rawGames.slice(0, 5)) {
+                    // V7.0 FIX: Legacy /v1/stats uses home_team_id (number) not home_team (object)
+                    const oppTeamId = await (async () => {
+                        if (!rawGames?.length || !params.opponent) return null;
+                        const oppName = params.opponent.toLowerCase();
+                        const playerTeamId = rawGames[0]?.team?.id;
+                        
+                        // Collect all unique opponent team IDs from recent games
+                        const oppTeamIds = new Set();
+                        for (const g of rawGames.slice(0, 15)) {
                             const gm = g.game; if (!gm) continue;
-                            const isHome = g.team?.id === gm.home_team?.id;
-                            const opp = isHome ? gm.visitor_team : gm.home_team;
-                            const oppName = (params.opponent || '').toLowerCase();
-                            if (opp && (opp.full_name?.toLowerCase().includes(oppName) || 
-                                opp.abbreviation?.toLowerCase() === oppName ||
-                                opp.city?.toLowerCase().includes(oppName) ||
-                                opp.name?.toLowerCase().includes(oppName))) {
-                                return opp.id;
+                            // Legacy format: gm.home_team_id / gm.visitor_team_id (numbers)
+                            const homeId = gm.home_team_id || gm.home_team?.id;
+                            const visitorId = gm.visitor_team_id || gm.visitor_team?.id;
+                            if (playerTeamId) {
+                                const oppId = playerTeamId === homeId ? visitorId : homeId;
+                                if (oppId) oppTeamIds.add(oppId);
                             }
+                        }
+                        
+                        // If we have opponent IDs, look up team details via BDL teams endpoint
+                        if (oppTeamIds.size > 0) {
+                            try {
+                                const teamsRes = await fetch(`${baseUrl}/nba/v1/teams`, { headers: hdrs });
+                                if (teamsRes.ok) {
+                                    const teamsData = await teamsRes.json();
+                                    const allTeams = teamsData?.data || [];
+                                    for (const team of allTeams) {
+                                        if (oppTeamIds.has(team.id) && (
+                                            team.abbreviation?.toLowerCase() === oppName ||
+                                            team.full_name?.toLowerCase().includes(oppName) ||
+                                            team.city?.toLowerCase().includes(oppName) ||
+                                            team.name?.toLowerCase().includes(oppName)
+                                        )) {
+                                            return team.id;
+                                        }
+                                    }
+                                }
+                            } catch(e) { /* teams lookup failed, continue without */ }
                         }
                         return null;
                     })();
@@ -6545,8 +6573,25 @@ reasoning must explain your analysis`;
             if (v48Projection?.advancedStats) aiParams._v48Advanced = v48Projection.advancedStats;
             // V7.0: Feed enriched data to AI engines
             if (v7Matrix) aiParams._v7Matrix = Object.keys(v7Matrix).length + ' categories';
-            if (v7Advanced?.advanced) aiParams._v7Usage = (v7Advanced.advanced.usg_pct * 100).toFixed(1) + '%';
-            if (v7Shooting) aiParams._v7Shooting = `Paint=${(v7Shooting.pctFromPaint*100||0).toFixed(0)}%, Mid=${(v7Shooting.pctFromMidrange*100||0).toFixed(0)}%, 3PT=${(v7Shooting.pctFrom3*100||0).toFixed(0)}%`;
+            if (v7Advanced?.advanced) aiParams._v7Usage = `USG=${(v7Advanced.advanced.usg_pct*100||0).toFixed(1)}%, TS=${(v7Advanced.advanced.ts_pct*100||0).toFixed(1)}%${v7Advanced.tracking ? `, Speed=${v7Advanced.tracking.avg_speed || v7Advanced.tracking.speed || 'N/A'}` : ''}`;
+            if (v7Shooting) aiParams._v7Shooting = `Paint=${(v7Shooting.pctFromPaint*100||0).toFixed(0)}%, Mid=${(v7Shooting.pctFromMidrange*100||0).toFixed(0)}%, 3PT=${(v7Shooting.pctFrom3*100||0).toFixed(0)}%${v7Shooting.rimFgPct ? `, RimFG=${(v7Shooting.rimFgPct*100).toFixed(0)}%` : ''}`;
+            if (v7Clutch) {
+                const cPts = v7Clutch.pts || v7Clutch.points || 0;
+                const cUsg = v7Clutch.usg_pct || v7Clutch.usage_pct || 0;
+                const cMin = v7Clutch.min || v7Clutch.minutes || 0;
+                aiParams._v7Clutch = `Clutch: ${typeof cPts === 'number' ? cPts.toFixed(1) : cPts} pts, USG=${(cUsg*100||0).toFixed(0)}%, ${typeof cMin === 'number' ? cMin.toFixed(1) : cMin} min`;
+            }
+            if (v7Matrix) {
+                // Build concise matrix summary with key metrics
+                const mParts = [];
+                if (v7Matrix.pt_isolation) mParts.push(`ISO:${(v7Matrix.pt_isolation.ppp || v7Matrix.pt_isolation.pts_per_possession || 0).toFixed(2)}PPP`);
+                if (v7Matrix.pt_pnr_handler) mParts.push(`PnR:${(v7Matrix.pt_pnr_handler.ppp || v7Matrix.pt_pnr_handler.pts_per_possession || 0).toFixed(2)}PPP`);
+                if (v7Matrix.pt_spotup) mParts.push(`Spot:${(v7Matrix.pt_spotup.ppp || v7Matrix.pt_spotup.pts_per_possession || 0).toFixed(2)}PPP`);
+                if (v7Matrix.pt_transition) mParts.push(`Trans:${(v7Matrix.pt_transition.ppp || v7Matrix.pt_transition.pts_per_possession || 0).toFixed(2)}PPP`);
+                if (v7Matrix.tk_drives) mParts.push(`Drives:${v7Matrix.tk_drives.drives || v7Matrix.tk_drives.avg || 'N/A'}/g`);
+                if (v7Matrix.hustle) mParts.push(`Hustle:${v7Matrix.hustle.contested_shots || v7Matrix.hustle.contested || 'N/A'} contested`);
+                aiParams._v7Matrix = mParts.length > 0 ? mParts.join(', ') : `${Object.keys(v7Matrix).length} categories loaded`;
+            }
             if (v7Quarters?.usageDiff) aiParams._v7Quarters = `1H vs 2H: Usage ${v7Quarters.usageDiff}%, EFG ${v7Quarters.efgDiff}%`;
             if (v7StyleMatchup) aiParams._v7Style = `${(v7StyleMatchup.score*100).toFixed(1)}% ${v7StyleMatchup.favors} (${v7StyleMatchup.quality})`;
             if (v7PositionDefense) aiParams._v7PosDefense = `${v7PositionDefense.position} vs #${v7PositionDefense.teamRank} (${v7PositionDefense.teamTier})`;
@@ -6554,6 +6599,10 @@ reasoning must explain your analysis`;
             if (v7InjuryBoost) aiParams._v7InjuryBoost = `+${v7InjuryBoost.boost} from ${v7InjuryBoost.count} OUT (${v7InjuryBoost.names.join(', ')})`;
             if (v7RollingStats) aiParams._v7Rolling = `mean=${v7RollingStats.mean}, median=${v7RollingStats.median}, std=${v7RollingStats.std}, hitRate=${v7RollingStats.hitRate}%`;
             if (v7SharpMoney) aiParams._v7Sharp = `${v7SharpMoney.direction} (${v7SharpMoney.overPct}%)`;
+            
+            // V7.0: Diagnostic log — what data reaches AI engines
+            const v7Fed = Object.keys(aiParams).filter(k => k.startsWith('_v7')).map(k => k.replace('_v7', ''));
+            console.log(`[V7.0] 🤖 AI Engine Feed: ${v7Fed.length} V7 sources → [${v7Fed.join(', ')}]`);
         }
         
         // ═══════════════════════════════════════════════════════════════════════
