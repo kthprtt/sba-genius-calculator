@@ -29872,6 +29872,12 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             // Factor 4: Home/away (10% weight)
             baseProb += isHome === true ? 2 : (isHome === false ? -1 : 0);
             
+            // V8.1 FIX: NaN safety — if any factor produced NaN, reset to 50
+            if (isNaN(baseProb)) {
+                console.warn(`⚠️ V8.1: baseProb is NaN (seasonAvg=${seasonAvg}, l5Avg=${l5Avg}, hitRate=${hitRateNum}) — resetting to 50`);
+                baseProb = 50;
+            }
+            
             // V12 WORLD CLASS: Use Calibrated Probability System
             // This replaces simple math with learned, validated probabilities
             const projection = state.lastProjection?.projection || seasonAvg;
