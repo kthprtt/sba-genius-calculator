@@ -6042,44 +6042,27 @@ reasoning must explain your analysis`;
                     
                     // Find opponent team BDL ID from game data
                     // V7.0 FIX: Legacy /v1/stats uses home_team_id (number) not home_team (object)
+                    // Find opponent team BDL ID by name from /nba/v1/teams
+                    // V7.0 FIX: Legacy /v1/stats IDs don't match /nba/v1 IDs, so match by name only
                     const oppTeamId = await (async () => {
-                        if (!rawGames?.length || !params.opponent) return null;
+                        if (!params.opponent) return null;
                         const oppName = params.opponent.toLowerCase();
-                        const playerTeamId = rawGames[0]?.team?.id;
-                        
-                        // Collect all unique opponent team IDs from recent games
-                        const oppTeamIds = new Set();
-                        for (const g of rawGames.slice(0, 15)) {
-                            const gm = g.game; if (!gm) continue;
-                            // Legacy format: gm.home_team_id / gm.visitor_team_id (numbers)
-                            const homeId = gm.home_team_id || gm.home_team?.id;
-                            const visitorId = gm.visitor_team_id || gm.visitor_team?.id;
-                            if (playerTeamId) {
-                                const oppId = playerTeamId === homeId ? visitorId : homeId;
-                                if (oppId) oppTeamIds.add(oppId);
-                            }
-                        }
-                        
-                        // If we have opponent IDs, look up team details via BDL teams endpoint
-                        if (oppTeamIds.size > 0) {
-                            try {
-                                const teamsRes = await fetch(`${baseUrl}/nba/v1/teams`, { headers: hdrs });
-                                if (teamsRes.ok) {
-                                    const teamsData = await teamsRes.json();
-                                    const allTeams = teamsData?.data || [];
-                                    for (const team of allTeams) {
-                                        if (oppTeamIds.has(team.id) && (
-                                            team.abbreviation?.toLowerCase() === oppName ||
-                                            team.full_name?.toLowerCase().includes(oppName) ||
-                                            team.city?.toLowerCase().includes(oppName) ||
-                                            team.name?.toLowerCase().includes(oppName)
-                                        )) {
-                                            return team.id;
-                                        }
-                                    }
+                        try {
+                            const teamsRes = await fetch(`${baseUrl}/nba/v1/teams`, { headers: hdrs });
+                            if (!teamsRes.ok) return null;
+                            const teamsData = await teamsRes.json();
+                            const allTeams = teamsData?.data || [];
+                            for (const team of allTeams) {
+                                if (team.abbreviation?.toLowerCase() === oppName ||
+                                    team.full_name?.toLowerCase().includes(oppName) ||
+                                    team.city?.toLowerCase().includes(oppName) ||
+                                    team.name?.toLowerCase().includes(oppName)) {
+                                    console.log(`[V7.0] ✅ Opponent matched: ${team.full_name} (ID=${team.id}, abbr=${team.abbreviation})`);
+                                    return team.id;
                                 }
-                            } catch(e) { /* teams lookup failed, continue without */ }
-                        }
+                            }
+                            console.log(`[V7.0] ⚠️ No team match for "${oppName}" in ${allTeams.length} teams`);
+                        } catch(e) { console.log(`[V7.0] ⚠️ Teams lookup failed: ${e.message}`); }
                         return null;
                     })();
 
