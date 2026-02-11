@@ -45425,12 +45425,13 @@ reasoning must explain your analysis`;
                             return ht === pid ? vt : ht;
                         }).filter(Boolean);
                         // Division rivalry (same division check via simple heuristic)
-                        if (opponent) {
+                        const spotOpp = params.opponent || '';
+                        if (spotOpp) {
                             const eastDivs = { 'ATL':1,'BOS':2,'BKN':2,'CHA':1,'CHI':3,'CLE':3,'DET':3,'IND':3,'MIA':1,'MIL':3,'NYK':2,'ORL':1,'PHI':2,'TOR':2,'WAS':1 };
                             const westDivs = { 'DAL':4,'DEN':5,'GSW':6,'HOU':4,'LAC':6,'LAL':6,'MEM':4,'MIN':5,'NOP':4,'OKC':5,'PHX':6,'POR':5,'SAC':6,'SAS':4,'UTA':5 };
                             const allDivs = {...eastDivs, ...westDivs};
                             const teamDiv = allDivs[stats.team?.toUpperCase()];
-                            const oppDiv = allDivs[opponent?.toUpperCase()];
+                            const oppDiv = allDivs[spotOpp.toUpperCase()];
                             if (teamDiv && oppDiv && teamDiv === oppDiv) v7Spots.push({ name: 'Division Rivalry', adj: 0.3, note: 'Same division matchup' });
                         }
                     }
