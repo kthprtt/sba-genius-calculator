@@ -7834,8 +7834,8 @@ reasoning must explain your analysis`;
             pinnacleSignal: v7SharpMoney?.pinnacle?.sharpLean || null,
             refereeData: refereeData?.found ? { name: refereeData.referee, bias: refereeData.totalsBias } : null,
             engineVotes: Object.entries(results).map(([eng, r]) => ({ engine: eng, pick: r.pick, confidence: r.confidence })),
-            bothSidesProb: bothSides ? { over: bothSides.over?.trueProb, under: bothSides.under?.trueProb } : null,
-            synthesisResult: v48Synthesis ? { overPct: v48Synthesis.overAvg, underPct: v48Synthesis.underAvg } : null,
+            bothSidesProb: bothSides ? { over: bothSides.over?.prob, under: bothSides.under?.prob } : null,
+            synthesisResult: synthResult ? { overPct: synthResult.overStrength, underPct: synthResult.underStrength } : null,
             // V48: Advanced projection data
             v48: {
                 projection: v48Projection,
