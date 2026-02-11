@@ -45035,10 +45035,6 @@ reasoning must explain your analysis`;
                 // Parallel fetch: Matrix, V29 Advanced, Shooting, Clutch,
                 // Opponent Profile, Quarter Breakdown, Team Profiles
                 // ═══════════════════════════════════════════════════════════
-                let v7StyleMatchup = null, v7RollingStats = null;
-                let v7PositionDefense = null, v7BlowoutRisk = null;
-                let v7InjuryBoost = null, v7Situational = null;
-                let v7SharpMoney = null;
 
                 if (sport === 'nba' && bdlPlayerId) {
                     const yr = new Date().getMonth() >= 9 ? new Date().getFullYear() : new Date().getFullYear() - 1;
@@ -45543,7 +45539,7 @@ reasoning must explain your analysis`;
             if (v7Quarters?.usageDiff) aiParams._v7Quarters = `1H vs 2H: Usage ${v7Quarters.usageDiff}%, EFG ${v7Quarters.efgDiff}%`;
             if (v7StyleMatchup) aiParams._v7Style = `${(v7StyleMatchup.score*100).toFixed(1)}% ${v7StyleMatchup.favors} (${v7StyleMatchup.quality})`;
             if (v7PositionDefense) aiParams._v7PosDefense = `${v7PositionDefense.position} vs #${v7PositionDefense.teamRank} (${v7PositionDefense.teamTier})`;
-            if (v7BlowoutRisk?.risk !== 'Low') aiParams._v7Blowout = `${v7BlowoutRisk.risk} risk (spread ${v7BlowoutRisk.spread}), adj ${v7BlowoutRisk.adjustment}`;
+            if (v7BlowoutRisk && v7BlowoutRisk.risk !== 'Low') aiParams._v7Blowout = `${v7BlowoutRisk.risk} risk (spread ${v7BlowoutRisk.spread}), adj ${v7BlowoutRisk.adjustment}`;
             if (v7InjuryBoost) aiParams._v7InjuryBoost = `+${v7InjuryBoost.boost} from ${v7InjuryBoost.count} OUT (${v7InjuryBoost.names.join(', ')})`;
             if (v7RollingStats) aiParams._v7Rolling = `mean=${v7RollingStats.mean}, median=${v7RollingStats.median}, std=${v7RollingStats.std}, hitRate=${v7RollingStats.hitRate}%`;
             if (v7SharpMoney) aiParams._v7Sharp = `${v7SharpMoney.direction} (${v7SharpMoney.overPct}%)`;
