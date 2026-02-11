@@ -17755,8 +17755,17 @@ Return ONLY valid JSON:
             'Trail Blazers': 25, 'Portland': 25, 'POR': 25, 'Portland Trail Blazers': 25, 'Blazers': 25,
             'Kings': 26, 'Sacramento': 26, 'SAC': 26, 'Sacramento Kings': 26,
             'Spurs': 27, 'San Antonio': 27, 'SAS': 27, 'San Antonio Spurs': 27,
+            'Raptors': 28, 'Toronto': 28, 'TOR': 28, 'Toronto Raptors': 28,
             'Jazz': 29, 'Utah': 29, 'UTA': 29, 'Utah Jazz': 29,
             'Wizards': 30, 'Washington': 30, 'WAS': 30, 'Washington Wizards': 30
+        };
+        
+        // V8.1 FIX: Reverse map — BDL team ID → abbreviation (for legacy /v1/stats)
+        const BDL_ID_TO_ABBR = {
+            1:'ATL', 2:'BOS', 3:'BKN', 4:'CHA', 5:'CHI', 6:'CLE', 7:'DAL', 8:'DEN',
+            9:'DET', 10:'GSW', 11:'HOU', 12:'IND', 13:'LAC', 14:'LAL', 15:'MEM',
+            16:'MIA', 17:'MIL', 18:'MIN', 19:'NOP', 20:'NYK', 21:'OKC', 22:'ORL',
+            23:'PHI', 24:'PHX', 25:'POR', 26:'SAC', 27:'SAS', 28:'TOR', 29:'UTA', 30:'WAS'
         };
         
         // V26: Resolve any team name variant to BDL team ID
@@ -19513,8 +19522,10 @@ Return ONLY valid JSON:
                         
                         // Player was home if their team_id matches home_team_id
                         const wasHome = playerTeamId === homeTeamId;
-                        const opponentAbbr = wasHome ? awayTeam : homeTeam;
                         const opponentId = wasHome ? awayTeamId : homeTeamId;
+                        // V8.1 FIX: Legacy /v1/stats returns IDs but not team objects
+                        // Use reverse map to get abbreviation when API doesn't provide it
+                        const opponentAbbr = (wasHome ? awayTeam : homeTeam) || BDL_ID_TO_ABBR[opponentId] || '';
                         
                         return {
                             date: g.game?.date,
@@ -20730,11 +20741,19 @@ Return ONLY valid JSON:
                 
                 // V11 ELITE: Extract REAL H2H from recent games (no separate API call needed!)
                 // V25: Use prop registry to compute correct stat for combo props
+                // V8.1 FIX: Use opponentId matching (primary) + name matching (fallback)
                 if (recentForm?.recentGames && contextData.opponentTeamName) {
                     const opponentKey = contextData.opponentTeamName.toLowerCase().split(' ').pop();
+                    const opponentBdlId = resolveBDLTeamId(contextData.opponentTeamName);
                     const h2hGames = recentForm.recentGames.filter(g => {
+                        // V8.1: Primary — match by BDL team ID (most reliable)
+                        if (opponentBdlId && g.opponentId) {
+                            return g.opponentId === opponentBdlId;
+                        }
+                        // Fallback — match by name (skip if opponent is empty)
                         const oppName = (g.opponent || '').toLowerCase();
-                        return oppName.includes(opponentKey) || opponentKey.includes(oppName.substring(0, 3));
+                        if (!oppName || oppName.length < 2) return false;
+                        return oppName.includes(opponentKey) || (oppName.length > 3 && opponentKey.includes(oppName));
                     });
                     
                     if (h2hGames.length > 0) {
@@ -25600,11 +25619,19 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             filters.overall = computeFilter(allGames, 'All Games');
             
             // ─── FILTER 2: vs This Opponent ───
+            // V8.1 FIX: Use opponentId matching + guard against empty opponent strings
             if (opponentAbbr) {
+                const opponentBdlId = resolveBDLTeamId(opponentAbbr);
                 const vsOpp = allGames.filter(g => {
+                    // Primary: match by BDL team ID
+                    if (opponentBdlId && g.opponentId) {
+                        return g.opponentId === opponentBdlId;
+                    }
+                    // Fallback: name match (skip empty)
                     const opp = (g.opponent || '').toUpperCase();
+                    if (!opp || opp.length < 2) return false;
                     const target = opponentAbbr.toUpperCase();
-                    return opp === target || opp.includes(target) || target.includes(opp);
+                    return opp === target || opp.includes(target) || (opp.length > 3 && target.includes(opp));
                 });
                 filters.vsOpponent = computeFilter(vsOpp, `vs ${opponentAbbr}`);
             }
@@ -28915,7 +28942,31 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
         }
         
         // Main function to fetch players with LIVE stats
+        // V8.1: Dedup cache to prevent triple-fetching on event selection
+        const _playerFetchCache = { eventId: null, promise: null, result: null, timestamp: 0 };
         async function fetchPlayersForEvent(sport, eventId, selectedEvent) {
+            // V8.1: Return cached result if same event fetched within last 30 seconds
+            const now = Date.now();
+            if (_playerFetchCache.eventId === eventId && _playerFetchCache.result && (now - _playerFetchCache.timestamp) < 30000) {
+                console.log(`📦 V8.1: Using cached player data for event ${eventId} (${((now - _playerFetchCache.timestamp)/1000).toFixed(0)}s old)`);
+                return _playerFetchCache.result;
+            }
+            // V8.1: Dedup concurrent calls — return the same promise if already in-flight
+            if (_playerFetchCache.eventId === eventId && _playerFetchCache.promise) {
+                console.log(`⏳ V8.1: Player fetch already in-flight for event ${eventId}, awaiting...`);
+                return _playerFetchCache.promise;
+            }
+            _playerFetchCache.eventId = eventId;
+            _playerFetchCache.promise = _fetchPlayersForEventInner(sport, eventId, selectedEvent);
+            try {
+                _playerFetchCache.result = await _playerFetchCache.promise;
+                _playerFetchCache.timestamp = Date.now();
+                return _playerFetchCache.result;
+            } finally {
+                _playerFetchCache.promise = null;
+            }
+        }
+        async function _fetchPlayersForEventInner(sport, eventId, selectedEvent) {
             // Helper to add calculated combo stats (sport-aware)
             function addComboStats(players, teamName) {
                 const isSoccer = sport && sport.startsWith('soccer_');
@@ -32107,11 +32158,16 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     value: isDirtyTrend ? `${momentum.toUpperCase()} — contaminated` : `Momentum: ${momentum || 'neutral'}`,
                     label: 'Clean Trend'
                 };
-                if (isDirtyTrend) vetoes.push('Dirty trend: blowout/DNP contaminated');
+                // V8.1 FIX: Only veto blowout_cold if cleaned L5 is ALSO weak
+                // If cleaned L5 shows strong performance, the DNPs are noise not signal
+                const cleanedL5strong = proj.smartL5 && seasonAvg > 0 && proj.smartL5 > seasonAvg * 0.85;
+                if (isDirtyTrend && !cleanedL5strong) vetoes.push('Dirty trend: blowout/DNP contaminated');
                 
                 // Veto: Minutes instability
+                // V8.1 FIX: Use cleaned L5 when blowout cleaning occurred
                 const projMin = proj.projectedMinutes || 0;
-                const l5SeasonRatio = seasonAvg > 0 ? l5 / seasonAvg : 1;
+                const effectiveL5 = proj.smartL5 || l5;
+                const l5SeasonRatio = seasonAvg > 0 ? effectiveL5 / seasonAvg : 1;
                 const minutesVolatile = (l5SeasonRatio < 0.3 && seasonAvg > 5);
                 checks.stableMinutes = {
                     pass: !minutesVolatile,
@@ -32498,16 +32554,21 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 value: isDirtyTrend ? `${momentum.toUpperCase()} — DNP/blowout contamination` : `Momentum: ${momentum}`,
                 label: 'Clean Trend'
             };
-            if (isDirtyTrend) vetoes.push(`Dirty trend: ${momentum} (blowout/DNP contaminated)`);
+            // V8.1 FIX: Don't veto if cleaned data shows strong performance
+            const cleanedL5ok = proj.smartL5 && (proj.engines?.seasonAvg || 0) > 0 && proj.smartL5 > (proj.engines?.seasonAvg || 0) * 0.85;
+            if (isDirtyTrend && !cleanedL5ok) vetoes.push(`Dirty trend: ${momentum} (blowout/DNP contaminated)`);
             
             // Veto 4: Minutes instability (projected too far from average)
             const seasonAvg = proj.engines?.seasonAvg || 0;
             const l5 = proj.l5Avg || 0;
             const l10 = proj.l10Avg || 0;
+            // V8.1 FIX: Use cleaned L5 for minutes stability when blowout cleaning occurred
+            const effectiveL5 = proj.smartL5 || l5;
             // Use minutes from projection if available
-            const minStable = projMin > 0 ? (Math.abs(projMin - (avgMin || projMin)) / Math.max(projMin, 1)) < 0.25 : true;
+            const effAvgMin = (seasonAvg > 0 && effectiveL5 > 0) ? (seasonAvg / effectiveL5) * (projMin || 30) : projMin;
+            const minStable = projMin > 0 ? (Math.abs(projMin - (effAvgMin || projMin)) / Math.max(projMin, 1)) < 0.25 : true;
             // Also check if L5 is wildly different from season (minutes proxy)
-            const l5SeasonRatio = seasonAvg > 0 ? l5 / seasonAvg : 1;
+            const l5SeasonRatio = seasonAvg > 0 ? effectiveL5 / seasonAvg : 1;
             const minutesVolatile = !minStable || (l5SeasonRatio < 0.3 && seasonAvg > 5);
             checks.stableMinutes = {
                 pass: !minutesVolatile,
