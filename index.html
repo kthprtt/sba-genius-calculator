@@ -18394,32 +18394,43 @@ Return ONLY valid JSON:
                         const awayTeamName = (awayProfile?._teamName || '').toLowerCase();
                         // Cross-reference injuries with cached player data for PPG
                         const players = state.cachedPlayers || [];
+                        console.log(`🏥 V26 Injury Adj: ${injuries.length} injuries, ${players.length} cached players, home="${homeTeamName}", away="${awayTeamName}"`);
                         injuries.forEach(inj => {
-                            if (!inj || (inj.status !== 'Out' && inj.status !== 'Out For Season')) return;
+                            if (!inj) return;
+                            const injStatus = (inj.status || '').toLowerCase();
+                            if (!injStatus.includes('out')) return; // Matches 'Out', 'Out For Season', etc.
                             const injTeam = (inj.team || '').toLowerCase();
-                            const injName = (inj.playerName || '').toLowerCase();
-                            // Look up PPG from player data
+                            const injName = (inj.playerName || '').toLowerCase().trim();
+                            if (!injName) return;
+                            // Look up PPG — BDL stats are spread directly on player object as .pts
+                            const injNameLast = injName.split(' ').pop();
                             const pMatch = players.find(p => {
-                                const pName = (p.name || p.fullName || '').toLowerCase();
-                                return pName === injName || pName.includes(injName) || injName.includes(pName);
+                                const pName = (p.name || p.fullName || p.displayName || '').toLowerCase().trim();
+                                const pLast = pName.split(' ').pop();
+                                return pName === injName || pLast === injNameLast;
                             });
-                            const ppg = pMatch?.seasonAvg?.pts || pMatch?.bdlStats?.pts || pMatch?.stats?.pts || 0;
-                            if (ppg < 12) return; // Only adjust for significant contributors (12+ PPG)
-                            // Impact formula: each PPG = ~0.25 point swing (based on NBA research)
-                            // A 25 PPG player like SGA ≈ 6pt swing, a 30 PPG player like Giannis ≈ 7pt swing
+                            const ppg = pMatch?.pts || pMatch?.seasonAvg?.pts || 0;
+                            if (ppg < 12) {
+                                if (ppg > 0) console.log(`🏥 V26 Injury Adj: ${inj.playerName} (${ppg.toFixed(1)} PPG) — below 12 PPG threshold`);
+                                else console.log(`🏥 V26 Injury Adj: ${inj.playerName} — no PPG data found (pMatch=${!!pMatch})`);
+                                return;
+                            }
                             const impactPts = Math.min(8, ppg * 0.25);
-                            const isHome = injTeam.includes(homeTeamName) || homeTeamName.includes(injTeam.split(' ').pop());
-                            const isAway = injTeam.includes(awayTeamName) || awayTeamName.includes(injTeam.split(' ').pop());
+                            const homeNick = homeTeamName.split(' ').pop();
+                            const awayNick = awayTeamName.split(' ').pop();
+                            const injTeamNick = injTeam.split(' ').pop();
+                            const isHome = injTeamNick === homeNick || injTeam.includes(homeTeamName) || homeTeamName.includes(injTeamNick);
+                            const isAway = injTeamNick === awayNick || injTeam.includes(awayTeamName) || awayTeamName.includes(injTeamNick);
                             if (isHome) {
                                 adj -= impactPts;
-                                console.log(`🏥 V26 Injury Adj: ${inj.playerName} (${ppg.toFixed(1)} PPG) OUT for home → margin -${impactPts.toFixed(1)} pts`);
+                                console.log(`🏥 V26 Injury Adj: ${inj.playerName} (${ppg.toFixed(1)} PPG) OUT for HOME → margin -${impactPts.toFixed(1)}`);
                             } else if (isAway) {
                                 adj += impactPts;
-                                console.log(`🏥 V26 Injury Adj: ${inj.playerName} (${ppg.toFixed(1)} PPG) OUT for away → margin +${impactPts.toFixed(1)} pts`);
+                                console.log(`🏥 V26 Injury Adj: ${inj.playerName} (${ppg.toFixed(1)} PPG) OUT for AWAY → margin +${impactPts.toFixed(1)}`);
                             }
                         });
                         if (adj !== expectedMargin) {
-                            console.log(`🏥 V26 Injury Adj TOTAL: Raw margin ${expectedMargin.toFixed(1)} → Adj margin ${adj.toFixed(1)} (Δ ${(adj - expectedMargin).toFixed(1)})`);
+                            console.log(`🏥 V26 Injury Adj TOTAL: Raw ${expectedMargin.toFixed(1)} → Adj ${adj.toFixed(1)} (Δ${(adj - expectedMargin) >= 0 ? '+' : ''}${(adj - expectedMargin).toFixed(1)})`);
                         }
                     } catch(e) { console.warn('V26 injury adj error:', e); }
                     return adj;
