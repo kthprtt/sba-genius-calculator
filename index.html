@@ -30941,10 +30941,10 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                     const tierOk = streakTier >= 2 || streakTier === 'diamond';
                                     
                                     // Core gate checks
-                                    const g1Pass = gateResult.gates?.find(g => g.id === 'G1')?.pass || false;
-                                    const g10Pass = gateResult.gates?.find(g => g.id === 'G10')?.pass || false;
-                                    const g2Pass = gateResult.gates?.find(g => g.id === 'G2')?.pass || false;
-                                    const g3Pass = gateResult.gates?.find(g => g.id === 'G3')?.pass || false;
+                                    const g1Pass = gateResult.gates?.find(g => g.name?.startsWith('G1'))?.pass || false;
+                                    const g10Pass = gateResult.gates?.find(g => g.name?.startsWith('G10'))?.pass || false;
+                                    const g2Pass = gateResult.gates?.find(g => g.name?.startsWith('G2'))?.pass || false;
+                                    const g3Pass = gateResult.gates?.find(g => g.name?.startsWith('G3'))?.pass || false;
                                     const coreGatesPass = g1Pass && g10Pass;
                                     
                                     const botChecks = { allGatesPass, injuryConfirmed, hasSufficientBooks, consensusStrong, cvOk, tierOk };
