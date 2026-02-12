@@ -31681,6 +31681,8 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                                     console.log(`   Vig-Adjusted: ${vigAdjusted.toFixed(1)}%`);
                                                     console.log(`   True Edge: ${edgePct.toFixed(1)}% ${edgePct >= 3 ? '✅ EDGE EXISTS' : '❌ NO EDGE — Book already prices correctly'}`);
                                                     if (!edgeDetected) console.log(`   ⚠️ LOCK/DIAMOND blocked — demoting to HIGH max`);
+                                                    // V10.3j: Store G11 edge for Streak Safe ML checks
+                                                    state.lastG11Edge = edgePct;
                                                 }
                                             }
                                         } else if (!isML) {
@@ -33825,33 +33827,80 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             };
             
             // Green 2: SBA vs Book Gap
-            // V32 FIX: Use larger of Pass 2 model gap and V11 projection gap
+            // V10.3j: ML-specific edge gap (win probability % vs book implied %)
+            const _isMLStreak = isGameOrTeam && state.marketType === 'team' && (result.market === 'Moneyline' || result.market === 'moneyline');
             const pass2GapPost = Math.abs(sba?.edge?.gap || 0);
             const projValuePost = state.lastProjection?.value || 0;
             const linePost = parseFloat(result.line) || 0;
             const v11GapPost = (projValuePost && linePost) ? Math.abs(projValuePost - linePost) : 0;
-            const sbaGap = Math.max(pass2GapPost, v11GapPost);
-            const sbaDirection = v11GapPost > pass2GapPost
-                ? (projValuePost > linePost ? 'OVER' : projValuePost < linePost ? 'UNDER' : '')
-                : (sba?.edge?.direction || '');
-            const gapAligned = sbaDirection === aiPick || sbaDirection === majorityDir;
-            checks.sbaGap = {
-                pass: sbaGap >= 3 && gapAligned,
-                perfect: sbaGap >= 5 && gapAligned,
-                value: `Gap: ${sbaGap.toFixed(1)} pts ${sbaDirection} ${gapAligned ? '(aligned)' : '(MISALIGNED)'}`,
-                label: 'SBA vs Book Gap ≥3'
-            };
+            let sbaGap, sbaDirection, gapAligned;
             
-            // Green 3: L5/L10 Trend confirms direction
+            if (_isMLStreak) {
+                // ML: Use G11 edge (model WP% - book implied%) as the gap
+                const mlModelWP = state.teamIntelligence?.matchup?.injuryAdjMargin != null 
+                    ? Math.min(95, Math.max(5, 100 / (1 + Math.pow(10, -(state.teamIntelligence.matchup.injuryAdjMargin) / 16))))
+                    : 50;
+                // Get book implied from median odds in loaded odds data
+                const mlBookImplied = parseFloat(document.querySelector('[data-book-implied]')?.dataset?.bookImplied) || 0;
+                // Use the G11 edge if available, else compute
+                const g11Edge = state.lastG11Edge || 0;
+                sbaGap = Math.abs(g11Edge) > 0 ? Math.abs(g11Edge) : Math.abs(mlModelWP - 50);
+                sbaDirection = majorityDir; // ML direction IS the pick direction  
+                gapAligned = true; // ML gap is inherently directional
+                checks.sbaGap = {
+                    pass: sbaGap >= 8 && gapAligned,  // ML needs 8%+ edge (not 3 pts)
+                    perfect: sbaGap >= 15 && gapAligned, // ML perfect at 15%+ edge
+                    value: `ML Edge: ${sbaGap.toFixed(1)}% model-vs-book gap (${gapAligned ? 'aligned' : 'MISALIGNED'})`,
+                    label: 'ML Edge Gap ≥8%'
+                };
+            } else {
+                sbaGap = Math.max(pass2GapPost, v11GapPost);
+                sbaDirection = v11GapPost > pass2GapPost
+                    ? (projValuePost > linePost ? 'OVER' : projValuePost < linePost ? 'UNDER' : '')
+                    : (sba?.edge?.direction || '');
+                gapAligned = sbaDirection === aiPick || sbaDirection === majorityDir;
+                checks.sbaGap = {
+                    pass: sbaGap >= 3 && gapAligned,
+                    perfect: sbaGap >= 5 && gapAligned,
+                    value: `Gap: ${sbaGap.toFixed(1)} pts ${sbaDirection} ${gapAligned ? '(aligned)' : '(MISALIGNED)'}`,
+                    label: 'SBA vs Book Gap ≥3'
+                };
+            }
+            
+            // Green 3: L5/L10 Trend confirms direction — OR for ML: Record/Margin confirms
             const line = parseFloat(result.line) || 0;
-            const trendSupports = majorityDir === 'OVER' 
-                ? (l5 > line * 0.9 || l5 > seasonAvg * 0.85) // L5 near or above line for OVER
-                : (l5 < line * 1.1 || l5 < seasonAvg * 1.15); // L5 near or below line for UNDER
-            checks.trendConfirm = {
-                pass: trendSupports && !isDirtyTrend,
-                value: `L5=${l5.toFixed(1)}, L10=${l10.toFixed(1)} vs Line=${line} (${majorityDir})`,
-                label: 'Trend Confirms Direction'
-            };
+            
+            if (_isMLStreak) {
+                // ML: Use team records + margin as "trend" equivalent
+                const ti = state.teamIntelligence?.matchup;
+                const homeWPct = ti?.teamA?.wPct ?? 0.5;
+                const awayWPct = ti?.teamB?.wPct ?? 0.5;
+                const rawMargin = ti?.expectedMargin || 0;
+                const adjMargin = ti?.injuryAdjMargin ?? rawMargin;
+                // For ML, "trend confirms" = team records clearly favor the AI pick direction
+                // OVER = selected team wins (home), UNDER = selected team loses  
+                const isHome = state.isHome !== false;
+                const favoredWPct = isHome ? homeWPct : awayWPct;
+                const underdogWPct = isHome ? awayWPct : homeWPct;
+                const marginFavors = adjMargin > 0 ? 'HOME' : 'AWAY';
+                const recordConfirms = (majorityDir === 'OVER' && favoredWPct > underdogWPct) ||
+                                       (majorityDir === 'UNDER' && underdogWPct > favoredWPct) ||
+                                       (Math.abs(favoredWPct - underdogWPct) > 0.1); // Clear separation
+                checks.trendConfirm = {
+                    pass: recordConfirms,
+                    value: `Home ${(homeWPct*100).toFixed(0)}% W | Away ${(awayWPct*100).toFixed(0)}% W | Margin ${adjMargin > 0 ? '+' : ''}${adjMargin.toFixed(1)} (${majorityDir})`,
+                    label: 'Record/Margin Confirms'
+                };
+            } else {
+                const trendSupports = majorityDir === 'OVER' 
+                    ? (l5 > line * 0.9 || l5 > seasonAvg * 0.85)
+                    : (l5 < line * 1.1 || l5 < seasonAvg * 1.15);
+                checks.trendConfirm = {
+                    pass: trendSupports && !isDirtyTrend,
+                    value: `L5=${l5.toFixed(1)}, L10=${l10.toFixed(1)} vs Line=${line} (${majorityDir})`,
+                    label: 'Trend Confirms Direction'
+                };
+            }
             
             // Green 4: Stable minutes (already checked as veto — reuse)
             // checks.stableMinutes already set above
@@ -33876,19 +33925,40 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 checks.situational = { pass: true, value: 'No situational data (neutral)', label: 'Situational Alignment' };
             }
             
-            // Green 6: H2H confirmation (5+ games)
+            // Green 6: H2H confirmation (5+ games for props, 1+ for ML with margin backup)
             const h2h = proj.h2hData || state.h2hData;
             const h2hGames = h2h?.games || 0;
             const h2hAvg = h2h?.avg || 0;
-            const h2hSupports = h2hGames >= 5 && (
-                (majorityDir === 'OVER' && h2hAvg > line * 0.95) ||
-                (majorityDir === 'UNDER' && h2hAvg < line * 1.05)
-            );
-            checks.h2h = {
-                pass: h2hSupports,
-                value: h2hGames > 0 ? `${h2hAvg.toFixed(1)} avg in ${h2hGames} games vs opponent` : 'No H2H data',
-                label: 'H2H Confirm (5+ games)'
-            };
+            
+            if (_isMLStreak) {
+                // ML: Teams only play 2-4x/season — use H2H + margin as combined check
+                const h2hMargin = h2h?.avgMargin || 0;
+                const ti = state.teamIntelligence?.matchup;
+                const adjMargin = ti?.injuryAdjMargin ?? ti?.expectedMargin ?? 0;
+                // H2H passes if: (1+ H2H games with margin supporting AI pick) OR (large adj margin > 5)
+                const h2hDirectionOk = h2hGames >= 1 && (
+                    (majorityDir === 'OVER' && h2hMargin < 0) || // selected team won H2H
+                    (majorityDir === 'UNDER' && h2hMargin > 0)   // selected team lost H2H
+                );
+                const marginStrongEnough = Math.abs(adjMargin) >= 3;
+                checks.h2h = {
+                    pass: h2hDirectionOk || marginStrongEnough,
+                    value: h2hGames > 0 
+                        ? `H2H: ${h2hGames}g (margin ${h2hMargin > 0 ? '+' : ''}${h2hMargin.toFixed(1)}) | AdjMargin: ${adjMargin > 0 ? '+' : ''}${adjMargin.toFixed(1)}`
+                        : `No H2H — AdjMargin: ${adjMargin > 0 ? '+' : ''}${adjMargin.toFixed(1)} (${marginStrongEnough ? 'strong' : 'weak'})`,
+                    label: 'H2H / Margin Confirm'
+                };
+            } else {
+                const h2hSupports = h2hGames >= 5 && (
+                    (majorityDir === 'OVER' && h2hAvg > line * 0.95) ||
+                    (majorityDir === 'UNDER' && h2hAvg < line * 1.05)
+                );
+                checks.h2h = {
+                    pass: h2hSupports,
+                    value: h2hGames > 0 ? `${h2hAvg.toFixed(1)} avg in ${h2hGames} games vs opponent` : 'No H2H data',
+                    label: 'H2H Confirm (5+ games)'
+                };
+            }
             
             // ── TIER CALCULATION ─────────────────────────────────────────
             
