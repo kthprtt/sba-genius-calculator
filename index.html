@@ -31456,6 +31456,8 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                                 
                                                 // Get odds for consensus side
                                                 // V10.3 FIX: Robust team matching — handles partial names, nicknames, etc.
+                                                // V10.3d FIX: Always get SELECTED TEAM'S odds (not consensus side)
+                                                // This ensures model win prob and book implied are for the SAME team
                                                 let relevantOdds = [];
                                                 bookEntries.forEach(b => {
                                                     const selTeamLower = (player || '').toLowerCase().trim();
@@ -31501,13 +31503,10 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                                         if (!selIsHome && !selIsAway) selIsHome = true; // last resort
                                                     }
                                                     
-                                                    if (consensusDir === 'OVER') {
-                                                        // Betting selected team to WIN
-                                                        relevantOdds.push(selIsHome ? b.home : b.away);
-                                                    } else {
-                                                        // Betting AGAINST selected team (other team wins)
-                                                        relevantOdds.push(selIsHome ? b.away : b.home);
-                                                    }
+                                                    // V10.3d: Always get SELECTED TEAM's own odds
+                                                    // modelWinProb = selected team's win probability
+                                                    // So we need selected team's book implied win prob for comparison
+                                                    relevantOdds.push(selIsHome ? b.home : b.away);
                                                 });
                                                 
                                                 relevantOdds = relevantOdds.filter(o => o !== null && o !== undefined);
@@ -34958,7 +34957,12 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                             selIsHome = selTokens.some(t => t.length > 2 && homeTeam.includes(t));
                             selIsAway = selTokens.some(t => t.length > 2 && awayTeam.includes(t));
                         }
-                        if (!selIsHome && !selIsAway) selIsHome = true;
+                        if (!selIsHome && !selIsAway) {
+                            // V10.3d: Fallback to state team names
+                            const stH = (state.homeTeamName || '').toLowerCase().trim();
+                            selIsHome = stH && (stH.includes(selTeam.split(' ').pop()) || selTeam.includes(stH.split(' ').pop()));
+                            selIsAway = !selIsHome;
+                        }
                         relevantOdds.push(selIsHome ? b.home : b.away);
                     });
                     relevantOdds = relevantOdds.filter(o => o !== null && o !== undefined);
