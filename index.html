@@ -29738,63 +29738,72 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                         }
                     }
                     
-                    // V9.2: EARLY EXIT if player confirmed OUT (saves ~50 seconds of AI calls)
-                    if (state.verifiedInjuryStatus?.shouldOverride) {
-                        console.log(`[V9.2] 🚨 EARLY EXIT: ${player} is OUT — skipping full analysis`);
-                        hideLoading();
-                        
-                        // Show a clear NO BET result
-                        const noResult = {
-                            verdict: 'NO_BET',
-                            direction: 'PASS',
-                            recommended: 'PASS',
-                            over: { trueProb: '0', edge: '0', feelOdds: '--', implied: '0' },
-                            under: { trueProb: '0', edge: '0', feelOdds: '--', implied: '0' },
-                            units: 0,
-                            injuryOverride: true,
-                            injuryStatus: state.verifiedInjuryStatus,
-                            player,
-                            market,
-                            line,
-                            gatesFailed: true,
-                            gates: [
-                                { name: 'G1: Player Active', pass: false, detail: `OUT — ${state.verifiedInjuryStatus.reason} (${state.verifiedInjuryStatus.source})`, critical: true },
-                                { name: 'G2: Data Quality ≥70', pass: false, detail: 'Score: 0/100 (player OUT)', critical: true }
-                            ]
-                        };
-                        
-                        state.lastAnalysisResult = noResult;
-                        displayResults(noResult);
-                        
-                        // Render gates showing failure
-                        try {
-                            renderConfidenceGates({
-                                gates: noResult.gates,
-                                allPassed: false,
-                                criticalFail: true
-                            });
-                        } catch(e) {}
-                        
-                        // Show injury alert in the UI
+                } catch (injErr) {
+                    console.warn(`[V9.2] ⚠️ Injury verification failed (non-fatal): ${injErr.message}`);
+                    // Don't block analysis — just proceed without verification
+                }
+                
+                // V9.2: EARLY EXIT if player confirmed OUT (saves ~50 seconds of AI calls)
+                // Moved outside try/catch so rendering errors don't mask the exit
+                if (state.verifiedInjuryStatus?.shouldOverride) {
+                    console.log(`[V9.2] 🚨 EARLY EXIT: ${player} is OUT — skipping full analysis`);
+                    hideLoading();
+                    
+                    const injStatus = state.verifiedInjuryStatus;
+                    const injReason = injStatus.reason || 'Injury';
+                    const injSource = injStatus.source || 'Injury Report';
+                    const injConfidence = injStatus.confidence || 'HIGH';
+                    
+                    // Show a clear NO BET result
+                    const noResult = {
+                        verdict: 'NO_BET',
+                        direction: 'PASS',
+                        recommended: 'PASS',
+                        over: { trueProb: '0', edge: '0', feelOdds: '--', implied: '0' },
+                        under: { trueProb: '0', edge: '0', feelOdds: '--', implied: '0' },
+                        units: 0,
+                        injuryOverride: true,
+                        injuryStatus: injStatus,
+                        player,
+                        market,
+                        line,
+                        gatesFailed: true,
+                        gates: [
+                            { name: 'G1: Player Active', pass: false, detail: `OUT — ${injReason} (${injSource})`, critical: true },
+                            { name: 'G2: Data Quality ≥70', pass: false, detail: 'Score: 0/100 (player OUT)', critical: true }
+                        ]
+                    };
+                    
+                    state.lastAnalysisResult = noResult;
+                    try { displayResults(noResult); } catch(e) { console.warn('[V9.2] displayResults error:', e.message); }
+                    
+                    // Render gates showing failure
+                    try {
+                        renderConfidenceGates({
+                            gates: noResult.gates,
+                            allPassed: false,
+                            criticalFail: true
+                        });
+                    } catch(e) {}
+                    
+                    // Show injury alert in the UI
+                    try {
                         const resultsPanel = document.querySelector('.results-panel');
                         if (resultsPanel) {
                             const alertDiv = document.createElement('div');
                             alertDiv.style.cssText = 'background: rgba(255,59,48,0.15); border: 2px solid #ff3b30; border-radius: 8px; padding: 16px; margin: 12px 0; text-align: center;';
                             alertDiv.innerHTML = `
                                 <div style="font-size: 24px; font-weight: 800; color: #ff3b30; margin-bottom: 8px;">🚨 NO BET — PLAYER OUT 🚨</div>
-                                <div style="font-size: 14px; color: #ff6b6b; margin-bottom: 4px;">${player} is <b>OUT</b>: ${state.verifiedInjuryStatus.reason}</div>
-                                <div style="font-size: 11px; color: #888;">Source: ${state.verifiedInjuryStatus.source} | Confidence: ${state.verifiedInjuryStatus.confidence}</div>
+                                <div style="font-size: 14px; color: #ff6b6b; margin-bottom: 4px;">${player} is <b>OUT</b>: ${injReason}</div>
+                                <div style="font-size: 11px; color: #888;">Source: ${injSource} | Confidence: ${injConfidence}</div>
                                 <div style="font-size: 11px; color: #666; margin-top: 8px;">V9.2: Caught by pre-analysis injury verification (saved ~50s of AI calls)</div>
                             `;
                             resultsPanel.prepend(alertDiv);
                         }
-                        
-                        state._analysisRunning = false;
-                        return;
-                    }
-                } catch (injErr) {
-                    console.warn(`[V9.2] ⚠️ Injury verification failed (non-fatal): ${injErr.message}`);
-                    // Don't block analysis — just proceed without verification
+                    } catch(e) {}
+                    
+                    state._analysisRunning = false;
+                    return;
                 }
             }
             // ═══════════════════════════════════════════════════════════════
