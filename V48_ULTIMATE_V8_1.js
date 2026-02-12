@@ -8760,9 +8760,15 @@ SOURCE: [where you found this]`,
         crossValidateStats,
         // Note: Legacy sport-specific functions (getNFLStats, getMLBStats, getNHLStats, getNCAABStats) 
         // are still in code but deprecated - use getBDLStatsUnified instead
-        version: '8.0.0 - 95% BOT ACCURACY'
+        version: '8.1.0 - V8.1 H2H + OPPONENT FIX'
     };
 })();
+
+// V8.1 FIX: Make accessible from browser console (const is block-scoped, not window-scoped)
+if (typeof window !== 'undefined') {
+    window.SBA_V47_ULTIMATE = SBA_V47_ULTIMATE;
+    window.SBA_V48 = SBA_V47_ULTIMATE; // Alias for V48
+}
 
 // Startup
 console.log('\n🏆 SBA GENIUS V5.5.1 - SMART ODDS + COACH K NARRATIVE + FEEL LIKE ODDS');
