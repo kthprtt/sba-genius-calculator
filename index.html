@@ -12254,7 +12254,7 @@ Return ONLY valid JSON:
             const line = parseFloat(document.getElementById('line-input')?.value) || 0;
             
             // G1: Player Active (not OUT/injured)
-            // V9.2: Enhanced with wider status matching + allL5Excluded fallback
+            // V9.2: Enhanced with live AI verification + BDL + allL5Excluded fallback
             const injuries = state.injuries || [];
             const playerName = state.lastPlayerName || state.currentPlayer || '';
             const playerLast = playerName.split(' ').pop()?.toLowerCase() || '';
@@ -12262,11 +12262,16 @@ Return ONLY valid JSON:
                 (i.playerName || i.name || i.athlete?.displayName || '').toLowerCase().includes(playerLast) &&
                 (i.status || '').toLowerCase().includes('out')
             ) : null;
-            // V9.2: If allL5Excluded from projection AND no injury found, flag as likely OUT
+            // V9.1: If allL5Excluded from projection AND no injury found, flag as likely OUT
             const projAllL5Excluded = projection?.allL5Excluded === true;
+            // V9.2: Check live AI verification result (from pre-analysis check)
+            const liveVerified = state.verifiedInjuryStatus;
+            const liveVerifiedOut = liveVerified?.shouldOverride === true;
+            
             const g1InjurySource = playerInjury ? (playerInjury.source || playerInjury.injury || 'Injured') : 
+                                   liveVerifiedOut ? `${liveVerified.reason || 'OUT'} (${liveVerified.source || 'Live AI'})` :
                                    projAllL5Excluded ? 'All L5 games are DNPs — player likely OUT' : null;
-            const g1 = !playerInjury && !projAllL5Excluded;
+            const g1 = !playerInjury && !projAllL5Excluded && !liveVerifiedOut;
             gates.push({ name: 'G1: Player Active', pass: g1, detail: g1 ? 'ACTIVE' : `OUT — ${g1InjurySource}`, critical: true });
             
             // G2: Data Quality ≥ 70% (based on available data sources)
@@ -12285,8 +12290,13 @@ Return ONLY valid JSON:
             if (state.gameLines?.spread) dataQualityScore += 3;
             if (liveEngines.length >= 5) dataQualityScore += 5;
             dataQualityScore = Math.min(100, dataQualityScore);
+            // V9.2: Cap data quality when live AI verification confirms player OUT
+            if (liveVerifiedOut) {
+                dataQualityScore = 0;
+                console.log(`[V9.2] G2: Data quality capped to 0 — player confirmed OUT by live AI`);
+            }
             const g2 = dataQualityScore >= 70;
-            gates.push({ name: 'G2: Data Quality ≥70', pass: g2, detail: `Score: ${dataQualityScore}/100`, critical: true });
+            gates.push({ name: 'G2: Data Quality ≥70', pass: g2, detail: `Score: ${dataQualityScore}/100${liveVerifiedOut ? ' (PLAYER OUT)' : ''}`, critical: true });
             
             // G3: AI Consensus ≥ 60%
             const g3 = liveEngines.length === 0 || consensusRatio >= 0.60;
@@ -29646,6 +29656,149 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             }
             
             showLoading();
+            
+            // ═══════════════════════════════════════════════════════════════
+            // V9.2 FIX: PRE-ANALYSIS INJURY VERIFICATION (mirrors console engine)
+            // The UI previously only checked BDL injuries (state.injuries) which
+            // can lag behind real-time reports. Now we query live AI sources
+            // (Perplexity, You.com, Grok) just like the console engine does.
+            // ═══════════════════════════════════════════════════════════════
+            const isPlayerPropUI = market.startsWith('player_') || ['Points', 'Rebounds', 'Assists', 'Threes', 'Steals', 'Blocks', 'Turnovers', 'PRA', 'PR', 'PA', 'RA', 'Fantasy', 'Double Double', 'Triple Double'].some(m => market.toLowerCase().includes(m.toLowerCase()));
+            state.verifiedInjuryStatus = null; // Reset from previous analysis
+            
+            if (isPlayerPropUI && player) {
+                document.getElementById('loading-stage').textContent = '🏥 Verifying player status across live sources...';
+                console.log(`[V9.2] 🏥 UI Pre-Analysis: Verifying injury status for ${player}...`);
+                
+                try {
+                    // First check BDL injuries (fast, already cached)
+                    const bdlInjuries = state.injuries || [];
+                    const playerLast = player.split(' ').pop()?.toLowerCase() || '';
+                    const bdlInjury = playerLast.length > 1 ? bdlInjuries.find(i => {
+                        const injName = (i.playerName || i.name || i.athlete?.displayName || '').toLowerCase();
+                        return injName.includes(playerLast) && 
+                               (i.status || '').toLowerCase().match(/out|out for season/);
+                    }) : null;
+                    
+                    if (bdlInjury) {
+                        // BDL already has them as OUT — no need for AI verification
+                        const injReason = bdlInjury.injury || bdlInjury.comment || bdlInjury.description || 'Injury';
+                        state.verifiedInjuryStatus = { 
+                            isOut: true, 
+                            status: 'OUT', 
+                            confidence: 'HIGH',
+                            reason: injReason,
+                            source: 'BDL Injury Report',
+                            shouldOverride: true 
+                        };
+                        console.log(`[V9.2] 🚨 BDL confirms ${player} is OUT: ${injReason}`);
+                    } else {
+                        // BDL doesn't have them as OUT — query live AI sources
+                        // Use verifyInjuryStatus if available (same function console engine uses)
+                        if (typeof verifyInjuryStatus === 'function') {
+                            const sport = state.sport || 'nba';
+                            const liveCheck = await verifyInjuryStatus(player, sport);
+                            if (liveCheck.shouldOverride) {
+                                state.verifiedInjuryStatus = {
+                                    isOut: true,
+                                    status: liveCheck.status,
+                                    confidence: liveCheck.confidence,
+                                    reason: liveCheck.summary || liveCheck.sources?.map(s => `${s.engine}: ${s.reason || s.status}`).join(', ') || 'Live AI verification',
+                                    source: 'Live AI (Perplexity/You.com/Grok)',
+                                    shouldOverride: true,
+                                    sources: liveCheck.sources
+                                };
+                                console.log(`[V9.2] 🚨 LIVE AI confirms ${player} is ${liveCheck.status}: ${state.verifiedInjuryStatus.reason}`);
+                                console.log(`[V9.2]    Confidence: ${liveCheck.confidence} | Sources: ${liveCheck.sources?.length || 0}`);
+                                liveCheck.sources?.forEach(s => console.log(`[V9.2]    • ${s.engine}: ${s.status} — ${s.reason || 'N/A'}`));
+                            } else if (liveCheck.status === 'QUESTIONABLE') {
+                                state.verifiedInjuryStatus = {
+                                    isOut: false,
+                                    status: 'QUESTIONABLE',
+                                    confidence: liveCheck.confidence,
+                                    reason: liveCheck.summary || 'Questionable per live sources',
+                                    source: 'Live AI',
+                                    shouldOverride: false
+                                };
+                                console.log(`[V9.2] ⚠️ Live AI: ${player} is QUESTIONABLE — proceeding with analysis`);
+                            } else {
+                                state.verifiedInjuryStatus = {
+                                    isOut: false,
+                                    status: liveCheck.status || 'ACTIVE',
+                                    confidence: liveCheck.confidence || 'LOW',
+                                    reason: null,
+                                    source: 'Live AI',
+                                    shouldOverride: false
+                                };
+                                console.log(`[V9.2] ✅ Live AI: ${player} appears ACTIVE (${liveCheck.confidence || 'LOW'} confidence)`);
+                            }
+                        } else {
+                            console.log(`[V9.2] ⚪ verifyInjuryStatus not available — relying on BDL only`);
+                        }
+                    }
+                    
+                    // V9.2: EARLY EXIT if player confirmed OUT (saves ~50 seconds of AI calls)
+                    if (state.verifiedInjuryStatus?.shouldOverride) {
+                        console.log(`[V9.2] 🚨 EARLY EXIT: ${player} is OUT — skipping full analysis`);
+                        hideLoading();
+                        
+                        // Show a clear NO BET result
+                        const noResult = {
+                            verdict: 'NO_BET',
+                            direction: 'PASS',
+                            recommended: 'PASS',
+                            over: { trueProb: '0', edge: '0', feelOdds: '--', implied: '0' },
+                            under: { trueProb: '0', edge: '0', feelOdds: '--', implied: '0' },
+                            units: 0,
+                            injuryOverride: true,
+                            injuryStatus: state.verifiedInjuryStatus,
+                            player,
+                            market,
+                            line,
+                            gatesFailed: true,
+                            gates: [
+                                { name: 'G1: Player Active', pass: false, detail: `OUT — ${state.verifiedInjuryStatus.reason} (${state.verifiedInjuryStatus.source})`, critical: true },
+                                { name: 'G2: Data Quality ≥70', pass: false, detail: 'Score: 0/100 (player OUT)', critical: true }
+                            ]
+                        };
+                        
+                        state.lastAnalysisResult = noResult;
+                        displayResults(noResult);
+                        
+                        // Render gates showing failure
+                        try {
+                            renderConfidenceGates({
+                                gates: noResult.gates,
+                                allPassed: false,
+                                criticalFail: true
+                            });
+                        } catch(e) {}
+                        
+                        // Show injury alert in the UI
+                        const resultsPanel = document.querySelector('.results-panel');
+                        if (resultsPanel) {
+                            const alertDiv = document.createElement('div');
+                            alertDiv.style.cssText = 'background: rgba(255,59,48,0.15); border: 2px solid #ff3b30; border-radius: 8px; padding: 16px; margin: 12px 0; text-align: center;';
+                            alertDiv.innerHTML = `
+                                <div style="font-size: 24px; font-weight: 800; color: #ff3b30; margin-bottom: 8px;">🚨 NO BET — PLAYER OUT 🚨</div>
+                                <div style="font-size: 14px; color: #ff6b6b; margin-bottom: 4px;">${player} is <b>OUT</b>: ${state.verifiedInjuryStatus.reason}</div>
+                                <div style="font-size: 11px; color: #888;">Source: ${state.verifiedInjuryStatus.source} | Confidence: ${state.verifiedInjuryStatus.confidence}</div>
+                                <div style="font-size: 11px; color: #666; margin-top: 8px;">V9.2: Caught by pre-analysis injury verification (saved ~50s of AI calls)</div>
+                            `;
+                            resultsPanel.prepend(alertDiv);
+                        }
+                        
+                        state._analysisRunning = false;
+                        return;
+                    }
+                } catch (injErr) {
+                    console.warn(`[V9.2] ⚠️ Injury verification failed (non-fatal): ${injErr.message}`);
+                    // Don't block analysis — just proceed without verification
+                }
+            }
+            // ═══════════════════════════════════════════════════════════════
+            // END V9.2 FIX
+            // ═══════════════════════════════════════════════════════════════
             
             // Sequential AI engine animation - V12 has 10 engines
             const engines = ['claude', 'openai', 'perplexity', 'cohere', 'youcom', 'deepseek', 'grok', 'mistral', 'gemini', 'together'];
