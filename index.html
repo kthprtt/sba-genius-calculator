@@ -25796,7 +25796,24 @@ Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueProb":0.55,"reasonin
                         prompt: (() => {
                         const isTeam = blindContext?.isTeamMarket === true;
                         const ti = blindContext?.teamIntelligence;
-                        if (isTeam && ti) {
+                        const mCtxP1Prompt = typeof getMarketContext === 'function' ? getMarketContext(market, blindContext.player) : null;
+                        const isMLPrompt = mCtxP1Prompt?.analysisType === 'moneyline';
+                        
+                        if (isTeam && ti && isMLPrompt) {
+                            // V10.3: Moneyline Pass 1 — ask who wins, return win probability
+                            const selTeam = blindContext.player || ti.awayTeam || 'Away';
+                            return `Moneyline analysis (NO book odds/lines):
+Matchup: ${ti.awayTeam || 'Away'} @ ${ti.homeTeam || 'Home'}
+QUESTION: Will ${selTeam} WIN this game?
+HOME: PPG ${ti.home?.ppg?.toFixed(1) || 'N/A'}, Opp PPG ${ti.home?.oppPpg?.toFixed(1) || 'N/A'}, Net ${ti.home?.margin?.toFixed(1) || 'N/A'}, L5 scoring ${ti.home?.l5Scoring?.toFixed(1) || 'N/A'}
+AWAY: PPG ${ti.away?.ppg?.toFixed(1) || 'N/A'}, Opp PPG ${ti.away?.oppPpg?.toFixed(1) || 'N/A'}, Net ${ti.away?.margin?.toFixed(1) || 'N/A'}, L5 scoring ${ti.away?.l5Scoring?.toFixed(1) || 'N/A'}
+Pace: ${ti.expectedPace?.toFixed(0) || ti.expectedTempo?.toFixed(0) || 'N/A'}
+H2H: ${ti.h2h ? ti.h2h.games+'g, avg total '+ti.h2h.avgTotal?.toFixed(1) : 'None'}
+Injuries: ${blindContext.injuries?.map(i => i.name+'('+i.status+')').join(', ') || 'None'}
+DO NOT use any sportsbook odds. Estimate ${selTeam}'s win probability.
+Respond with ONLY JSON: {"pick":"OVER","confidence":65,"trueProb":0.55,"reasoning":"explanation"}
+OVER = ${selTeam} WINS, UNDER = ${selTeam} LOSES`;
+                        } else if (isTeam && ti) {
                             return `Game-level projection (NO book lines):
 Matchup: ${ti.awayTeam || player} @ ${ti.homeTeam || 'Home'}
 Market: ${market}
@@ -25830,6 +25847,30 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 const engineProjections = [];
                 
                 if (parsed && parsed.pick && parsed.pick !== 'PASS' && !parsed.isError) {
+                    // V10.3: For moneyline, use confidence as win probability directly
+                    const mCtxP1Parse = typeof getMarketContext === 'function' ? getMarketContext(market, blindContext.player) : null;
+                    const isMLParse = mCtxP1Parse?.analysisType === 'moneyline';
+                    
+                    if (isMLParse) {
+                        // ML: Convert pick + confidence to win probability
+                        const conf = parsed.confidence || 65;
+                        const trueProb = parsed.trueProb ? parsed.trueProb * 100 : null;
+                        const winProb = trueProb || (parsed.pick === 'OVER' 
+                            ? (50 + (conf - 50) * 0.8)  // OVER = team wins
+                            : (50 - (conf - 50) * 0.8)); // UNDER = team loses
+                        
+                        engineProjections.push({
+                            id: 'claude',
+                            name: 'Claude',
+                            icon: '🟣',
+                            weight: 0.18,
+                            projectedTotal: Math.round(winProb * 10) / 10, // Win probability as %
+                            pick: parsed.pick,
+                            confidence: conf,
+                            reason: (parsed.reasoning || '').substring(0, 200)
+                        });
+                        console.log(`   🟣 V10.3 Pass 1 ML: Claude → ${parsed.pick} @ ${conf}% → WinProb ${winProb.toFixed(1)}%`);
+                    } else {
                     // Try to extract projected number from reasoning
                     let projTotal = null;
                     const reason = parsed.reasoning || '';
@@ -25900,6 +25941,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                         confidence: parsed.confidence || 65,
                         reason: (parsed.reasoning || '').substring(0, 200)
                     });
+                    } // end else (non-ML)
                 }
                 
                 // Compute SBA Independent Line (weighted average of engine projections)
@@ -28053,7 +28095,13 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 const projMargin = ti.expectedMargin || 0;
                 let gameProjection;
                 if (market === 'Moneyline' || market === 'h2h' || market?.toLowerCase?.()?.includes('moneyline')) {
-                    gameProjection = 50 + (projMargin * 2.5);
+                    // V10.3b: Win probability for the SELECTED team (not always home)
+                    const homeWinProb = 50 + (projMargin * 2.5);
+                    // Check if selected player/team is home
+                    const selPlayer = (state.selectedPlayer || state.lastPlayerName || '').toLowerCase().trim();
+                    const homeNm = (state.homeTeamName || '').toLowerCase().trim();
+                    const selectedIsHome = homeNm.includes(selPlayer.split(' ').pop()) || selPlayer.includes(homeNm.split(' ').pop());
+                    gameProjection = selectedIsHome ? homeWinProb : (100 - homeWinProb);
                     gameProjection = Math.max(5, Math.min(95, gameProjection));
                 } else if (market?.toLowerCase?.()?.includes('spread') || market?.toLowerCase?.()?.includes('handicap')) {
                     gameProjection = projMargin;
@@ -31378,9 +31426,21 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                         
                                         if (isML && state.liveOdds?.lines && state.lastProjection) {
                                             // Get model win probability from V26 margin
+                                            // V26 margin is HOME-RELATIVE: positive = home favored
                                             const projMargin = state.teamIntelligence?.projectedMargin || 0;
-                                            // Convert margin to win prob: margin 0 = 50%, each point ~2.5%
-                                            modelWinProb = Math.min(95, Math.max(5, 50 + projMargin * 2.5));
+                                            
+                                            // Determine if selected player/team is home or away
+                                            const selLower = (player || '').toLowerCase().trim();
+                                            const homeName = (state.homeTeamName || '').toLowerCase().trim();
+                                            const awayName = (state.awayTeamName || '').toLowerCase().trim();
+                                            const selIsHomeTeam = homeName.includes(selLower.split(' ').pop()) || selLower.includes(homeName.split(' ').pop());
+                                            
+                                            // Home win prob from margin
+                                            const homeWinProb = Math.min(95, Math.max(5, 50 + projMargin * 2.5));
+                                            // Selected team's win prob (flip if away)
+                                            modelWinProb = selIsHomeTeam ? homeWinProb : (100 - homeWinProb);
+                                            
+                                            console.log(`   🏠 G11: player="${player}", isHome=${selIsHomeTeam}, margin=${projMargin.toFixed(1)}, homeWP=${homeWinProb.toFixed(1)}%, selWP=${modelWinProb.toFixed(1)}%`);
                                             
                                             // Get best book odds for the consensus direction
                                             const consensusDir = gateResult.consensusDir; // OVER = selected team wins, UNDER = loses
@@ -31429,8 +31489,14 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                                         selIsAway = selTokens.some(t => t.length > 2 && awayTeamLower.includes(t));
                                                     }
                                                     
-                                                    // Default to home if no match (shouldn't happen)
-                                                    if (!selIsHome && !selIsAway) selIsHome = true;
+                                                    // Default: if no match, check state.homeTeamName
+                                                    if (!selIsHome && !selIsAway) {
+                                                        const stateHome = (state.homeTeamName || '').toLowerCase().trim();
+                                                        const stateAway = (state.awayTeamName || '').toLowerCase().trim();
+                                                        selIsHome = stateHome.includes(selTeamLower.split(' ').pop()) || selTeamLower.includes(stateHome.split(' ').pop());
+                                                        selIsAway = !selIsHome && (stateAway.includes(selTeamLower.split(' ').pop()) || selTeamLower.includes(stateAway.split(' ').pop()));
+                                                        if (!selIsHome && !selIsAway) selIsHome = true; // last resort
+                                                    }
                                                     
                                                     if (consensusDir === 'OVER') {
                                                         // Betting selected team to WIN
@@ -34851,20 +34917,25 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             // V28: Independent model = Pass 1 SBA line (NO Vegas anchor)
             // Priority: Pass 1 line-blind result > independentProjection > rawProjection
             // V10.3 FIX: Moneyline uses win probability, not point values
-            const mCtxPanel = getMarketContext(state.analysisMarket || state.currentMarket || 'Points', state.currentPlayer || '');
+            const mCtxPanel = getMarketContext(state.analysisMarket || state.currentMarket || 'Points', state.lastPlayerName || state.currentPlayer || '');
             const isMLPanel = mCtxPanel?.analysisType === 'moneyline';
             
             let sbaModel, bookLine;
             if (isMLPanel) {
                 // For moneyline: sbaModel = model win prob, bookLine = book implied prob
+                // V10.3b: Margin is HOME-RELATIVE, need to flip for away teams
                 const projMargin = state.teamIntelligence?.projectedMargin || state.teamIntelligence?.matchup?.expectedMargin || 0;
-                sbaModel = Math.min(95, Math.max(5, 50 + projMargin * 2.5));
+                const selTeamName = (state.lastPlayerName || state.currentPlayer || '').toLowerCase().trim();
+                const homeName = (state.homeTeamName || '').toLowerCase().trim();
+                const selIsHomePanel = homeName.includes(selTeamName.split(' ').pop()) || selTeamName.includes(homeName.split(' ').pop());
+                const homeWinProb = Math.min(95, Math.max(5, 50 + projMargin * 2.5));
+                sbaModel = selIsHomePanel ? homeWinProb : (100 - homeWinProb);
                 
                 // Get book implied probability from actual odds
                 const mlLines = state.liveOdds?.lines ? Object.values(state.liveOdds.lines).filter(b => b.type === 'moneyline') : [];
                 if (mlLines.length > 0) {
                     // Determine which side we're betting (selected team)
-                    const selTeam = (state.currentPlayer || '').toLowerCase().trim();
+                    const selTeam = (state.lastPlayerName || state.currentPlayer || '').toLowerCase().trim();
                     let relevantOdds = [];
                     mlLines.forEach(b => {
                         const homeTeam = (b.homeTeam || '').toLowerCase().trim();
