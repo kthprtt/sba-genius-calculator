@@ -39070,7 +39070,8 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
 <!-- V8.1: Auto-load console analysis engine if available -->
 <script>
 // ═══════════════════════════════════════════════════════════════════
-// V48 ULTIMATE V8.1 - EMBEDDED (was external V48_ULTIMATE_V8_1.js)
+// V48 ULTIMATE V8.2 — EMBEDDED
+// Fixes: oppTeamId scope, V7 adj ordering, Vegas Anchor, Home/Away, Minutes, Efficiency
 // ═══════════════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════════
 // SBA GENIUS V48 ULTIMATE V6.0 - FULL PROJECTION ENGINE + BLOWOUT CLEAN + STREAK SAFE
@@ -45242,6 +45243,7 @@ reasoning must explain your analysis`;
                 // Opponent Profile, Quarter Breakdown, Team Profiles
                 // ═══════════════════════════════════════════════════════════
 
+                let oppTeamId = null; // V8.1 FIX: Hoisted so Sit H2H can access
                 if (sport === 'nba' && bdlPlayerId) {
                     const yr = new Date().getMonth() >= 9 ? new Date().getFullYear() : new Date().getFullYear() - 1;
                     const baseUrl = 'https://api.balldontlie.io';
@@ -45251,7 +45253,7 @@ reasoning must explain your analysis`;
                     // V7.0 FIX: Legacy /v1/stats uses home_team_id (number) not home_team (object)
                     // Find opponent team BDL ID by name from /nba/v1/teams
                     // V7.0 FIX: Legacy /v1/stats IDs don't match /nba/v1 IDs, so match by name only
-                    const oppTeamId = await (async () => {
+                    oppTeamId = await (async () => {
                         if (!params.opponent) return null;
                         const oppName = params.opponent.toLowerCase();
                         try {
@@ -45889,9 +45891,7 @@ reasoning must explain your analysis`;
                     }
                 }
                 
-                const finalProj = baseProj + totalAdj;
-
-                // V7.0 Adjustments
+                // V7.0 Adjustments (MUST be before finalProj calculation)
                 if (v7InjuryBoost?.boost > 0) { totalAdj += v7InjuryBoost.boost; adjList.push(`InjuryBoost +${v7InjuryBoost.boost.toFixed(1)}`); }
                 if (v7BlowoutRisk?.adjustment && Math.abs(v7BlowoutRisk.adjustment) >= 0.5) { totalAdj += v7BlowoutRisk.adjustment; adjList.push(`BlowoutRisk ${v7BlowoutRisk.adjustment >= 0 ? '+' : ''}${v7BlowoutRisk.adjustment.toFixed(1)}`); }
                 if (v7StyleMatchup?.score && Math.abs(v7StyleMatchup.score) > 0.02) { const sa = v7StyleMatchup.score * seasonAvg * 0.3; totalAdj += sa; adjList.push(`Style ${sa >= 0 ? '+' : ''}${sa.toFixed(1)}`); }
@@ -45899,6 +45899,62 @@ reasoning must explain your analysis`;
                 if (typeof v7Spots !== 'undefined' && v7Spots?.length > 0) { const spotAdj = v7Spots.reduce((s,sp) => s + sp.adj, 0); if (Math.abs(spotAdj) >= 0.2) { totalAdj += spotAdj; adjList.push(`Spots ${spotAdj >= 0 ? '+' : ''}${spotAdj.toFixed(1)}`); } }
                 if (v7PositionDefense?.posDefAdj && Math.abs(v7PositionDefense.posDefAdj) >= 0.1) { totalAdj += v7PositionDefense.posDefAdj; adjList.push(`PosDef ${v7PositionDefense.posDefAdj >= 0 ? '+' : ''}${v7PositionDefense.posDefAdj.toFixed(1)}`); }
                 if (refereeData?.found && refereeData.avgTotalDiff && Math.abs(refereeData.avgTotalDiff) >= 1.0) { const refAdj = refereeData.avgTotalDiff * (((advancedStats?.usagePct || 0.25) * 100)) / 100 * 0.3; totalAdj += refAdj; adjList.push(`Ref ${refAdj >= 0 ? '+' : ''}${refAdj.toFixed(1)}`); }
+
+                // V8.1 FIX: Home/Away split from actual player data (matches UI E4)
+                // Use home/away stats from BDL enrichment if available
+                const v48HomeSplit = v7Matrix?.scoring?.home_games_ppg || null;
+                const v48AwaySplit = v7Matrix?.scoring?.away_games_ppg || null;
+                if (v48HomeSplit && v48AwaySplit && isH !== null) {
+                    const splitAvg = isH ? v48HomeSplit : v48AwaySplit;
+                    const splitDiff = splitAvg - seasonAvg;
+                    if (Math.abs(splitDiff) >= 0.5) {
+                        const cappedSplit = Math.max(-3, Math.min(3, splitDiff));
+                        totalAdj += cappedSplit;
+                        adjList.push(`${isH ? 'Home' : 'Away'}Split ${cappedSplit >= 0 ? '+' : ''}${cappedSplit.toFixed(1)}`);
+                    }
+                }
+
+                // V8.1 FIX: Minutes projection (matches UI E7) 
+                if (hasMin) {
+                    const seasonMins = stats?.avgMinutes || (rawGames.length > 0 ? rawGames.reduce((s,g) => s + (parseMinutes(g.min || '0')), 0) / rawGames.length : 34);
+                    let projMins = seasonMins;
+                    if (v7BlowoutRisk?.projMinutes) projMins = v7BlowoutRisk.projMinutes;
+                    else if (v48TeamIntel?.margin && Math.abs(v48TeamIntel.margin) > 8) projMins *= 0.85;
+                    if (b2bData?.isB2B) projMins -= 2;
+                    const minsDiff = (projMins - seasonMins) / seasonMins;
+                    const minsAdj = minsDiff * baseProj;
+                    if (Math.abs(minsAdj) >= 0.3) { totalAdj += minsAdj; adjList.push(`Minutes ${minsAdj >= 0 ? '+' : ''}${minsAdj.toFixed(1)}`); }
+                }
+
+                // V8.1 FIX: Efficiency trend (matches UI E17)
+                if (v7RollingStats?.l5Mean && v7RollingStats?.l10Mean && rawGames.length >= 10) {
+                    const l5efg = rawGames.slice(0,5).reduce((s,g) => {
+                        const fgm = g.fgm||0, fga = g.fga||0, fg3m = g.fg3m||0;
+                        return s + (fga > 0 ? (fgm + 0.5*fg3m)/fga : 0);
+                    }, 0) / 5;
+                    const l10efg = rawGames.slice(0,10).reduce((s,g) => {
+                        const fgm = g.fgm||0, fga = g.fga||0, fg3m = g.fg3m||0;
+                        return s + (fga > 0 ? (fgm + 0.5*fg3m)/fga : 0);
+                    }, 0) / 10;
+                    const efgDelta = l5efg - l10efg;
+                    if (Math.abs(efgDelta) > 0.02) {
+                        const effAdj = efgDelta * baseProj * 0.15;
+                        if (Math.abs(effAdj) >= 0.2) { totalAdj += effAdj; adjList.push(`Efficiency ${effAdj >= 0 ? '+' : ''}${effAdj.toFixed(1)}`); }
+                    }
+                }
+
+                let rawProj = baseProj + totalAdj;
+                
+                // V8.1 FIX: Vegas Anchor (matches UI engine) — cap deviation from line
+                const dataQuality = Math.min(100, dataQualityScore || 80);
+                const maxDeviationPct = dataQuality >= 90 ? 0.20 : dataQuality >= 70 ? 0.15 : 0.10;
+                const maxDeviation = line * maxDeviationPct;
+                const finalProj = Math.max(line - maxDeviation, Math.min(line + maxDeviation, rawProj));
+                if (Math.abs(finalProj - rawProj) > 0.1) {
+                    console.log(`[V48] 📊 Vegas Anchor: ${rawProj.toFixed(1)} → ${finalProj.toFixed(1)} (max ${(maxDeviationPct*100).toFixed(0)}% dev at ${dataQuality}% confidence)`);
+                    adjList.push(`VegasAnchor ${(finalProj - rawProj) >= 0 ? '+' : ''}${(finalProj - rawProj).toFixed(1)}`);
+                }
+
                 console.log(`[V48] 📊 Adj: ${totalAdj>=0?'+':''}${totalAdj.toFixed(1)} → Final: ${finalProj.toFixed(1)}`);
                 if(adjList.length>0) console.log(`[V48]    ${adjList.join(' | ')}`);
                 console.log(`[V48] 🎯 Projection [${sport.toUpperCase()}]: ${finalProj.toFixed(1)} (${((finalProj/line-1)*100).toFixed(1)}% ${finalProj>line?'above':'below'} line)`);
@@ -47847,7 +47903,7 @@ if (typeof window !== 'undefined') {
 // Startup
 console.log('\n🏆 SBA GENIUS V48 ULTIMATE V8.1 — H2H FIX + CONSOLE EXPORT');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('V8.1: H2H opponent fix, vs-opponent filter, window.SBA_V47_ULTIMATE export');
+console.log('V8.2: oppTeamId scope fix, V7 adj ordering fix, Vegas Anchor, Home/Away splits, Minutes, Efficiency');
 console.log('GATES: 7 (G1-G7) | SPORTS: 12 | MARKETS: 274');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
