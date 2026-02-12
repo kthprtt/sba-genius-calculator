@@ -25858,6 +25858,7 @@ Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueProb":0.55,"reasonin
                 const _mCtxP1Check = typeof getMarketContext === 'function' ? getMarketContext(market, blindContext.player) : null;
                 const _isMLPass1Multi = _mCtxP1Check?.analysisType === 'moneyline' && blindContext?.isTeamMarket && blindContext?.teamIntelligence;
                 const engineProjections = [];
+                let _pass1Consensus = null; // Hoisted for both paths
                 
                 if (_isMLPass1Multi) {
                     // Call ALL engines for ML win probability (not just Claude)
@@ -25918,6 +25919,10 @@ Respond with ONLY JSON: {"pick":"OVER","confidence":75,"reasoning":"explanation"
                         console.log(`   ${r.icon} V10.3h Pass 1 ML: ${r.name} → ${r.pick} @ ${r.confidence}% → WinProb ${r.projectedTotal}%`);
                     });
                     console.log(`   📊 V10.3h: ${engineProjections.length}/${p1Engines.length} engines responded`);
+                    // Build consensus for multi-engine path
+                    const overCount = engineProjections.filter(e => e.pick === 'OVER').length;
+                    const underCount = engineProjections.filter(e => e.pick === 'UNDER').length;
+                    _pass1Consensus = { direction: overCount >= underCount ? 'OVER' : 'UNDER', agreement: engineProjections.length };
                 }
                 
                 // Non-ML: Single engine (Claude) for projection number
@@ -25972,6 +25977,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 
                 if (!response.ok) throw new Error(`Pass 1 proxy error: ${response.status}`);
                 const data = await response.json();
+                _pass1Consensus = data?.consensus || null; // V10.3h: capture for pass1Result
                 
                 // V47 FIX: We're calling a single engine (/api/ai/claude), not batch
                 // Parse the single response using proven parser
@@ -26160,7 +26166,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     engineProjections,
                     enginesUsed: engineProjections.length,
                     v26Projection: v26Proj || null,
-                    consensus: data.consensus
+                    consensus: _pass1Consensus
                 };
                 
                 console.log(`\n🔬 V28 PASS 1 RESULTS${isMLPass1 ? ' [MONEYLINE WIN PROB]' : ''}:`);
