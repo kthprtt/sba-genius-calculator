@@ -12298,9 +12298,9 @@ Return ONLY valid JSON:
             const g2 = dataQualityScore >= 70;
             gates.push({ name: 'G2: Data Quality ≥70', pass: g2, detail: `Score: ${dataQualityScore}/100${liveVerifiedOut ? ' (PLAYER OUT)' : ''}`, critical: true });
             
-            // G3: AI Consensus ≥ 60%
-            const g3 = liveEngines.length === 0 || consensusRatio >= 0.60;
-            gates.push({ name: 'G3: AI Consensus ≥60%', pass: g3, detail: liveEngines.length > 0 ? `${Math.round(consensusRatio * 100)}% (${Math.max(overVotes, underVotes)}/${validEngines})` : 'Pending', critical: true });
+            // G3: AI Consensus ≥ 70% (V9.3: raised from 60% for bot accuracy)
+            const g3 = liveEngines.length === 0 || consensusRatio >= 0.70;
+            gates.push({ name: 'G3: AI Consensus ≥70%', pass: g3, detail: liveEngines.length > 0 ? `${Math.round(consensusRatio * 100)}% (${Math.max(overVotes, underVotes)}/${validEngines})` : 'Pending', critical: true });
             
             // G4: < 3 PASS/Error votes
             const g4 = passVotes < 3;
@@ -12340,6 +12340,27 @@ Return ONLY valid JSON:
             }
             gates.push({ name: 'G7: Stats Sanity Check', pass: g7, detail: g7Detail, critical: true });
             
+            // G8: V9.3 BOT-READY — CV < 35% (Variance Gate)
+            // Bot can't trust high-variance players — too unpredictable for auto-betting
+            const cv = projection?.varianceScore || projection?.cv || projection?.CV || 0;
+            const g8 = cv > 0 ? cv < 35 : true; // Pass if no CV data (will be caught by G2)
+            const g8Detail = cv > 0 ? `CV ${cv.toFixed(1)}%${cv >= 35 ? ' — TOO VOLATILE for bot' : ' — Acceptable'}` : 'No variance data';
+            gates.push({ name: 'G8: CV < 35%', pass: g8, detail: g8Detail, critical: true });
+            
+            // G9: V9.3 BOT-READY — Minimum 3 sportsbooks offering odds
+            // Can't place a bet if books aren't offering the prop
+            const bookCount = state.liveOdds ? Object.keys(state.liveOdds.lines || {}).length : 0;
+            const g9 = bookCount >= 3;
+            const g9Detail = bookCount > 0 ? `${bookCount} books${bookCount < 3 ? ' — NEED 3+ for bot' : ' — Sufficient'}` : 'No odds available';
+            gates.push({ name: 'G9: ≥3 Books', pass: g9, detail: g9Detail, critical: true });
+            
+            // G10: V9.3 BOT-READY — Injury Status Verified (HIGH or MEDIUM confidence)
+            // Bot needs confident injury verification, not LOW
+            const injConfidence = state.verifiedInjuryStatus?.confidence || 'NONE';
+            const g10 = injConfidence === 'HIGH' || injConfidence === 'MEDIUM';
+            const g10Detail = injConfidence !== 'NONE' ? `${injConfidence} confidence${injConfidence === 'LOW' ? ' — INSUFFICIENT for bot' : ''}` : 'Not verified';
+            gates.push({ name: 'G10: Injury Verified', pass: g10, detail: g10Detail, critical: true });
+            
             // Calculate overall result
             const allPass = gates.every(g => g.pass);
             const criticalFail = gates.some(g => !g.pass && g.critical);
@@ -12371,7 +12392,7 @@ Return ONLY valid JSON:
                 verdict.style.background = 'rgba(0,255,136,0.1)';
                 verdict.style.border = '1px solid rgba(0,255,136,0.3)';
                 verdict.style.color = '#00ff88';
-                verdict.textContent = '🟢 ALL 7 GATES PASSED — Analysis is high confidence';
+                verdict.textContent = `🟢 ALL ${gateResult.gates.length} GATES PASSED — Analysis is high confidence`;
             } else if (gateResult.criticalFail) {
                 verdict.style.background = 'rgba(255,68,68,0.1)';
                 verdict.style.border = '1px solid rgba(255,68,68,0.3)';
@@ -12386,6 +12407,48 @@ Return ONLY valid JSON:
             
             // Store for other components
             state.lastConfidenceGates = gateResult;
+        }
+        
+        // V9.3 BOT-READY: Render visual badge showing bot assessment
+        function renderBotReadyBadge(isReady, checks, passCount, total, player, market, line, direction) {
+            // Remove any existing bot badge
+            const existing = document.getElementById('bot-ready-badge');
+            if (existing) existing.remove();
+            
+            const gatesSection = document.getElementById('confidence-gates-section');
+            if (!gatesSection) return;
+            
+            const badge = document.createElement('div');
+            badge.id = 'bot-ready-badge';
+            
+            if (isReady) {
+                badge.style.cssText = 'background: linear-gradient(135deg, rgba(0,255,136,0.15), rgba(0,200,255,0.1)); border: 2px solid #00ff88; border-radius: 8px; padding: 12px 16px; margin-top: 10px; text-align: center;';
+                badge.innerHTML = `
+                    <div style="font-size: 18px; font-weight: 800; color: #00ff88; margin-bottom: 4px;">🤖 BOT READY — AUTO-BET APPROVED ✅</div>
+                    <div style="font-size: 12px; color: #00cc66;">${player} ${market} ${direction} @ ${line} — ${passCount}/${total} checks passed</div>
+                    <div style="font-size: 10px; color: #888; margin-top: 4px;">V9.3: All bot-accuracy gates met. Tier 2+ streak safe. High conviction.</div>
+                `;
+            } else {
+                const failures = Object.entries(checks).filter(([,v]) => !v).map(([k]) => {
+                    const labels = {
+                        allGatesPass: 'Gates Failed',
+                        injuryConfirmed: 'Injury Unverified',
+                        hasSufficientBooks: 'Too Few Books',
+                        consensusStrong: 'Weak Consensus',
+                        cvOk: 'High Variance',
+                        tierOk: 'Low Streak Tier'
+                    };
+                    return labels[k] || k;
+                });
+                badge.style.cssText = 'background: rgba(255,68,68,0.08); border: 1px solid rgba(255,68,68,0.3); border-radius: 8px; padding: 10px 16px; margin-top: 10px; text-align: center;';
+                badge.innerHTML = `
+                    <div style="font-size: 14px; font-weight: 700; color: #ff6b6b; margin-bottom: 4px;">🤖 BOT: NOT READY (${passCount}/${total}) ❌</div>
+                    <div style="font-size: 11px; color: #ff8888;">Blocked: ${failures.join(' • ')}</div>
+                    <div style="font-size: 10px; color: #666; margin-top: 4px;">V9.3: Manual analysis only — does not meet auto-bet criteria</div>
+                `;
+            }
+            
+            gatesSection.appendChild(badge);
         }
         
         function renderMarketTabs() {
@@ -12826,6 +12889,12 @@ Return ONLY valid JSON:
         async function onPlayerChange() {
             const select = document.getElementById('player-select');
             const player = select.value;
+            
+            // V9.3 BOT-READY: Clear previous player's injury/bot state
+            state.verifiedInjuryStatus = null;
+            state.botReady = null;
+            const existingBotBadge = document.getElementById('bot-ready-badge');
+            if (existingBotBadge) existingBotBadge.remove();
             
             if (player) {
                 // V34 FIX: Freeze market at function entry — async ops below may take 2-5 seconds
@@ -20333,6 +20402,12 @@ Return ONLY valid JSON:
         
         // Master function to update all intel panels - V8 WORLD CLASS
         async function updateAllIntelPanels(playerName, playerData, selectedEvent, market, line) {
+            // V9.3 BOT-READY: Cancel pipeline if player already confirmed OUT by injury verification
+            if (state.verifiedInjuryStatus?.shouldOverride) {
+                console.log(`[V9.3] 🛑 PIPELINE CANCELLED: ${playerName} is OUT — skipping updateAllIntelPanels (saves ~30s of API calls)`);
+                return null;
+            }
+            
             // V35: LOCK market into state at pipeline start — prevents DOM drift during async ops
             const lockedMarket = market || document.getElementById('market-type')?.value || 'Points';
             state.analysisMarket = lockedMarket;
@@ -21066,6 +21141,12 @@ Return ONLY valid JSON:
                 console.log(`⚠️ V31 MISSING DATA: ${pipelineMissing.join(', ')}`);
             } else {
                 console.log(`✅ V31 ALL DATA SOURCES LOADED — maximum projection accuracy`);
+            }
+            
+            // V9.3 BOT-READY: Mid-pipeline cancellation check
+            if (state.verifiedInjuryStatus?.shouldOverride) {
+                console.log(`[V9.3] 🛑 PIPELINE CANCELLED MID-FLIGHT: ${playerName} is OUT — aborting before projection`);
+                return null;
             }
             
             const projection = calculateAIProjection(intelData, line, lockedMarket, contextData);
@@ -30808,6 +30889,60 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                         state.playerStats || state.players?.find(p => p.name === player)
                                     );
                                     renderConfidenceGates(gateResult);
+                                    
+                                    // V9.3 BOT-READY ASSESSMENT
+                                    // Evaluates if this play meets all criteria for automated betting
+                                    const streakData = state.lastStreakSafe;
+                                    const streakTier = streakData?.tier || 0;
+                                    const allGatesPass = gateResult.allPass;
+                                    const noCriticalFail = !gateResult.criticalFail;
+                                    const injuryConfirmed = state.verifiedInjuryStatus?.confidence === 'HIGH' || state.verifiedInjuryStatus?.confidence === 'MEDIUM';
+                                    const hasSufficientBooks = (state.liveOdds ? Object.keys(state.liveOdds.lines || {}).length : 0) >= 3;
+                                    const consensusStrong = gateResult.consensusRatio >= 0.70;
+                                    const cvOk = (state.lastProjection?.varianceScore || 0) < 35 || (state.lastProjection?.varianceScore || 0) === 0;
+                                    const tierOk = streakTier >= 2 || streakTier === 'diamond';
+                                    
+                                    const botChecks = {
+                                        allGatesPass,
+                                        injuryConfirmed,
+                                        hasSufficientBooks,
+                                        consensusStrong,
+                                        cvOk,
+                                        tierOk
+                                    };
+                                    const botPassCount = Object.values(botChecks).filter(Boolean).length;
+                                    const botTotal = Object.keys(botChecks).length;
+                                    const isBotReady = botPassCount === botTotal;
+                                    
+                                    console.log(`\n🤖 V9.3 BOT-READY ASSESSMENT: ${isBotReady ? '✅ AUTO-BET APPROVED' : `❌ NOT READY (${botPassCount}/${botTotal})`}`);
+                                    console.log(`   ${allGatesPass ? '✅' : '❌'} All Gates Pass (${gateResult.gates?.filter(g => g.pass).length}/${gateResult.gates?.length})`);
+                                    console.log(`   ${injuryConfirmed ? '✅' : '❌'} Injury Verified (${state.verifiedInjuryStatus?.confidence || 'NONE'})`);
+                                    console.log(`   ${hasSufficientBooks ? '✅' : '❌'} Sportsbook Odds (${state.liveOdds ? Object.keys(state.liveOdds.lines || {}).length : 0} books)`);
+                                    console.log(`   ${consensusStrong ? '✅' : '❌'} AI Consensus ≥70% (${Math.round((gateResult.consensusRatio || 0) * 100)}%)`);
+                                    console.log(`   ${cvOk ? '✅' : '❌'} CV < 35% (${(state.lastProjection?.varianceScore || 0).toFixed(1)}%)`);
+                                    console.log(`   ${tierOk ? '✅' : '❌'} Streak Tier ≥2 (Tier ${streakTier})`);
+                                    
+                                    if (isBotReady) {
+                                        console.log(`   🟢 VERDICT: ${player} ${market} — ${gateResult.consensusDir} @ ${line} — APPROVED FOR AUTO-BET`);
+                                    } else {
+                                        const failures = Object.entries(botChecks).filter(([,v]) => !v).map(([k]) => k);
+                                        console.log(`   🔴 BLOCKED: ${failures.join(', ')}`);
+                                    }
+                                    
+                                    // Store bot assessment in state
+                                    state.botReady = {
+                                        ready: isBotReady,
+                                        checks: botChecks,
+                                        passCount: botPassCount,
+                                        total: botTotal,
+                                        direction: gateResult.consensusDir,
+                                        tier: streakTier,
+                                        timestamp: Date.now()
+                                    };
+                                    
+                                    // Render bot-ready badge in UI
+                                    renderBotReadyBadge(isBotReady, botChecks, botPassCount, botTotal, player, market, line, gateResult.consensusDir);
+                                    
                                 } catch(gateErr) {
                                     console.warn('⚠️ Confidence Gates error (non-fatal):', gateErr.message);
                                 }
@@ -40589,6 +40724,29 @@ SCORE: [score if live/finished, or "N/A"]`,
             }
         } catch(e) {}
         
+        // V9.3 BOT-READY: Cross-reference with BDL injury report for confidence boost
+        // If BDL doesn't list the player as OUT, that's an implicit ACTIVE signal
+        const bdlInjuries = state?.injuries || [];
+        const playerLast = player.split(' ').pop()?.toLowerCase() || '';
+        const bdlListsOut = playerLast.length > 1 && bdlInjuries.some(i => {
+            const injName = (i.playerName || i.name || i.athlete?.displayName || '').toLowerCase();
+            return injName.includes(playerLast) && (i.status || '').toLowerCase().match(/out|out for season/);
+        });
+        // If BDL does NOT list player as out, count as an additional ACTIVE signal
+        if (!bdlListsOut && playerLast.length > 1) {
+            activeCount++;
+            sources.push({ engine: 'bdl_injury_report', status: 'ACTIVE', reason: 'Not listed on BDL injury report as OUT' });
+            console.log(`[V9.3] 🏥 BDL cross-ref: ${player} NOT on injury report → +1 ACTIVE signal`);
+        }
+        
+        // V9.3 BOT-READY: Also check if sportsbooks are offering odds (strong ACTIVE signal)
+        const hasLiveOdds = state?.liveOdds && Object.keys(state.liveOdds.lines || {}).length >= 3;
+        if (hasLiveOdds) {
+            activeCount++;
+            sources.push({ engine: 'sportsbook_odds', status: 'ACTIVE', reason: `${Object.keys(state.liveOdds.lines || {}).length}+ books offering props` });
+            console.log(`[V9.3] 📊 Sportsbook cross-ref: ${Object.keys(state.liveOdds.lines || {}).length} books have odds → +1 ACTIVE signal`);
+        }
+        
         // Consensus logic: Need 2+ sources to confirm OUT, otherwise be cautious
         let finalStatus = 'ACTIVE';
         let confidence = 'LOW';
@@ -40610,9 +40768,19 @@ SCORE: [score if live/finished, or "N/A"]`,
             finalStatus = 'QUESTIONABLE';
             confidence = 'MEDIUM';
             shouldOverride = false;
+        } else if (activeCount >= 3) {
+            // V9.3: 3+ ACTIVE signals (AI + BDL + odds) = HIGH confidence
+            finalStatus = 'ACTIVE';
+            confidence = 'HIGH';
+            shouldOverride = false;
         } else if (activeCount >= 2) {
             finalStatus = 'ACTIVE';
             confidence = 'HIGH';
+            shouldOverride = false;
+        } else if (activeCount === 1) {
+            // V9.3: Single ACTIVE source = MEDIUM (was LOW)
+            finalStatus = 'ACTIVE';
+            confidence = 'MEDIUM';
             shouldOverride = false;
         }
         
@@ -44936,7 +45104,7 @@ reasoning must explain your analysis`;
         
         console.log('\n');
         console.log('╔═══════════════════════════════════════════════════════════════════════════════╗');
-        console.log('║   🏆 SBA GENIUS V48 ULTIMATE V9.2 - WORLD CLASS + INJURY VERIFICATION 🏆              ║');
+        console.log('║   🏆 SBA GENIUS V48 ULTIMATE V9.3 - BOT-READY ENGINE 🏆              ║');
         console.log('╠═══════════════════════════════════════════════════════════════════════════════╣');
         console.log(`║  ${displaySubject} | ${statDisplay} @ ${params.line} ${isPlayerProp ? 'vs ' + (params.opponent || 'Unknown') : ''}`.padEnd(78) + '║');
         console.log(`║  Sport: ${sportConfig.name} | Market: ${market} | Type: ${marketType.toUpperCase()}`.padEnd(78) + '║');
@@ -48263,7 +48431,7 @@ SOURCE: [where you found this]`,
         verifyInjuryStatus,
         // Note: Legacy sport-specific functions (getNFLStats, getMLBStats, getNHLStats, getNCAABStats) 
         // are still in code but deprecated - use getBDLStatsUnified instead
-        version: '9.2.0 - V9.2 UI INJURY GATE'
+        version: '9.3.0 - V9.3 BOT-READY'
     };
 })();
 
@@ -48274,11 +48442,11 @@ if (typeof window !== 'undefined') {
 }
 
 // Startup
-console.log('\n🏆 SBA GENIUS V48 ULTIMATE V9.2 — WORLD CLASS ENGINE + INJURY VERIFICATION');
+console.log('\n🏆 SBA GENIUS V48 ULTIMATE V9.3 — BOT-READY ENGINE');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('V9.2: WORLD CLASS + INJURY VERIFY — V9.1 fixes + AI-powered injury verification for UI engine, enhanced G1 gate with allL5Excluded fallback');
+console.log('V9.3: BOT-READY — 10-gate system (G1-G10), CV gate, 3+ books gate, injury confidence boost, pipeline cancellation, bot assessment engine');
 console.log('   Sources: OddsAPI (spread/total), ESPN (schedule/B2B), BDL (stats/injuries/matrix), 11 AI engines');
-console.log('GATES: 7 (G1-G7) | SPORTS: 12 | MARKETS: 274');
+console.log('GATES: 10 (G1-G10) | BOT CHECKS: 6 | SPORTS: 12 | MARKETS: 274');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
 </script>
