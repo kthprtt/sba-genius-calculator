@@ -35622,7 +35622,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             // V28b: Add too-good warning
             if (tooGoodWarning) reasons.push(tooGoodWarning);
             // V28b: Add cap notification
-            if (wasCapped) reasons.push(`📊 Probability capped at ${PROB_CAP}% (raw: ${rawModelProb.toFixed(1)}%)`);
+            if (wasCapped) reasons.push(`📊 Probability capped at ${PROB_CAP_PANEL}% (raw: ${rawModelProb.toFixed(1)}%)`);
             
             // V28c: Add situational H2H intelligence to reasons
             if (situational && situational.filterCount >= 3) {
