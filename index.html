@@ -18385,6 +18385,45 @@ Return ONLY valid JSON:
                 expectedTotal, teamAExpPts, teamBExpPts, expectedMargin,
                 expectedTempo, expectedPace, expectedEfg,
                 spreadStrength: a.margin_season - b.margin_season,
+                // V10.3e: Injury-adjusted margin — shift based on OUT star players
+                injuryAdjMargin: (() => {
+                    let adj = expectedMargin;
+                    try {
+                        const injuries = state.injuries || [];
+                        const homeTeamName = (homeProfile?._teamName || '').toLowerCase();
+                        const awayTeamName = (awayProfile?._teamName || '').toLowerCase();
+                        // Cross-reference injuries with cached player data for PPG
+                        const players = state.cachedPlayers || [];
+                        injuries.forEach(inj => {
+                            if (!inj || (inj.status !== 'Out' && inj.status !== 'Out For Season')) return;
+                            const injTeam = (inj.team || '').toLowerCase();
+                            const injName = (inj.playerName || '').toLowerCase();
+                            // Look up PPG from player data
+                            const pMatch = players.find(p => {
+                                const pName = (p.name || p.fullName || '').toLowerCase();
+                                return pName === injName || pName.includes(injName) || injName.includes(pName);
+                            });
+                            const ppg = pMatch?.seasonAvg?.pts || pMatch?.bdlStats?.pts || pMatch?.stats?.pts || 0;
+                            if (ppg < 12) return; // Only adjust for significant contributors (12+ PPG)
+                            // Impact formula: each PPG = ~0.25 point swing (based on NBA research)
+                            // A 25 PPG player like SGA ≈ 6pt swing, a 30 PPG player like Giannis ≈ 7pt swing
+                            const impactPts = Math.min(8, ppg * 0.25);
+                            const isHome = injTeam.includes(homeTeamName) || homeTeamName.includes(injTeam.split(' ').pop());
+                            const isAway = injTeam.includes(awayTeamName) || awayTeamName.includes(injTeam.split(' ').pop());
+                            if (isHome) {
+                                adj -= impactPts;
+                                console.log(`🏥 V26 Injury Adj: ${inj.playerName} (${ppg.toFixed(1)} PPG) OUT for home → margin -${impactPts.toFixed(1)} pts`);
+                            } else if (isAway) {
+                                adj += impactPts;
+                                console.log(`🏥 V26 Injury Adj: ${inj.playerName} (${ppg.toFixed(1)} PPG) OUT for away → margin +${impactPts.toFixed(1)} pts`);
+                            }
+                        });
+                        if (adj !== expectedMargin) {
+                            console.log(`🏥 V26 Injury Adj TOTAL: Raw margin ${expectedMargin.toFixed(1)} → Adj margin ${adj.toFixed(1)} (Δ ${(adj - expectedMargin).toFixed(1)})`);
+                        }
+                    } catch(e) { console.warn('V26 injury adj error:', e); }
+                    return adj;
+                })(),
                 teamA: {
                     ppg: a.ppg_for, oppPpg: a.ppg_against, margin: a.margin_season,
                     efg: a.efg_proxy, tempo: a.tempo_proxy, pace: a.pace,
@@ -18432,7 +18471,7 @@ Return ONLY valid JSON:
                 awayTeam: { name: awayTeam, bdlId: awayId, profile: awayProfile, gameLogs: awayLogs },
                 matchup,
                 projectedTotal: matchup?.expectedTotal || null,
-                projectedMargin: matchup?.expectedMargin || null,
+                projectedMargin: matchup?.injuryAdjMargin ?? matchup?.expectedMargin ?? null,
                 projectedHomePts: matchup?.teamAExpPts || null,
                 projectedAwayPts: matchup?.teamBExpPts || null
             };
@@ -21347,10 +21386,11 @@ Return ONLY valid JSON:
                                 console.log(`📊 V26 Spread: ProjMargin=${m.expectedMargin.toFixed(1)}, L5Margin=${intelData.l5Avg?.toFixed(1)}`);
                                 
                             } else if (mktCtx.analysisType === 'moneyline') {
-                                // Moneyline: use win probability proxy from margin
-                                intelData.seasonAvg = m.expectedMargin > 0 ? 55 + m.expectedMargin * 2 : 45 + m.expectedMargin * 2;
-                                intelData.seasonAvg = Math.max(20, Math.min(80, intelData.seasonAvg));
-                                console.log(`📊 V26 Moneyline: ProjMargin=${m.expectedMargin.toFixed(1)}, WinProxy=${intelData.seasonAvg.toFixed(1)}%`);
+                                // V10.3e: Moneyline — logistic win probability from injury-adjusted margin
+                                const adjMargin = m.injuryAdjMargin ?? m.expectedMargin ?? 0;
+                                intelData.seasonAvg = 100 / (1 + Math.pow(10, -adjMargin / 16));
+                                intelData.seasonAvg = Math.max(5, Math.min(95, intelData.seasonAvg));
+                                console.log(`📊 V26 Moneyline: RawMargin=${m.expectedMargin.toFixed(1)}, InjAdj=${adjMargin.toFixed(1)}, WinProxy=${intelData.seasonAvg.toFixed(1)}%`);
                             }
                             
                             // Enrich contextData with team intelligence
@@ -28095,11 +28135,13 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             if (isGameMarket && state.teamIntelligence?.matchup) {
                 const ti = state.teamIntelligence.matchup;
                 const projTotal = ti.expectedTotal || 0;
-                const projMargin = ti.expectedMargin || 0;
+                const projMargin = ti.injuryAdjMargin ?? ti.expectedMargin ?? 0;
                 let gameProjection;
                 if (market === 'Moneyline' || market === 'h2h' || market?.toLowerCase?.()?.includes('moneyline')) {
-                    // V10.3b: Win probability for the SELECTED team (not always home)
-                    const homeWinProb = 50 + (projMargin * 2.5);
+                    // V10.3e: Logistic win probability (more accurate than linear for large margins)
+                    // Based on NFL/NBA research: logistic curve fits better than 50 + margin * k
+                    // At margin=0 → 50%, margin=7 → ~73%, margin=14 → ~88%
+                    const homeWinProb = 100 / (1 + Math.pow(10, -projMargin / 16));
                     // Check if selected player/team is home
                     const selPlayer = (state.selectedPlayer || state.lastPlayerName || '').toLowerCase().trim();
                     const homeNm = (state.homeTeamName || '').toLowerCase().trim();
@@ -31428,9 +31470,9 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                         const isML = mCtxEdge?.analysisType === 'moneyline';
                                         
                                         if (isML && state.liveOdds?.lines && state.lastProjection) {
-                                            // Get model win probability from V26 margin
+                                            // Get model win probability from V26 injury-adjusted margin
                                             // V26 margin is HOME-RELATIVE: positive = home favored
-                                            const projMargin = state.teamIntelligence?.projectedMargin || 0;
+                                            const projMargin = state.teamIntelligence?.projectedMargin || state.teamIntelligence?.matchup?.injuryAdjMargin || state.teamIntelligence?.matchup?.expectedMargin || 0;
                                             
                                             // Determine if selected player/team is home or away
                                             const selLower = (player || '').toLowerCase().trim();
@@ -31438,8 +31480,8 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                             const awayName = (state.awayTeamName || '').toLowerCase().trim();
                                             const selIsHomeTeam = homeName.includes(selLower.split(' ').pop()) || selLower.includes(homeName.split(' ').pop());
                                             
-                                            // Home win prob from margin
-                                            const homeWinProb = Math.min(95, Math.max(5, 50 + projMargin * 2.5));
+                                            // V10.3e: Logistic win prob (matches game projection)
+                                            const homeWinProb = Math.min(95, Math.max(5, 100 / (1 + Math.pow(10, -projMargin / 16))));
                                             // Selected team's win prob (flip if away)
                                             modelWinProb = selIsHomeTeam ? homeWinProb : (100 - homeWinProb);
                                             
@@ -34925,12 +34967,12 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             let sbaModel, bookLine;
             if (isMLPanel) {
                 // For moneyline: sbaModel = model win prob, bookLine = book implied prob
-                // V10.3b: Margin is HOME-RELATIVE, need to flip for away teams
-                const projMargin = state.teamIntelligence?.projectedMargin || state.teamIntelligence?.matchup?.expectedMargin || 0;
+                // V10.3e: Use injury-adjusted margin + logistic win prob
+                const projMargin = state.teamIntelligence?.projectedMargin || state.teamIntelligence?.matchup?.injuryAdjMargin || state.teamIntelligence?.matchup?.expectedMargin || 0;
                 const selTeamName = (state.lastPlayerName || state.currentPlayer || '').toLowerCase().trim();
                 const homeName = (state.homeTeamName || '').toLowerCase().trim();
                 const selIsHomePanel = homeName.includes(selTeamName.split(' ').pop()) || selTeamName.includes(homeName.split(' ').pop());
-                const homeWinProb = Math.min(95, Math.max(5, 50 + projMargin * 2.5));
+                const homeWinProb = Math.min(95, Math.max(5, 100 / (1 + Math.pow(10, -projMargin / 16))));
                 sbaModel = selIsHomePanel ? homeWinProb : (100 - homeWinProb);
                 
                 // Get book implied probability from actual odds
@@ -35031,9 +35073,16 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             const modelProbStr = modelProb.toFixed(1);
             
             // Book implied probability (from vig-adjusted odds)
-            const overOdds = parseInt(document.getElementById('over-odds')?.value) || -110;
-            const bookImplied = overOdds < 0 ? Math.abs(overOdds) / (Math.abs(overOdds) + 100) * 100 : 100 / (overOdds + 100) * 100;
-            const bookProbForSide = modelSide === sideA ? bookImplied : (100 - bookImplied);
+            let bookImplied, bookProbForSide;
+            if (isMLPanel) {
+                // V10.3e: For ML, bookLine IS already the selected team's implied win prob (computed from actual ML odds above)
+                bookImplied = bookLine; // This is the correct selected team's book implied %
+                bookProbForSide = bookImplied; // Already for selected team
+            } else {
+                const overOdds = parseInt(document.getElementById('over-odds')?.value) || -110;
+                bookImplied = overOdds < 0 ? Math.abs(overOdds) / (Math.abs(overOdds) + 100) * 100 : 100 / (overOdds + 100) * 100;
+                bookProbForSide = modelSide === sideA ? bookImplied : (100 - bookImplied);
+            }
             
             // True edge = SBA model prob - book implied prob (capped)
             const rawTrueEdge = modelProb - bookProbForSide;
