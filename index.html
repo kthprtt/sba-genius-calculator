@@ -29866,7 +29866,8 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             baseProb += (l5Avg - line) * 3;
             
             // Factor 3: Hit rate influence (20% weight)
-            const hitRateNum = typeof hitRate === 'object' && hitRate !== null ? hitRate.hitRate : (typeof hitRate === 'number' ? hitRate : 50);
+            const hitRateRaw = typeof hitRate === 'object' && hitRate !== null ? hitRate.hitRate : (typeof hitRate === 'number' ? hitRate : 50);
+            const hitRateNum = (hitRateRaw != null && !isNaN(hitRateRaw)) ? hitRateRaw : 50;
             baseProb += (hitRateNum - 50) * 0.2;
             
             // Factor 4: Home/away (10% weight)
@@ -39066,5 +39067,7 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
         // Short alias
         window.SBA = window.SBA_V47;
     </script>
+<!-- V8.1: Auto-load console analysis engine if available -->
+<script src="V48_ULTIMATE_V8_1.js" onerror="console.log('ℹ️ Console JS not found — paste V48_ULTIMATE_V8_1.js into console or add script tag')"></script>
 </body>
 </html>
