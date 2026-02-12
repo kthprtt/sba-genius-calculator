@@ -25498,13 +25498,21 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
             try {
                 console.log(`🤖 Calling ${engineId} via AI Proxy...`);
                 
-                // V47: Use prompt format that proxy expects (matches ULTIMATE V5.5.1)
-                const prompt = `Sports betting PLAYER PROP analysis:
+                // V10: Route prompt based on market class
+                const isTeam = context?.isTeamMarket === true;
+                const ti = context?.teamIntelligence;
+                
+                let prompt;
+                if (isTeam && ti) {
+                    prompt = buildGameLevelPrompt(context, player, market, line);
+                } else {
+                    prompt = `Sports betting PLAYER PROP analysis:
 Player: ${player}
 Market: ${market} OVER/UNDER ${line}
 Context: Season=${context?.seasonAvg || 'N/A'}, L5=${context?.l5Avg || 'N/A'}, L10=${context?.l10Avg || 'N/A'}
-Home/Away: ${context?.isHome ? 'HOME' : 'AWAY'}${context?.blowoutWarning ? `\n⚠️ ${context.blowoutWarning}` : ''}
+Home/Away: ${context?.isHome ? 'HOME' : 'AWAY'}${context?.blowoutWarning ? '\n⚠️ ' + context.blowoutWarning : ''}
 Analyze this prop. Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueProb":0.55,"reasoning":"explanation"}`;
+                }
                 
                 const response = await fetch(`${CONFIG.aiProxy}/api/ai/${engineId}`, {
                     method: 'POST',
@@ -25532,7 +25540,48 @@ Analyze this prop. Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueP
             }
         }
         
-        // Call ALL AI engines via proxy (batch analysis)
+        // V10: Build game-level prompt with team intelligence
+        function buildGameLevelPrompt(context, player, market, line) {
+            const ti = context.teamIntelligence;
+            const homeRec = ti.home?.record ? `${ti.home.record.wins}W-${ti.home.record.losses}L` : 'N/A';
+            const awayRec = ti.away?.record ? `${ti.away.record.wins}W-${ti.away.record.losses}L` : 'N/A';
+            const h2hStr = ti.h2h ? `${ti.h2h.games}g, avg total ${ti.h2h.avgTotal?.toFixed(1)}, avg margin ${ti.h2h.avgMargin?.toFixed(1)}` : 'No recent H2H';
+            const injStr = context.injuries?.map(i => `${i.name} (${i.status})`).join(', ') || 'None reported';
+            
+            return `Sports betting GAME-LEVEL analysis:
+Matchup: ${ti.awayTeam || player} @ ${ti.homeTeam || 'Home'}
+Market: ${market} | Line: ${line}
+
+HOME TEAM (${ti.homeTeam || 'Home'}):
+  Record: ${homeRec}, W%: ${ti.home?.wPct ? (ti.home.wPct*100).toFixed(0)+'%' : 'N/A'}
+  PPG: ${ti.home?.ppg?.toFixed(1) || 'N/A'}, Opp PPG: ${ti.home?.oppPpg?.toFixed(1) || 'N/A'}, Net Margin: ${ti.home?.margin?.toFixed(1) || 'N/A'}
+  L5 Scoring: ${ti.home?.l5Scoring?.toFixed(1) || 'N/A'}, L5 Allowed: ${ti.home?.l5Allowed?.toFixed(1) || 'N/A'}
+  Off Rtg: ${ti.home?.offRtg?.toFixed(1) || 'N/A'}, Def Rtg: ${ti.home?.defRtg?.toFixed(1) || 'N/A'}, Net Rtg: ${ti.home?.netRtg?.toFixed(1) || 'N/A'}
+  Recent scores: ${ti.home?.recentScores?.join(', ') || 'N/A'}
+
+AWAY TEAM (${ti.awayTeam || player}):
+  Record: ${awayRec}, W%: ${ti.away?.wPct ? (ti.away.wPct*100).toFixed(0)+'%' : 'N/A'}
+  PPG: ${ti.away?.ppg?.toFixed(1) || 'N/A'}, Opp PPG: ${ti.away?.oppPpg?.toFixed(1) || 'N/A'}, Net Margin: ${ti.away?.margin?.toFixed(1) || 'N/A'}
+  L5 Scoring: ${ti.away?.l5Scoring?.toFixed(1) || 'N/A'}, L5 Allowed: ${ti.away?.l5Allowed?.toFixed(1) || 'N/A'}
+  Off Rtg: ${ti.away?.offRtg?.toFixed(1) || 'N/A'}, Def Rtg: ${ti.away?.defRtg?.toFixed(1) || 'N/A'}, Net Rtg: ${ti.away?.netRtg?.toFixed(1) || 'N/A'}
+  Recent scores: ${ti.away?.recentScores?.join(', ') || 'N/A'}
+
+MATCHUP PROJECTION:
+  Projected Total: ${ti.projectedTotal?.toFixed(1) || 'N/A'}
+  Projected Margin: ${ti.projectedMargin?.toFixed(1) || 'N/A'} (positive = home favored)
+  Expected Pace: ${ti.expectedPace?.toFixed(0) || ti.expectedTempo?.toFixed(0) || 'N/A'}
+  H2H: ${h2hStr}
+  Spread: ${context.spread || 'N/A'}, Game Total: ${context.total || 'N/A'}
+
+INJURIES: ${injStr}
+
+For TOTALS: Will combined score go OVER or UNDER the line?
+For SPREADS/ML: Will the favored team cover or will the underdog keep it close/win?
+Analyze using team stats, trends, pace, and matchup data above.
+Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueProb":0.55,"reasoning":"explanation"}`;
+        }
+        
+                // Call ALL AI engines via proxy (batch analysis)
         async function callAllAIEngines(player, market, line, context) {
             if (!isAIProxyConfigured()) {
                 console.log('⚠️ AI Proxy not configured - using simulated analysis');
@@ -25559,18 +25608,27 @@ Analyze this prop. Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueP
                     { id: 'deepseek', name: 'DeepSeek', weight: 0.08 }
                 ];
                 
-                const prompt = `Sports betting PLAYER PROP analysis:
+                // V10: Route batch prompt based on market class
+                const isTeam = context?.isTeamMarket === true;
+                const ti = context?.teamIntelligence;
+                
+                let prompt;
+                if (isTeam && ti) {
+                    prompt = buildGameLevelPrompt(context, player, market, line);
+                    console.log('   🏟️ V10: Using GAME-LEVEL prompt with team intelligence');
+                } else {
+                    prompt = `Sports betting PLAYER PROP analysis:
 Player: ${player}
 Market: ${market} OVER/UNDER ${line}
 Context: Season=${context.seasonAvg || 'N/A'}, L5=${context.l5Avg || 'N/A'}, L10=${context.l10Avg || 'N/A'}
-H2H vs opponent: ${context.h2h?.avg || 'N/A'} (${context.h2h?.games || 0}g)
+H2H vs opponent: ${context.h2h || 'N/A'}
 Home/Away: ${context.isHome ? 'HOME' : 'AWAY'}, Rest: ${context.restDays || 'N/A'} days
-Injuries: ${context.injuries?.summary || 'N/A'}
-Defense: ${context.defenseRank || 'N/A'}
-Team Intel: ${context.teamIntel ? `ProjTotal=${context.teamIntel.projectedTotal}, HomePPG=${context.teamIntel.homePPG}, AwayPPG=${context.teamIntel.awayPPG}` : 'N/A'}${context.blowoutWarning ? `\n⚠️ ${context.blowoutWarning}` : ''}
+Injuries: ${context.injuries?.map(i => i.name+'('+i.status+')').join(', ') || 'N/A'}
+Defense: ${context.defenseRank || 'N/A'}${context.blowoutWarning ? '\n⚠️ ' + context.blowoutWarning : ''}
 
 Analyze this prop. Should bettor take OVER or UNDER?
 Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueProb":0.55,"reasoning":"explanation"}`;
+                }
                 
                 const results = {};
                 let overVotes = 0, underVotes = 0, responded = 0;
@@ -25705,13 +25763,30 @@ Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueProb":0.55,"reasonin
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
-                        prompt: `Sports betting analysis: Project a number for ${player} ${market} today.
+                        prompt: (() => {
+                        const isTeam = blindContext?.isTeamMarket === true;
+                        const ti = blindContext?.teamIntelligence;
+                        if (isTeam && ti) {
+                            return `Game-level projection (NO book lines):
+Matchup: ${ti.awayTeam || player} @ ${ti.homeTeam || 'Home'}
+Market: ${market}
+HOME: PPG ${ti.home?.ppg?.toFixed(1) || 'N/A'}, Opp PPG ${ti.home?.oppPpg?.toFixed(1) || 'N/A'}, Net ${ti.home?.margin?.toFixed(1) || 'N/A'}, L5 scoring ${ti.home?.l5Scoring?.toFixed(1) || 'N/A'}
+AWAY: PPG ${ti.away?.ppg?.toFixed(1) || 'N/A'}, Opp PPG ${ti.away?.oppPpg?.toFixed(1) || 'N/A'}, Net ${ti.away?.margin?.toFixed(1) || 'N/A'}, L5 scoring ${ti.away?.l5Scoring?.toFixed(1) || 'N/A'}
+Pace: ${ti.expectedPace?.toFixed(0) || ti.expectedTempo?.toFixed(0) || 'N/A'}
+H2H: ${ti.h2h ? ti.h2h.games+'g, avg total '+ti.h2h.avgTotal?.toFixed(1) : 'None'}
+Injuries: ${blindContext.injuries?.map(i => i.name+'('+i.status+')').join(', ') || 'None'}
+DO NOT use any sportsbook line. Project the game total and margin.
+Respond with ONLY JSON: {"projection":225.5,"confidence":70,"reasoning":"explanation"}`;
+                        } else {
+                            return `Sports betting analysis: Project a number for ${player} ${market} today.
 Stats: Season=${blindContext.seasonAvg}, L5=${blindContext.l5Avg}, L10=${blindContext.l10Avg}
 Home/Away: ${blindContext.isHome ? 'HOME' : 'AWAY'}, Rest: ${blindContext.restDays || 'N/A'} days
 H2H: ${blindContext.h2h || 'N/A'}
-Injuries: ${blindContext.injuries?.summary || 'N/A'}
+Injuries: ${blindContext.injuries?.map(i => i.name+'('+i.status+')').join(', ') || 'N/A'}
 DO NOT use any sportsbook line. Project your own number.
-Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanation"}`,
+Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanation"}`;
+                        }
+                    })(),
                         maxTokens: 400
                     })
                 });
@@ -30817,8 +30892,13 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 
                 console.log(`\n🤖 CALLING REAL AI ENGINES via proxy...`);
                 console.log(`   Player: ${player} | Market: ${market} | Line: ${line}`);
-                console.log(`   Context: Season ${market}=${aiContext.seasonAvg}, L5=${aiContext.l5Avg}, L10=${aiContext.l10Avg}, Proj=${aiContext.projection}, Spread=${aiContext.spread}, Total=${aiContext.total}`);
-                if (aiContext.teamIntelligence) {
+                if (aiContext.isTeamMarket && aiContext.teamIntelligence) {
+                    console.log(`   🏟️ V10 GAME-LEVEL PROMPT — Team data sent to all engines`);
+                    console.log(`   🏀 Team Intel: ProjTotal=${aiContext.teamIntelligence.projectedTotal?.toFixed(1)}, Home PPG=${aiContext.teamIntelligence.home?.ppg?.toFixed(1)}, Away PPG=${aiContext.teamIntelligence.away?.ppg?.toFixed(1)}, Margin=${aiContext.teamIntelligence.projectedMargin?.toFixed(1)}`);
+                } else {
+                    console.log(`   Context: Season ${market}=${aiContext.seasonAvg}, L5=${aiContext.l5Avg}, L10=${aiContext.l10Avg}, Proj=${aiContext.projection}, Spread=${aiContext.spread}, Total=${aiContext.total}`);
+                }
+                if (aiContext.teamIntelligence && !aiContext.isTeamMarket) {
                     console.log(`   🏀 V26 Team Intel: ProjTotal=${aiContext.teamIntelligence.projectedTotal?.toFixed(1)}, Home PPG=${aiContext.teamIntelligence.home?.ppg?.toFixed(1)}, Away PPG=${aiContext.teamIntelligence.away?.ppg?.toFixed(1)}`);
                 }
                 
