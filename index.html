@@ -21042,17 +21042,43 @@ Return ONLY valid JSON:
                                 intelData.l3Avg = intelData.l5Avg;
                             }
                             
-                            // recentForm: build from team rolling data
+                            // recentForm: build from team game logs + rolling data
+                            // V49.1: Fixed path — teamIntel stores logs at .homeTeam.gameLogs / .awayTeam.gameLogs
                             if (!intelData.recentForm) {
                                 const homeRoll = m.teamA?.rolling;
                                 const awayRoll = m.teamB?.rolling;
-                                const gameLogs = teamIntel?.gameLogs?.home || teamIntel?.gameLogs?.away || [];
+                                const homeLogs = teamIntel?.homeTeam?.gameLogs || [];
+                                const awayLogs = teamIntel?.awayTeam?.gameLogs || [];
+                                // Use home team logs for spread/total, or away if home unavailable
+                                const primaryLogs = homeLogs.length > 0 ? homeLogs : awayLogs;
+                                
+                                // Build recentGames array matching the format the pipeline expects
+                                const recentGames = primaryLogs.slice(0, 15).map(g => ({
+                                    date: g.date,
+                                    gameId: g.gameId,
+                                    value: mktCtx.analysisType === 'spread' ? g.margin :
+                                           mktCtx.analysisType === 'game_total' ? g.gameTotal :
+                                           mktCtx.analysisType === 'team_total' ? g.teamPtsFor :
+                                           g.margin,
+                                    teamPtsFor: g.teamPtsFor,
+                                    teamPtsAgainst: g.teamPtsAgainst,
+                                    gameTotal: g.gameTotal,
+                                    margin: g.margin,
+                                    wasHome: g.wasHome,
+                                    opponent: g.opponentName || g.opponentAbbr || '',
+                                    won: g.won
+                                }));
+                                
                                 intelData.recentForm = {
-                                    recentGames: gameLogs.slice(0, 15),
+                                    recentGames,
                                     l5: homeRoll?.scoring?.l5 || homeRoll?.margins?.l5 || null,
                                     l10: homeRoll?.scoring?.l10 || homeRoll?.margins?.l10 || null,
+                                    gamesAvailable: recentGames.length,
                                     source: 'V49_TEAM_INTEL'
                                 };
+                                if (recentGames.length > 0) {
+                                    console.log(`✅ V49.1: recentForm populated with ${recentGames.length} team game logs`);
+                                }
                             }
                             
                             // advancedStats: derive from team profiles
