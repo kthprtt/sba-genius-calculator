@@ -13042,7 +13042,10 @@ Return ONLY valid JSON:
                 const selectedEvent = state.events?.find(e => e.id === option.value);
                 if (selectedEvent) {
                     state.event = selectedEvent; // THIS WAS MISSING!
-                    console.log(`🎮 Selected event: ${selectedEvent.awayTeam?.shortDisplayName || selectedEvent.awayTeam?.displayName} @ ${selectedEvent.homeTeam?.shortDisplayName || selectedEvent.homeTeam?.displayName}`);
+                    // V10.3c: Store team names for home/away detection in ML pipeline
+                    state.homeTeamName = selectedEvent.homeTeam?.shortDisplayName || selectedEvent.homeTeam?.displayName || selectedEvent.homeTeam?.name || '';
+                    state.awayTeamName = selectedEvent.awayTeam?.shortDisplayName || selectedEvent.awayTeam?.displayName || selectedEvent.awayTeam?.name || '';
+                    console.log(`🎮 Selected event: ${state.awayTeamName} @ ${state.homeTeamName}`);
                     
                     updateInjuryPanel(selectedEvent);
                     // Show intel panels
