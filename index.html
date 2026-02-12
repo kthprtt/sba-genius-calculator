@@ -25854,8 +25854,75 @@ Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueProb":0.55,"reasonin
                 }
                 if (blindContext.h2h) console.log(`   H2H: ${blindContext.h2h}`);
                 
+                // V10.3h: MULTI-ENGINE PASS 1 for Moneyline markets
+                const _mCtxP1Check = typeof getMarketContext === 'function' ? getMarketContext(market, blindContext.player) : null;
+                const _isMLPass1Multi = _mCtxP1Check?.analysisType === 'moneyline' && blindContext?.isTeamMarket && blindContext?.teamIntelligence;
+                const engineProjections = [];
+                
+                if (_isMLPass1Multi) {
+                    // Call ALL engines for ML win probability (not just Claude)
+                    const ti = blindContext.teamIntelligence;
+                    const selTeam = blindContext.player || ti.awayTeam || 'Away';
+                    const mlPrompt = `Moneyline analysis (NO book odds/lines):
+Matchup: ${ti.awayTeam || 'Away'} @ ${ti.homeTeam || 'Home'}
+QUESTION: Will ${selTeam} WIN this game?
+HOME: PPG ${ti.home?.ppg?.toFixed(1) || 'N/A'}, Opp PPG ${ti.home?.oppPpg?.toFixed(1) || 'N/A'}, Net ${ti.home?.margin?.toFixed(1) || 'N/A'}, W% ${(ti.home?.wPct * 100)?.toFixed(0) || 'N/A'}%
+AWAY: PPG ${ti.away?.ppg?.toFixed(1) || 'N/A'}, Opp PPG ${ti.away?.oppPpg?.toFixed(1) || 'N/A'}, Net ${ti.away?.margin?.toFixed(1) || 'N/A'}, W% ${(ti.away?.wPct * 100)?.toFixed(0) || 'N/A'}%
+Pace: ${ti.expectedPace?.toFixed(0) || ti.expectedTempo?.toFixed(0) || 'N/A'}
+H2H: ${ti.h2h ? ti.h2h.games+'g, avg margin '+ti.h2h.avgMargin?.toFixed(1) : 'None'}
+Injuries: ${blindContext.injuries?.map(i => i.name+'('+i.status+')').join(', ') || 'None'}
+DO NOT use any sportsbook line or odds.
+OVER = ${selTeam} WINS, UNDER = ${selTeam} LOSES
+Respond with ONLY JSON: {"pick":"OVER","confidence":75,"reasoning":"explanation"}`;
+
+                    const p1Engines = [
+                        { id: 'claude', name: 'Claude', icon: '🟣', weight: 0.18 },
+                        { id: 'openai', name: 'OpenAI', icon: '🟢', weight: 0.16 },
+                        { id: 'perplexity', name: 'Perplexity', icon: '🔵', weight: 0.12 },
+                        { id: 'grok', name: 'Grok', icon: '⚫', weight: 0.08 },
+                        { id: 'gemini', name: 'Gemini', icon: '🔴', weight: 0.07 },
+                        { id: 'deepseek', name: 'DeepSeek', icon: '⚪', weight: 0.08 },
+                        { id: 'cohere', name: 'Cohere', icon: '🟤', weight: 0.10 },
+                        { id: 'mistral', name: 'Mistral', icon: '🟠', weight: 0.07 },
+                        { id: 'together', name: 'Together', icon: '👤', weight: 0.06 },
+                        { id: 'groq', name: 'Groq', icon: '🤖', weight: 0.09 }
+                    ];
+                    
+                    console.log(`   🔬 V10.3h: Multi-engine ML Pass 1 — calling ${p1Engines.length} engines...`);
+                    
+                    const p1Promises = p1Engines.map(async (eng) => {
+                        try {
+                            const res = await fetch(`${CONFIG.aiProxy}/api/ai/${eng.id}`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ prompt: mlPrompt, maxTokens: 400 })
+                            });
+                            if (!res.ok) return null;
+                            const data = await res.json();
+                            const parsed = parseProxyAIResponse(data, eng.id);
+                            if (parsed && parsed.pick && parsed.pick !== 'PASS' && !parsed.isError) {
+                                const conf = parsed.confidence || 65;
+                                const trueProb = parsed.trueProb ? parsed.trueProb * 100 : null;
+                                const winProb = trueProb || (parsed.pick === 'OVER' 
+                                    ? (50 + (conf - 50) * 0.8) 
+                                    : (50 - (conf - 50) * 0.8));
+                                return { ...eng, projectedTotal: Math.round(winProb * 10) / 10, pick: parsed.pick, confidence: conf, reason: (parsed.reasoning || '').substring(0, 200) };
+                            }
+                            return null;
+                        } catch(e) { return null; }
+                    });
+                    
+                    const p1Results = (await Promise.allSettled(p1Promises)).map(r => r.status === 'fulfilled' ? r.value : null).filter(Boolean);
+                    p1Results.forEach(r => {
+                        engineProjections.push(r);
+                        console.log(`   ${r.icon} V10.3h Pass 1 ML: ${r.name} → ${r.pick} @ ${r.confidence}% → WinProb ${r.projectedTotal}%`);
+                    });
+                    console.log(`   📊 V10.3h: ${engineProjections.length}/${p1Engines.length} engines responded`);
+                }
+                
+                // Non-ML: Single engine (Claude) for projection number
+                if (!_isMLPass1Multi) {
                 const response = await fetch(`${CONFIG.aiProxy}/api/ai/claude`, {
-                    method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
                         prompt: (() => {
@@ -25909,7 +25976,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 // V47 FIX: We're calling a single engine (/api/ai/claude), not batch
                 // Parse the single response using proven parser
                 const parsed = parseProxyAIResponse(data, 'claude');
-                const engineProjections = [];
+                // engineProjections already declared above
                 
                 if (parsed && parsed.pick && parsed.pick !== 'PASS' && !parsed.isError) {
                     // V10.3: For moneyline, use confidence as win probability directly
@@ -26008,6 +26075,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     });
                     } // end else (non-ML)
                 }
+                } // end if (!_isMLPass1Multi) — single engine for non-ML
                 
                 // Compute SBA Independent Line (weighted average of engine projections)
                 let sbaLine = null, sbaLow = null, sbaHigh = null;
@@ -26040,12 +26108,14 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     sbaLow = Math.round((sbaLine - stdev - 3) * 10) / 10;
                     sbaHigh = Math.round((sbaLine + stdev + 3) * 10) / 10;
                     
-                    // Also blend V26 margin-based win probability
-                    const v26Margin = blindContext.teamIntelligence?.matchup?.expectedMargin || 0;
-                    const v26WinProb = Math.min(95, Math.max(5, 50 + v26Margin * 2.5));
-                    if (v26Margin !== 0) {
-                        sbaLine = Math.round((sbaLine * 0.60 + v26WinProb * 0.40) * 10) / 10;
-                        console.log(`   🏀 V28: V26 margin (${v26Margin.toFixed(1)}) → win prob ${v26WinProb.toFixed(1)}% blended (40%) → SBA Line ${sbaLine}%`);
+                    // Also blend V26 injury-adjusted margin as calibrated win probability
+                    const v26AdjMargin = blindContext.teamIntelligence?.matchup?.injuryAdjMargin ?? blindContext.teamIntelligence?.matchup?.expectedMargin ?? 0;
+                    const v26WinProb = Math.min(95, Math.max(5, 100 / (1 + Math.pow(10, -v26AdjMargin / 16))));
+                    if (v26AdjMargin !== 0) {
+                        // V10.3h: Reduce V26 weight from 40% to 25% since we now have 10+ engine projections
+                        const v26Weight = engineProjections.length >= 5 ? 0.25 : 0.40;
+                        sbaLine = Math.round((sbaLine * (1 - v26Weight) + v26WinProb * v26Weight) * 10) / 10;
+                        console.log(`   🏀 V28: V26 adjMargin (${v26AdjMargin.toFixed(1)}) → logistic WP ${v26WinProb.toFixed(1)}% blended (${(v26Weight*100).toFixed(0)}%) → SBA Line ${sbaLine}%`);
                     }
                 } else if (engineProjections.length > 0) {
                     let weightedSum = 0, totalWeight = 0;
