@@ -103,7 +103,7 @@ window.SGO_API_KEY = 'e5ef93d1b57cf2ea95eb5e2ca0eb8fc5';
 window.ODDS_API_KEY = '1471a01061d779e05019e1cc9e03c78e'; // V5.3 FIX 9: Real odds
 window.SBA_HISTORY = window.SBA_HISTORY || [];
 
-const SBA_V47_ULTIMATE = (function() {
+var SBA_V47_ULTIMATE = (function() {
     const PROXY = 'https://sba-ai-proxy-production.up.railway.app';
     const BDL_KEY = window.BDL_API_KEY;
     const SGO_KEY = window.SGO_API_KEY;
@@ -8771,8 +8771,8 @@ if (typeof window !== 'undefined') {
 }
 
 // Startup
-console.log('\n🏆 SBA GENIUS V5.5.1 - SMART ODDS + COACH K NARRATIVE + FEEL LIKE ODDS');
+console.log('\n🏆 SBA GENIUS V48 ULTIMATE V8.1 — H2H FIX + CONSOLE EXPORT');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('V5.4.8: NBA defense updated to 2025-26 season (ESPN Hollinger)');
+console.log('V8.1: H2H opponent fix, vs-opponent filter, window.SBA_V47_ULTIMATE export');
 console.log('GATES: 7 (G1-G7) | SPORTS: 12 | MARKETS: 274');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
