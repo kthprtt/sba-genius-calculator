@@ -20879,8 +20879,10 @@ Return ONLY valid JSON:
                                         full: awayRoll.totals.full || awayRoll.totals.l10 || awayRoll.totals.l5
                                     };
                                 } else {
-                                    intelData.l5Avg = intelData.seasonAvg;
-                                    intelData.l10Avg = intelData.seasonAvg;
+                                    // V9.1: Keep as null/0 instead of masking with seasonAvg
+                                    // Downstream allL5Excluded detection needs to see the real value
+                                    intelData.l5Avg = intelData.l5Avg || 0;
+                                    intelData.l10Avg = intelData.l10Avg || 0;
                                 }
                                 // H2H game totals
                                 if (m.h2h) {
@@ -27503,9 +27505,14 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             }
             
             const seasonAvg = intelData.seasonAvg || 22;
-            const l5Avg = (intelData.l5Avg != null && intelData.l5Avg !== 0) ? intelData.l5Avg : seasonAvg;
-            const l10Avg = (intelData.l10Avg != null && intelData.l10Avg !== 0) ? intelData.l10Avg : seasonAvg;
-            const l3Avg = (intelData.l3Avg != null && intelData.l3Avg !== 0) ? intelData.l3Avg : l5Avg;
+            // V9.1 FIX: Keep L5/L10 = 0 when all games are DNPs — don't silently replace with seasonAvg
+            // This lets the blowout cleaner and G1 gate see the real data quality
+            const rawL5 = intelData.l5Avg;
+            const rawL10 = intelData.l10Avg;
+            const allL5Excluded = (rawL5 === 0 || rawL5 === null) && seasonAvg > 5; // All recent games are DNP/0
+            const l5Avg = (rawL5 != null && rawL5 !== 0) ? rawL5 : (allL5Excluded ? 0 : seasonAvg);
+            const l10Avg = (rawL10 != null && rawL10 !== 0) ? rawL10 : (allL5Excluded ? 0 : seasonAvg);
+            const l3Avg = (intelData.l3Avg != null && intelData.l3Avg !== 0) ? intelData.l3Avg : (allL5Excluded ? 0 : l5Avg);
             const vegasLine = line || seasonAvg;
             
             // V34: Log market + sanity check on seasonAvg vs line
@@ -27814,7 +27821,16 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 }
                 
                 // Smart L5 average (blowout-adjusted) — V48: writes to hoisted variable
-                smartL5 = genuineValues.length > 0 ? genuineValues.reduce((a,b) => a+b, 0) / genuineValues.length : l5Avg;
+                // V9.1 FIX: When ALL L5 games are excluded (player likely OUT), don't mask with seasonAvg
+                if (genuineValues.length > 0) {
+                    smartL5 = genuineValues.reduce((a,b) => a+b, 0) / genuineValues.length;
+                } else if (allL5Excluded) {
+                    // ALL games excluded — player is likely OUT/injured. Keep smartL5 = 0
+                    smartL5 = 0;
+                    console.warn(`⚠️ V9.1: ALL L5 games excluded (DNP/scratch) — player likely OUT. Not masking with season avg.`);
+                } else {
+                    smartL5 = l5Avg; // Normal fallback
+                }
                 blowoutContextLow = contextLow; // V48: propagate to base projection
                 const rawL5 = l5Avg;
                 
@@ -27943,8 +27959,18 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             // ═══════════════════════════════════════════════════════════════════════
             
             // V48: If blowout games detected, use smart (cleaned) values
-            const projL5 = blowoutContextLow > 0 ? smartL5 : engine2_recentForm;
-            const projL10 = blowoutContextLow > 0 ? smartL10 : l10Avg;
+            let projL5, projL10;
+            if (allL5Excluded && smartL5 === 0) {
+                projL5 = seasonAvg;
+                projL10 = seasonAvg;
+                console.warn(`🚨 V9.1: ALL L5 games are DNP/scratch — using season avg as proxy. DATA QUALITY COMPROMISED.`);
+            } else if (blowoutContextLow > 0) {
+                projL5 = smartL5;
+                projL10 = smartL10;
+            } else {
+                projL5 = engine2_recentForm;
+                projL10 = l10Avg;
+            }
             if (blowoutContextLow > 0) {
                 console.log(`🧹 V48 Blowout Clean: ${blowoutContextLow} DNP/blowout games in L5 → L5: ${l5Avg.toFixed(1)} → ${projL5.toFixed(1)}, L10: ${l10Avg.toFixed(1)} → ${projL10.toFixed(1)}`);
             }
@@ -28242,7 +28268,12 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             
             // V10: Improved data quality score incorporating variance
             // V30: Expanded with V29/V30 data stream bonuses
+            // V9.1: Penalize when all L5 games are excluded (player likely OUT)
             let dataQuality = 50; // Base
+            if (allL5Excluded) {
+                dataQuality = 15; // Severe penalty — player likely OUT, data is meaningless
+                console.warn(`🚨 V9.1: Data quality capped at 15 — all L5 games excluded (player likely OUT)`);
+            }
             if (intelData.l5Avg !== null) dataQuality += 10;
             if (intelData.l10Avg !== null) dataQuality += 6;
             if (intelData.advancedStats) dataQuality += 6;
@@ -39070,7 +39101,7 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
 <!-- V8.1: Auto-load console analysis engine if available -->
 <script>
 // ═══════════════════════════════════════════════════════════════════
-// V48 ULTIMATE V9.0 — WORLD CLASS ENGINE EMBEDDED
+// V48 ULTIMATE V9.1 — WORLD CLASS ENGINE + DNP FIX
 // Best of Console + UI: Real OddsAPI spread, ESPN B2B, BDL injuries,
 // unified Home/Away splits, UI-matched blowout + B2B penalties
 // ═══════════════════════════════════════════════════════════════════
@@ -40171,10 +40202,20 @@ var SBA_V47_ULTIMATE = (function() {
             const games = await getTodaysGames(sport);
             if (games && games.length > 0) {
                 const oppLower = (opponent || '').toLowerCase();
-                const gameMatch = games.find(g => {
+                // V9.1 FIX: Find ALL matching games, prefer UPCOMING/LIVE over FINISHED
+                const allMatches = games.filter(g => {
                     const names = [g.home, g.away, g.homeAbbr, g.awayAbbr].map(n => (n || '').toLowerCase());
                     return names.some(n => n.includes(oppLower) || oppLower.includes(n));
                 });
+                
+                // Prefer upcoming > live > finished
+                const gameMatch = allMatches.find(g => {
+                    const s = (g.status || '').toUpperCase();
+                    return s.includes('SCHEDULED') || s === 'STATUS_SCHEDULED';
+                }) || allMatches.find(g => {
+                    const s = (g.status || '').toUpperCase();
+                    return s.includes('PROGRESS') || s === 'STATUS_IN_PROGRESS';
+                }) || allMatches[0]; // Fall back to first match (likely finished)
                 
                 if (gameMatch) {
                     const espnStatus = (gameMatch.status || '').toUpperCase();
@@ -44671,7 +44712,7 @@ reasoning must explain your analysis`;
         
         console.log('\n');
         console.log('╔═══════════════════════════════════════════════════════════════════════════════╗');
-        console.log('║   🏆 SBA GENIUS V48 ULTIMATE V9.0 - WORLD CLASS ENGINE 🏆              ║');
+        console.log('║   🏆 SBA GENIUS V48 ULTIMATE V9.1 - WORLD CLASS ENGINE + DNP FIX 🏆              ║');
         console.log('╠═══════════════════════════════════════════════════════════════════════════════╣');
         console.log(`║  ${displaySubject} | ${statDisplay} @ ${params.line} ${isPlayerProp ? 'vs ' + (params.opponent || 'Unknown') : ''}`.padEnd(78) + '║');
         console.log(`║  Sport: ${sportConfig.name} | Market: ${market} | Type: ${marketType.toUpperCase()}`.padEnd(78) + '║');
@@ -45849,6 +45890,7 @@ reasoning must explain your analysis`;
 
                 const hasMin = ['nba','wnba','ncaab','nhl'].includes(sport);
                 let smartL5=l5Avg, smartL10=l10Avg, blowoutGamesInL5=0, smartMomentumLabel='neutral';
+                let consoleAllL5Excluded = false; // V9.1: hoisted for scope
                 if (rawGames.length >= 3) {
                     // V7.0 FIX: Filter rawGames to only include games with >0 minutes played
                     // The legacy BDL endpoint may return All-Star, preseason, or placeholder entries
@@ -45876,7 +45918,16 @@ reasoning must explain your analysis`;
                         }
                         else genuine.push(v);
                     });
-                    smartL5 = genuine.length>0 ? genuine.reduce((a,b)=>a+b,0)/genuine.length : l5Avg;
+                    // V9.1 FIX: When ALL L5 games are DNP, don't mask with season avg
+                    consoleAllL5Excluded = genuine.length === 0 && blowoutGamesInL5 >= l5G.length && seasonAvg > 5;
+                    if (genuine.length > 0) {
+                        smartL5 = genuine.reduce((a,b)=>a+b,0)/genuine.length;
+                    } else if (consoleAllL5Excluded) {
+                        smartL5 = 0;
+                        console.warn(`[V9.1] ⚠️ ALL L5 games excluded (DNP/scratch) — player likely OUT. Not masking with season avg.`);
+                    } else {
+                        smartL5 = l5Avg;
+                    }
                     const l10Gen=[];
                     l10G.forEach(g=>{const v=extractStatValue(g,getStatMapping(sport,statKey,market),sport)||0;const m=hasMin?parseMinutes(g.min||'0'):999;const mr=avgM>0?m/avgM:1;if(hasMin&&m===0&&v===0)return;if(hasMin&&v<line&&mr<0.78){if(m<=5)return;l10Gen.push(avgM>0?(v/m)*avgM:v);}else l10Gen.push(v);});
                     smartL10 = l10Gen.length>0 ? l10Gen.reduce((a,b)=>a+b,0)/l10Gen.length : l10Avg;
@@ -45901,7 +45952,18 @@ reasoning must explain your analysis`;
                 }
                 
                 // ── Base Projection (blowout-cleaned) ──
-                const projL5=blowoutGamesInL5>0?smartL5:l5Avg, projL10=blowoutGamesInL5>0?smartL10:l10Avg;
+                // V9.1: When ALL L5 excluded, use seasonAvg as projection proxy but with quality penalty
+                let projL5, projL10;
+                if (consoleAllL5Excluded && smartL5 === 0) {
+                    projL5 = seasonAvg; projL10 = seasonAvg;
+                    console.warn(`[V9.1] 🚨 ALL L5 games DNP — projection uses season avg as proxy. DATA QUALITY COMPROMISED.`);
+                    dataQualityScore = Math.min(dataQualityScore, 30);
+                    dataQualityFactors.push('All L5 games DNP/scratch — player likely OUT');
+                } else if (blowoutGamesInL5 > 0) {
+                    projL5 = smartL5; projL10 = smartL10;
+                } else {
+                    projL5 = l5Avg; projL10 = l10Avg;
+                }
                 if(blowoutGamesInL5>0) console.log(`[V48] 🧹 Blowout Clean: L5:${l5Avg.toFixed(1)}→${projL5.toFixed(1)}, L10:${l10Avg.toFixed(1)}→${projL10.toFixed(1)}`);
                 let bW; if(varianceLabel==='High Variance') bW={s:.20,r:.45,m:.20,l:.15}; else if(varianceLabel==='Consistent') bW={s:.40,r:.25,m:.20,l:.15}; else bW={s:.30,r:.35,m:.20,l:.15};
                 const mAvg = h2hData?.found ? parseFloat(h2hData.avgVs)||seasonAvg : seasonAvg;
@@ -47986,9 +48048,9 @@ if (typeof window !== 'undefined') {
 }
 
 // Startup
-console.log('\n🏆 SBA GENIUS V48 ULTIMATE V9.0 — WORLD CLASS ENGINE');
+console.log('\n🏆 SBA GENIUS V48 ULTIMATE V9.1 — WORLD CLASS ENGINE + DNP FIX');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('V9.0: WORLD CLASS — Real OddsAPI spread, ESPN B2B, BDL injuries, unified Home/Away, UI-matched blowout+B2B penalties');
+console.log('V9.1: WORLD CLASS + DNP FIX — All V9.0 features + OUT player detection, game matcher fix, confidence penalty for all-DNP players');
 console.log('   Sources: OddsAPI (spread/total), ESPN (schedule/B2B), BDL (stats/injuries/matrix), 11 AI engines');
 console.log('GATES: 7 (G1-G7) | SPORTS: 12 | MARKETS: 274');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
