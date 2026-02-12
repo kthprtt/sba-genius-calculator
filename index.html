@@ -12239,6 +12239,49 @@ Return ONLY valid JSON:
         // 7 quality gates that must pass before recommending a bet
         // Critical gates (G1, G2, G3, G7) can force NO BET verdict
         // ═══════════════════════════════════════════════════════════════════════════
+        // ═══════════════════════════════════════════════════════════════════════════
+        // V10 UNIVERSAL CONFIDENCE GATES — 5 Market Classes
+        // Supports: Player Stats, Player Binary, Game Totals, Spreads/ML, Specialty
+        // ═══════════════════════════════════════════════════════════════════════════
+        
+        function detectMarketClass(market, marketType) {
+            const m = (market || '').toLowerCase();
+            const mt = (marketType || state.marketType || 'player').toLowerCase();
+            
+            // Class 2: Player Binary/Event (yes/no outcomes)
+            const binaryMarkets = ['anytime_td','first_td','last_td','1st_td','first_basket','first_team_basket',
+                'double_double','triple_double','goal_scorer','first_goal_scorer','last_goal_scorer',
+                'to_score_2','hat_trick','to_receive_card','red_card','method_of_first_basket',
+                'record_a_win','first_home_run','anytime_goal','man_of_match','to_score_50','to_score_100',
+                'fighter_method','round_betting','go_the_distance','fight_result','toss_winner'];
+            if (binaryMarkets.some(b => m.includes(b))) return 'BINARY';
+            
+            // Class 5: Specialty (unique per sport)
+            const specialtyMarkets = ['method_of_victory','btts','both_teams','draw_no_bet','double_chance',
+                'corner','card_market','total_corners','total_cards','corner_handicap','corner_race',
+                'winning_margin','margin_bands','race_to','set_betting','tiebreak','match_to_go',
+                'total_rounds','fight_to_go','highest_opening','booking_point','h2h_3_way'];
+            if (specialtyMarkets.some(s => m.includes(s))) return 'SPECIALTY';
+            
+            // Class 3 & 4: Game-level markets
+            if (mt === 'game' || mt === 'team') {
+                // Class 4: Spreads & Moneylines
+                if (m.includes('spread') || m.includes('h2h') || m === 'moneyline' || m.includes('handicap')) return 'SPREAD_ML';
+                // Class 3: Totals (default for game/team)
+                return 'GAME_TOTAL';
+            }
+            
+            // Game markets detected by key name even if tab is wrong
+            if (m === 'totals' || m === 'spreads' || m === 'h2h' || m.includes('team_total') || 
+                m.includes('game_total') || m === 'moneyline') {
+                if (m.includes('spread') || m === 'h2h' || m === 'moneyline') return 'SPREAD_ML';
+                return 'GAME_TOTAL';
+            }
+            
+            // Class 1: Player Stat Props (default)
+            return 'PLAYER_STAT';
+        }
+        
         function calculateConfidenceGates(engines = {}, projection = null, playerData = null) {
             const gates = [];
             const liveEngines = Object.values(engines).filter(e => e.isLive);
@@ -12249,127 +12292,296 @@ Return ONLY valid JSON:
             const consensusRatio = validEngines > 0 ? Math.max(overVotes, underVotes) / validEngines : 0;
             const consensusDir = overVotes >= underVotes ? 'OVER' : 'UNDER';
             
-            // Get data quality from accuracy dashboard factors
             const market = state.analysisMarket || state.currentMarket || 'Points';
             const line = parseFloat(document.getElementById('line-input')?.value) || 0;
+            const marketType = state.marketType || 'player';
+            const marketClass = detectMarketClass(market, marketType);
+            const teamIntel = state.teamIntelligence || null;
+            const isPlayerClass = marketClass === 'PLAYER_STAT' || marketClass === 'BINARY';
+            const isGameClass = marketClass === 'GAME_TOTAL' || marketClass === 'SPREAD_ML' || marketClass === 'SPECIALTY';
             
-            // G1: Player Active (not OUT/injured)
-            // V9.2: Enhanced with live AI verification + BDL + allL5Excluded fallback
-            const injuries = state.injuries || [];
-            const playerName = state.lastPlayerName || state.currentPlayer || '';
-            const playerLast = playerName.split(' ').pop()?.toLowerCase() || '';
-            const playerInjury = playerLast.length > 1 ? injuries.find(i => 
-                (i.playerName || i.name || i.athlete?.displayName || '').toLowerCase().includes(playerLast) &&
-                (i.status || '').toLowerCase().includes('out')
-            ) : null;
-            // V9.1: If allL5Excluded from projection AND no injury found, flag as likely OUT
-            const projAllL5Excluded = projection?.allL5Excluded === true;
-            // V9.2: Check live AI verification result (from pre-analysis check)
-            const liveVerified = state.verifiedInjuryStatus;
-            const liveVerifiedOut = liveVerified?.shouldOverride === true;
+            console.log(`🔒 V10 Gate Class: ${marketClass} (market=${market}, tab=${marketType})`);
             
-            const g1InjurySource = playerInjury ? (playerInjury.source || playerInjury.injury || 'Injured') : 
-                                   liveVerifiedOut ? `${liveVerified.reason || 'OUT'} (${liveVerified.source || 'Live AI'})` :
-                                   projAllL5Excluded ? 'All L5 games are DNPs — player likely OUT' : null;
-            const g1 = !playerInjury && !projAllL5Excluded && !liveVerifiedOut;
-            gates.push({ name: 'G1: Player Active', pass: g1, detail: g1 ? 'ACTIVE' : `OUT — ${g1InjurySource}`, critical: true });
+            // ═══════════════════════════════════════════════════════════════
+            // G1: ACTIVE STATUS
+            // Player classes: Player not injured/OUT
+            // Game classes: Game confirmed active (books have odds = game is on)
+            // ═══════════════════════════════════════════════════════════════
+            if (isPlayerClass) {
+                const injuries = state.injuries || [];
+                const playerName = state.lastPlayerName || state.currentPlayer || '';
+                const playerLast = playerName.split(' ').pop()?.toLowerCase() || '';
+                const playerInjury = playerLast.length > 1 ? injuries.find(i => 
+                    (i.playerName || i.name || i.athlete?.displayName || '').toLowerCase().includes(playerLast) &&
+                    (i.status || '').toLowerCase().includes('out')
+                ) : null;
+                const projAllL5Excluded = projection?.allL5Excluded === true;
+                const liveVerified = state.verifiedInjuryStatus;
+                const liveVerifiedOut = liveVerified?.shouldOverride === true;
+                const g1InjurySource = playerInjury ? (playerInjury.source || playerInjury.injury || 'Injured') : 
+                                       liveVerifiedOut ? `${liveVerified.reason || 'OUT'} (${liveVerified.source || 'Live AI'})` :
+                                       projAllL5Excluded ? 'All L5 games are DNPs — player likely OUT' : null;
+                const g1 = !playerInjury && !projAllL5Excluded && !liveVerifiedOut;
+                gates.push({ name: 'G1: Player Active', pass: g1, detail: g1 ? 'ACTIVE' : `OUT — ${g1InjurySource}`, critical: true });
+            } else {
+                // Game-level: Game is active if books are offering odds
+                const bookCount = state.liveOdds ? Object.keys(state.liveOdds.lines || {}).length : 0;
+                const gameActive = bookCount > 0;
+                gates.push({ name: 'G1: Game Active', pass: gameActive, detail: gameActive ? `${bookCount} books offering odds` : 'No odds — game may be postponed', critical: true });
+            }
             
-            // G2: Data Quality ≥ 70% (based on available data sources)
-            let dataQualityScore = 50; // Start at baseline
-            if (projection) {
-                if (projection.l5Avg > 0) dataQualityScore += 10;
-                if (projection.l10Avg > 0) dataQualityScore += 5;
-                if (projection.seasonAvg > 0) dataQualityScore += 5;
-                if (projection.hitRate) dataQualityScore += 5;
-                if (projection.defensiveMatchup) dataQualityScore += 5;
-                if (projection.h2hData?.games > 0) dataQualityScore += 5;
-                if (projection.projectedMinutes > 0) dataQualityScore += 5;
+            // ═══════════════════════════════════════════════════════════════
+            // G2: DATA QUALITY ≥ 70
+            // Player classes: Player stats + odds + engines
+            // Game classes: Team intel + odds + engines
+            // ═══════════════════════════════════════════════════════════════
+            let dataQualityScore = 50;
+            if (isPlayerClass) {
+                if (projection) {
+                    if (projection.l5Avg > 0) dataQualityScore += 10;
+                    if (projection.l10Avg > 0) dataQualityScore += 5;
+                    if (projection.seasonAvg > 0) dataQualityScore += 5;
+                    if (projection.hitRate) dataQualityScore += 5;
+                    if (projection.defensiveMatchup) dataQualityScore += 5;
+                    if (projection.h2hData?.games > 0) dataQualityScore += 5;
+                    if (projection.projectedMinutes > 0) dataQualityScore += 5;
+                }
+                const liveVerifiedOut = state.verifiedInjuryStatus?.shouldOverride === true;
+                if (liveVerifiedOut) { dataQualityScore = 0; }
+            } else {
+                // Game-level data quality
+                if (teamIntel) {
+                    if (teamIntel.expectedTotal > 0) dataQualityScore += 8;
+                    if (teamIntel.teamA?.ppg > 0) dataQualityScore += 5;
+                    if (teamIntel.teamB?.ppg > 0) dataQualityScore += 5;
+                    if (teamIntel.teamA?.rolling) dataQualityScore += 5;
+                    if (teamIntel.teamB?.rolling) dataQualityScore += 5;
+                    if (teamIntel.h2h?.games > 0) dataQualityScore += 5;
+                    if (teamIntel.expectedPace || teamIntel.expectedTempo) dataQualityScore += 3;
+                    if (teamIntel.teamA?.offRtg > 0) dataQualityScore += 2;
+                    if (teamIntel.teamA?.defRtg > 0) dataQualityScore += 2;
+                } else if (projection?.seasonAvg > 0) {
+                    dataQualityScore += 10; // Fallback: some projection data exists
+                }
             }
             if (state.liveOdds && Object.keys(state.liveOdds.lines || {}).length > 0) dataQualityScore += 10;
             if (state.betburgerSharp?.signalCount > 0) dataQualityScore += 5;
             if (state.gameLines?.spread) dataQualityScore += 3;
             if (liveEngines.length >= 5) dataQualityScore += 5;
             dataQualityScore = Math.min(100, dataQualityScore);
-            // V9.2: Cap data quality when live AI verification confirms player OUT
-            if (liveVerifiedOut) {
-                dataQualityScore = 0;
-                console.log(`[V9.2] G2: Data quality capped to 0 — player confirmed OUT by live AI`);
-            }
             const g2 = dataQualityScore >= 70;
-            gates.push({ name: 'G2: Data Quality ≥70', pass: g2, detail: `Score: ${dataQualityScore}/100${liveVerifiedOut ? ' (PLAYER OUT)' : ''}`, critical: true });
+            gates.push({ name: 'G2: Data Quality ≥70', pass: g2, detail: `Score: ${dataQualityScore}/100`, critical: true });
             
-            // G3: AI Consensus ≥ 70% (V9.3: raised from 60% for bot accuracy)
-            const g3 = liveEngines.length === 0 || consensusRatio >= 0.70;
-            gates.push({ name: 'G3: AI Consensus ≥70%', pass: g3, detail: liveEngines.length > 0 ? `${Math.round(consensusRatio * 100)}% (${Math.max(overVotes, underVotes)}/${validEngines})` : 'Pending', critical: true });
+            // ═══════════════════════════════════════════════════════════════
+            // G3: AI CONSENSUS
+            // Player Stats: ≥70% | Binary: ≥60% | Totals: ≥70% | Spreads: ≥65% | Specialty: ≥60%
+            // ═══════════════════════════════════════════════════════════════
+            const consensusThresholds = { PLAYER_STAT: 0.70, BINARY: 0.60, GAME_TOTAL: 0.70, SPREAD_ML: 0.65, SPECIALTY: 0.60 };
+            const consensusReq = consensusThresholds[marketClass] || 0.70;
+            const g3 = liveEngines.length === 0 || consensusRatio >= consensusReq;
+            const consensusPctLabel = Math.round(consensusReq * 100);
+            gates.push({ name: `G3: AI Consensus ≥${consensusPctLabel}%`, pass: g3, detail: liveEngines.length > 0 ? `${Math.round(consensusRatio * 100)}% (${Math.max(overVotes, underVotes)}/${validEngines})` : 'Pending', critical: true });
             
-            // G4: < 3 PASS/Error votes
+            // ═══════════════════════════════════════════════════════════════
+            // G4: < 3 PASS/Error votes (universal)
+            // ═══════════════════════════════════════════════════════════════
             const g4 = passVotes < 3;
             gates.push({ name: 'G4: <3 PASS Votes', pass: g4, detail: `${passVotes} engines passed`, critical: false });
             
-            // G5: Stats Pattern Normal (L5 not too low vs season)
-            let g5 = true;
-            let g5Detail = 'OK';
-            if (projection && projection.l5Avg > 0 && projection.seasonAvg > 0) {
-                g5 = projection.l5Avg >= projection.seasonAvg * 0.40;
-                if (!g5) g5Detail = `L5 (${projection.l5Avg.toFixed(1)}) too low vs season (${projection.seasonAvg.toFixed(1)})`;
-            }
-            gates.push({ name: 'G5: Stats Pattern Normal', pass: g5, detail: g5Detail, critical: false });
-            
-            // G6: Data Validated (have real stats source)
-            const g6 = !!(playerData || projection?.seasonAvg > 0);
-            gates.push({ name: 'G6: Data Validated', pass: g6, detail: g6 ? (playerData?.source || 'BDL') : 'No player data', critical: false });
-            
-            // G7: Stats Sanity Check — AI direction shouldn't contradict ALL stats by 3+ points
-            let g7 = true;
-            let g7Detail = 'OK';
-            if (projection && line > 0 && liveEngines.length > 0) {
-                const l5 = projection.l5Avg || 0;
-                const l10 = projection.l10Avg || 0;
-                const season = projection.seasonAvg || 0;
-                
-                const allBelow = l5 > 0 && l10 > 0 && season > 0 && l5 < line - 3 && l10 < line - 3 && season < line - 3;
-                const allAbove = l5 > 0 && l10 > 0 && season > 0 && l5 > line + 3 && l10 > line + 3 && season > line + 3;
-                
-                if (allBelow && consensusDir === 'OVER') {
-                    g7 = false;
-                    g7Detail = `AI says OVER but stats 3+ below line (L5=${l5.toFixed(1)}, Season=${season.toFixed(1)} vs Line=${line})`;
-                } else if (allAbove && consensusDir === 'UNDER') {
-                    g7 = false;
-                    g7Detail = `AI says UNDER but stats 3+ above line (L5=${l5.toFixed(1)}, Season=${season.toFixed(1)} vs Line=${line})`;
+            // ═══════════════════════════════════════════════════════════════
+            // G5: FORM/PATTERN CHECK
+            // Player Stats: L5 not too low vs season
+            // Game Totals: Team scoring trend stable
+            // Spreads: Team record/form stable
+            // Binary/Specialty: Historical frequency reasonable
+            // ═══════════════════════════════════════════════════════════════
+            let g5 = true, g5Detail = 'OK';
+            if (marketClass === 'PLAYER_STAT') {
+                if (projection && projection.l5Avg > 0 && projection.seasonAvg > 0) {
+                    g5 = projection.l5Avg >= projection.seasonAvg * 0.40;
+                    if (!g5) g5Detail = `L5 (${projection.l5Avg.toFixed(1)}) too low vs season (${projection.seasonAvg.toFixed(1)})`;
                 }
+            } else if (marketClass === 'GAME_TOTAL') {
+                // Check if team scoring is stable (L5 team PPG not >20% off season)
+                const teamA = teamIntel?.teamA;
+                const teamB = teamIntel?.teamB;
+                if (teamA?.rolling?.scoring?.l5?.mean && teamA?.ppg) {
+                    const aRatio = teamA.rolling.scoring.l5.mean / teamA.ppg;
+                    const bRatio = teamB?.rolling?.scoring?.l5?.mean && teamB?.ppg ? teamB.rolling.scoring.l5.mean / teamB.ppg : 1;
+                    g5 = aRatio > 0.75 && aRatio < 1.25 && bRatio > 0.75 && bRatio < 1.25;
+                    if (!g5) g5Detail = `Team scoring trending abnormally (Home L5 ratio: ${aRatio.toFixed(2)}, Away: ${bRatio.toFixed(2)})`;
+                    else g5Detail = `Team form stable (Home: ${aRatio.toFixed(2)}x, Away: ${bRatio.toFixed(2)}x)`;
+                } else { g5Detail = 'Limited team rolling data'; }
+            } else if (marketClass === 'SPREAD_ML') {
+                // Check if team records support direction (no extreme upsets without data)
+                const teamA = teamIntel?.teamA;
+                const teamB = teamIntel?.teamB;
+                if (teamA?.wPct !== undefined && teamB?.wPct !== undefined) {
+                    g5Detail = `Home ${(teamA.wPct*100).toFixed(0)}% W | Away ${(teamB.wPct*100).toFixed(0)}% W`;
+                } else { g5Detail = 'Team records available'; }
+            } else {
+                // Binary/Specialty: pass by default (AI consensus is the main gate)
+                g5Detail = `${marketClass} — AI consensus is primary signal`;
             }
-            gates.push({ name: 'G7: Stats Sanity Check', pass: g7, detail: g7Detail, critical: true });
+            gates.push({ name: 'G5: Form/Pattern', pass: g5, detail: g5Detail, critical: false });
             
-            // G8: V9.3 BOT-READY — CV < 35% (Variance Gate)
-            // Bot can't trust high-variance players — too unpredictable for auto-betting
-            const cv = projection?.varianceScore || projection?.cv || projection?.CV || 0;
-            const g8 = cv > 0 ? cv < 35 : true; // Pass if no CV data (will be caught by G2)
-            const g8Detail = cv > 0 ? `CV ${cv.toFixed(1)}%${cv >= 35 ? ' — TOO VOLATILE for bot' : ' — Acceptable'}` : 'No variance data';
-            gates.push({ name: 'G8: CV < 35%', pass: g8, detail: g8Detail, critical: true });
+            // ═══════════════════════════════════════════════════════════════
+            // G6: DATA VALIDATED (real stats source confirmed)
+            // ═══════════════════════════════════════════════════════════════
+            let g6, g6Detail;
+            if (isPlayerClass) {
+                g6 = !!(playerData || projection?.seasonAvg > 0);
+                g6Detail = g6 ? (playerData?.source || 'BDL') : 'No player data';
+            } else {
+                g6 = !!(teamIntel || state.gameLines || (projection?.seasonAvg > 0));
+                g6Detail = g6 ? (teamIntel ? 'V26 Team Intel' : 'Game Lines') : 'No team data';
+            }
+            gates.push({ name: 'G6: Data Validated', pass: g6, detail: g6Detail, critical: false });
             
-            // G9: V9.3 BOT-READY — Minimum 3 sportsbooks offering odds
-            // Can't place a bet if books aren't offering the prop
+            // ═══════════════════════════════════════════════════════════════
+            // G7: SANITY CHECK
+            // Player Stats: AI direction vs stats (3+ point contradiction)
+            // Game Totals: AI direction vs team pace/scoring (10+ point contradiction)
+            // Spreads: AI direction vs record/margin gap
+            // Binary/Specialty: Implied prob sanity (AI not contradicting heavy favorite)
+            // ═══════════════════════════════════════════════════════════════
+            let g7 = true, g7Detail = 'OK';
+            if (marketClass === 'PLAYER_STAT') {
+                if (projection && line > 0 && liveEngines.length > 0) {
+                    const l5 = projection.l5Avg || 0;
+                    const l10 = projection.l10Avg || 0;
+                    const season = projection.seasonAvg || 0;
+                    const allBelow = l5 > 0 && l10 > 0 && season > 0 && l5 < line - 3 && l10 < line - 3 && season < line - 3;
+                    const allAbove = l5 > 0 && l10 > 0 && season > 0 && l5 > line + 3 && l10 > line + 3 && season > line + 3;
+                    if (allBelow && consensusDir === 'OVER') {
+                        g7 = false;
+                        g7Detail = `AI says OVER but stats 3+ below line (L5=${l5.toFixed(1)}, Season=${season.toFixed(1)} vs Line=${line})`;
+                    } else if (allAbove && consensusDir === 'UNDER') {
+                        g7 = false;
+                        g7Detail = `AI says UNDER but stats 3+ above line (L5=${l5.toFixed(1)}, Season=${season.toFixed(1)} vs Line=${line})`;
+                    }
+                }
+            } else if (marketClass === 'GAME_TOTAL' && teamIntel && line > 0) {
+                const projTotal = teamIntel.expectedTotal || 0;
+                if (projTotal > 0) {
+                    const gap = projTotal - line;
+                    if (gap > 10 && consensusDir === 'UNDER') {
+                        g7 = false;
+                        g7Detail = `AI says UNDER but projected total ${projTotal.toFixed(1)} is 10+ above line ${line}`;
+                    } else if (gap < -10 && consensusDir === 'OVER') {
+                        g7 = false;
+                        g7Detail = `AI says OVER but projected total ${projTotal.toFixed(1)} is 10+ below line ${line}`;
+                    } else {
+                        g7Detail = `Proj total ${projTotal.toFixed(1)} vs line ${line} (gap: ${gap > 0 ? '+' : ''}${gap.toFixed(1)})`;
+                    }
+                }
+            } else if (marketClass === 'SPREAD_ML' && teamIntel) {
+                const marginGap = teamIntel.expectedMargin || 0;
+                const spread = state.gameLines?.spread || 0;
+                if (spread && Math.abs(marginGap - spread) > 8) {
+                    g7Detail = `Large model-line spread discrepancy: model ${marginGap.toFixed(1)} vs line ${spread}`;
+                    // Don't fail, just warn — spreads are inherently close
+                } else {
+                    g7Detail = `Model margin ${marginGap.toFixed(1)} aligns with spread`;
+                }
+            } else {
+                g7Detail = `${marketClass} — AI consensus is primary check`;
+            }
+            gates.push({ name: 'G7: Sanity Check', pass: g7, detail: g7Detail, critical: true });
+            
+            // ═══════════════════════════════════════════════════════════════
+            // G8: VARIANCE/STABILITY
+            // Player Stats: CV < 35%
+            // Game Totals: Game total CV < 8% (team-level, less volatile)
+            // Spreads: Line movement < 2 points
+            // Binary: Implied value edge ≥ 5%
+            // Specialty: Pass by default (capped at HIGH tier anyway)
+            // ═══════════════════════════════════════════════════════════════
+            let g8 = true, g8Detail = 'OK';
+            if (marketClass === 'PLAYER_STAT') {
+                const cv = projection?.varianceScore || projection?.cv || projection?.CV || 0;
+                g8 = cv > 0 ? cv < 35 : true;
+                g8Detail = cv > 0 ? `CV ${cv.toFixed(1)}%${cv >= 35 ? ' — TOO VOLATILE for bot' : ' — Acceptable'}` : 'No variance data';
+            } else if (marketClass === 'GAME_TOTAL') {
+                // Game totals are inherently less volatile — use team scoring consistency
+                const homeRolling = teamIntel?.teamA?.rolling?.totals?.l10;
+                const awayRolling = teamIntel?.teamB?.rolling?.totals?.l10;
+                if (homeRolling?.stdev && homeRolling?.mean) {
+                    const gameCV = (homeRolling.stdev / homeRolling.mean) * 100;
+                    g8 = gameCV < 12; // Game totals: 12% threshold (less volatile than player props)
+                    g8Detail = `Game total CV ${gameCV.toFixed(1)}%${gameCV >= 12 ? ' — HIGH VARIANCE totals' : ' — Stable'}`;
+                } else {
+                    g8Detail = 'Limited game total variance data — using AI consensus';
+                }
+            } else if (marketClass === 'SPREAD_ML') {
+                // Check if line has been stable (use book line spread/consensus as proxy)
+                const lineSpread = state.liveOdds?.consensus?.spread || 0;
+                if (lineSpread > 0) {
+                    g8 = lineSpread < 2.0; // Line agreement within 2 points across books
+                    g8Detail = `Book spread range: ${lineSpread.toFixed(1)} pts${lineSpread >= 2 ? ' — LINE UNSTABLE' : ' — Stable'}`;
+                } else {
+                    g8Detail = 'Line stability data not available';
+                }
+            } else if (marketClass === 'BINARY') {
+                // Check implied vs AI probability edge
+                const impliedProb = state.lastAnalysisResult?.over?.impliedProb || state.lastAnalysisResult?.under?.impliedProb || 0;
+                const aiProb = parseFloat(state.lastAnalysisResult?.over?.trueProb || state.lastAnalysisResult?.under?.trueProb || 50);
+                const edge = Math.abs(aiProb - impliedProb);
+                g8 = edge >= 5;
+                g8Detail = edge >= 5 ? `${edge.toFixed(1)}% edge over implied — Sufficient` : `${edge.toFixed(1)}% edge — INSUFFICIENT (<5%)`;
+            } else {
+                g8Detail = `${marketClass} — variance N/A (capped at HIGH tier)`;
+            }
+            gates.push({ name: 'G8: Variance/Stability', pass: g8, detail: g8Detail, critical: true });
+            
+            // ═══════════════════════════════════════════════════════════════
+            // G9: ≥3 BOOKS (universal)
+            // ═══════════════════════════════════════════════════════════════
             const bookCount = state.liveOdds ? Object.keys(state.liveOdds.lines || {}).length : 0;
             const g9 = bookCount >= 3;
             const g9Detail = bookCount > 0 ? `${bookCount} books${bookCount < 3 ? ' — NEED 3+ for bot' : ' — Sufficient'}` : 'No odds available';
             gates.push({ name: 'G9: ≥3 Books', pass: g9, detail: g9Detail, critical: true });
             
-            // G10: V9.3 BOT-READY — Injury Status Verified (HIGH or MEDIUM confidence)
-            // Bot needs confident injury verification, not LOW
-            const injConfidence = state.verifiedInjuryStatus?.confidence || 'NONE';
-            const g10 = injConfidence === 'HIGH' || injConfidence === 'MEDIUM';
-            const g10Detail = injConfidence !== 'NONE' ? `${injConfidence} confidence${injConfidence === 'LOW' ? ' — INSUFFICIENT for bot' : ''}` : 'Not verified';
-            gates.push({ name: 'G10: Injury Verified', pass: g10, detail: g10Detail, critical: true });
+            // ═══════════════════════════════════════════════════════════════
+            // G10: STATUS VERIFICATION
+            // Player classes: Injury verified (HIGH/MEDIUM confidence)
+            // Game classes: Key player status check (major injuries accounted for)
+            // ═══════════════════════════════════════════════════════════════
+            if (isPlayerClass) {
+                const injConfidence = state.verifiedInjuryStatus?.confidence || 'NONE';
+                const g10 = injConfidence === 'HIGH' || injConfidence === 'MEDIUM';
+                const g10Detail = injConfidence !== 'NONE' ? `${injConfidence} confidence${injConfidence === 'LOW' ? ' — INSUFFICIENT for bot' : ''}` : 'Not verified';
+                gates.push({ name: 'G10: Injury Verified', pass: g10, detail: g10Detail, critical: true });
+            } else {
+                // Game-level: Check if key injuries are loaded for the game
+                const gameInjuries = state.injuries || [];
+                const gameInjuryCount = gameInjuries.length;
+                // If we have the injury report loaded (even if empty = no injuries = good), pass
+                // If injury data was never fetched, we can still pass if we have odds (books price injuries in)
+                const hasInjuryData = gameInjuryCount > 0 || state._injuriesLoaded === true;
+                const hasOdds = bookCount >= 3;
+                const g10 = hasInjuryData || hasOdds;
+                let g10Detail;
+                if (hasInjuryData) {
+                    const outPlayers = gameInjuries.filter(i => (i.status || '').toLowerCase().includes('out'));
+                    g10Detail = outPlayers.length > 0 ? `${outPlayers.length} OUT players noted — priced in` : 'Injury report loaded — no major absences';
+                } else if (hasOdds) {
+                    g10Detail = `${bookCount} books pricing game — injuries reflected in odds`;
+                } else {
+                    g10Detail = 'No injury data or odds available';
+                }
+                gates.push({ name: 'G10: Game Status', pass: g10, detail: g10Detail, critical: true });
+            }
             
             // Calculate overall result
             const allPass = gates.every(g => g.pass);
             const criticalFail = gates.some(g => !g.pass && g.critical);
             const failedGates = gates.filter(g => !g.pass);
             
-            console.log(`\n🔒 V47 CONFIDENCE GATES: ${allPass ? '✅ ALL PASSED' : criticalFail ? '🔴 CRITICAL FAIL' : '🟡 NON-CRITICAL FAIL'}`);
+            console.log(`\n🔒 V10 CONFIDENCE GATES [${marketClass}]: ${allPass ? '✅ ALL PASSED' : criticalFail ? '🔴 CRITICAL FAIL' : '🟡 NON-CRITICAL FAIL'}`);
             gates.forEach(g => console.log(`   ${g.pass ? '✅' : '❌'} ${g.name} | ${g.detail}`));
             
-            return { gates, allPass, criticalFail, failedGates, dataQualityScore, consensusRatio, consensusDir };
+            return { gates, allPass, criticalFail, failedGates, dataQualityScore, consensusRatio, consensusDir, marketClass };
         }
         
         function renderConfidenceGates(gateResult) {
@@ -30922,7 +31134,8 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                     renderConfidenceGates(gateResult);
                                     
                                     // ═══════════════════════════════════════════════════════════════
-                                    // V9.4 BET QUALITY TIER SYSTEM
+                                    // ═══════════════════════════════════════════════════════════════
+                                    // V10 BET QUALITY TIER SYSTEM (Universal — All Market Classes)
                                     // 5-tier hierarchy: 💎 DIAMOND → 🔒 LOCK → 🔥 HIGH → ⚠️ LEAN → 🚫 NO BET
                                     // ═══════════════════════════════════════════════════════════════
                                     const streakData = state.lastStreakSafe;
@@ -30930,17 +31143,25 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                     const gatesPassed = gateResult.gates?.filter(g => g.pass).length || 0;
                                     const gatesTotal = gateResult.gates?.length || 10;
                                     const allGatesPass = gateResult.allPass;
-                                    const injuryConfirmed = state.verifiedInjuryStatus?.confidence === 'HIGH' || state.verifiedInjuryStatus?.confidence === 'MEDIUM';
+                                    const mktClass = gateResult.marketClass || 'PLAYER_STAT';
+                                    const isPlayerMarket = mktClass === 'PLAYER_STAT';
+                                    const isGameMarket = mktClass === 'GAME_TOTAL' || mktClass === 'SPREAD_ML';
+                                    const isCappedMarket = mktClass === 'BINARY' || mktClass === 'SPECIALTY';
+                                    
+                                    const injuryConfirmed = isPlayerMarket 
+                                        ? (state.verifiedInjuryStatus?.confidence === 'HIGH' || state.verifiedInjuryStatus?.confidence === 'MEDIUM')
+                                        : (gateResult.gates?.find(g => g.name?.startsWith('G10'))?.pass || false);
+                                    
                                     const bookCount = state.liveOdds ? Object.keys(state.liveOdds.lines || {}).length : 0;
                                     const hasSufficientBooks = bookCount >= 3;
                                     const consensusPct = Math.round((gateResult.consensusRatio || 0) * 100);
-                                    const consensusStrong = consensusPct >= 70;
+                                    const consensusThreshold = { PLAYER_STAT: 70, BINARY: 60, GAME_TOTAL: 70, SPREAD_ML: 65, SPECIALTY: 60 }[mktClass] || 70;
+                                    const consensusStrong = consensusPct >= consensusThreshold;
                                     const cvRaw = state.lastProjection?.varianceScore || 0;
-                                    const cvOk = cvRaw < 35 || cvRaw === 0;
-                                    const cvUnder50 = cvRaw < 50 || cvRaw === 0;
+                                    const cvOk = isGameMarket ? true : (cvRaw < 35 || cvRaw === 0);
+                                    const cvUnder50 = isGameMarket ? true : (cvRaw < 50 || cvRaw === 0);
                                     const tierOk = streakTier >= 2 || streakTier === 'diamond';
                                     
-                                    // Core gate checks
                                     const g1Pass = gateResult.gates?.find(g => g.name?.startsWith('G1'))?.pass || false;
                                     const g10Pass = gateResult.gates?.find(g => g.name?.startsWith('G10'))?.pass || false;
                                     const g2Pass = gateResult.gates?.find(g => g.name?.startsWith('G2'))?.pass || false;
@@ -30951,10 +31172,20 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                     const botPassCount = Object.values(botChecks).filter(Boolean).length;
                                     const botTotal = Object.keys(botChecks).length;
                                     
-                                    // ── TIER DETERMINATION ──────────────────────────────────
                                     let betQualityTier, betQualityLabel, betQualityColor, betQualityIcon, betQualityAction, betQualityBotFire;
                                     
-                                    if (allGatesPass && botPassCount === botTotal) {
+                                    if (isCappedMarket) {
+                                        if (allGatesPass && botPassCount >= 5) {
+                                            betQualityTier = 'HIGH'; betQualityLabel = '🔥 HIGH'; betQualityColor = '#ff8800'; betQualityIcon = '🔥';
+                                            betQualityAction = `Strong ${mktClass} bet — manual only (capped)`; betQualityBotFire = false;
+                                        } else if (gatesPassed >= 6 && coreGatesPass) {
+                                            betQualityTier = 'LEAN'; betQualityLabel = '⚠️ LEAN'; betQualityColor = '#ffcc00'; betQualityIcon = '⚠️';
+                                            betQualityAction = `${mktClass} — proceed with caution`; betQualityBotFire = false;
+                                        } else {
+                                            betQualityTier = 'NO_BET'; betQualityLabel = '🚫 NO BET'; betQualityColor = '#ff4444'; betQualityIcon = '🚫';
+                                            betQualityAction = 'Do not bet — critical failures'; betQualityBotFire = false;
+                                        }
+                                    } else if (allGatesPass && botPassCount === botTotal) {
                                         betQualityTier = 'DIAMOND'; betQualityLabel = '💎 DIAMOND'; betQualityColor = '#b98fff'; betQualityIcon = '💎';
                                         betQualityAction = 'AUTO-FIRE — Maximum conviction, all systems aligned'; betQualityBotFire = true;
                                     } else if (allGatesPass && botPassCount >= 5 && cvOk && injuryConfirmed) {
@@ -30971,19 +31202,20 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                         betQualityAction = 'Do not bet — critical failures or insufficient data'; betQualityBotFire = false;
                                     }
                                     
-                                    console.log(`\n🏆 V9.4 BET QUALITY: ${betQualityLabel}`);
+                                    console.log(`\n🏆 V10 BET QUALITY [${mktClass}]: ${betQualityLabel}`);
                                     console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
                                     console.log(`   ${betQualityBotFire ? '🟢 BOT-FIRE' : '🔴 MANUAL'} — ${betQualityAction}`);
-                                    console.log(`   Gates: ${gatesPassed}/${gatesTotal} | Checks: ${botPassCount}/${botTotal} | Streak: ${streakTier}`);
-                                    console.log(`   ${allGatesPass ? '✅' : '❌'} All 10 Gates (${gatesPassed}/${gatesTotal})`);
-                                    console.log(`   ${injuryConfirmed ? '✅' : '❌'} Injury (${state.verifiedInjuryStatus?.confidence || 'NONE'})`);
+                                    console.log(`   Class: ${mktClass} | Gates: ${gatesPassed}/${gatesTotal} | Checks: ${botPassCount}/${botTotal} | Streak: ${streakTier}`);
+                                    console.log(`   ${allGatesPass ? '✅' : '❌'} All Gates (${gatesPassed}/${gatesTotal})`);
+                                    console.log(`   ${injuryConfirmed ? '✅' : '❌'} ${isPlayerMarket ? 'Injury' : 'Status'} (${isPlayerMarket ? (state.verifiedInjuryStatus?.confidence || 'NONE') : (g10Pass ? 'OK' : 'UNVERIFIED')})`);
                                     console.log(`   ${hasSufficientBooks ? '✅' : '❌'} Books (${bookCount})`);
-                                    console.log(`   ${consensusStrong ? '✅' : '❌'} Consensus (${consensusPct}%)`);
-                                    console.log(`   ${cvOk ? '✅' : '❌'} CV (${cvRaw.toFixed(1)}%)`);
+                                    console.log(`   ${consensusStrong ? '✅' : '❌'} Consensus (${consensusPct}% — need ${consensusThreshold}%)`);
+                                    console.log(`   ${cvOk ? '✅' : '❌'} ${isGameMarket ? 'Stability' : 'CV'} (${isGameMarket ? 'N/A' : cvRaw.toFixed(1) + '%'})`);
                                     console.log(`   ${tierOk ? '✅' : '❌'} Streak Tier (${streakTier})`);
                                     if (betQualityTier === 'LOCK' && !tierOk) {
-                                        console.log(`   🔒 LOCK OVERRIDE: Streak bypassed — 10/10 gates + ${botPassCount - 1}/5 checks confirm`);
+                                        console.log(`   🔒 LOCK OVERRIDE: Streak bypassed — ${gatesPassed}/${gatesTotal} gates + ${botPassCount - 1}/5 checks confirm`);
                                     }
+                                    if (isCappedMarket) console.log(`   ⚠️ CAPPED: ${mktClass} max tier = 🔥 HIGH`);
                                     console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
                                     
                                     state.botReady = {
@@ -48495,11 +48727,12 @@ if (typeof window !== 'undefined') {
 }
 
 // Startup
-console.log('\n🏆 SBA GENIUS V48 ULTIMATE V9.4 — BET QUALITY TIER ENGINE');
+console.log('\n🏆 SBA GENIUS V48 — V10 UNIVERSAL GATE ENGINE');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('V9.4: 5-TIER SYSTEM — 💎 DIAMOND → 🔒 LOCK → 🔥 HIGH → ⚠️ LEAN → 🚫 NO BET');
-console.log('   LOCK bypasses Streak Tier when 10/10 gates + 5/6 checks pass');
-console.log('   Sources: OddsAPI, ESPN, BDL, 11 AI engines | GATES: 10 | TIERS: 5');
+console.log('V10: UNIVERSAL GATES — 5 Market Classes × 10 Gates × 5 Tiers');
+console.log('   Classes: PLAYER_STAT | BINARY | GAME_TOTAL | SPREAD_ML | SPECIALTY');
+console.log('   537 markets across 9 sport types — all gate-evaluated');
+console.log('   Sources: OddsAPI, ESPN, BDL, 11 AI engines, V26 Team Intel');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
 </script>
