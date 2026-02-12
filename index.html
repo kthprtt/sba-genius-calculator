@@ -12254,15 +12254,20 @@ Return ONLY valid JSON:
             const line = parseFloat(document.getElementById('line-input')?.value) || 0;
             
             // G1: Player Active (not OUT/injured)
+            // V9.2: Enhanced with wider status matching + allL5Excluded fallback
             const injuries = state.injuries || [];
             const playerName = state.lastPlayerName || state.currentPlayer || '';
             const playerLast = playerName.split(' ').pop()?.toLowerCase() || '';
             const playerInjury = playerLast.length > 1 ? injuries.find(i => 
                 (i.playerName || i.name || i.athlete?.displayName || '').toLowerCase().includes(playerLast) &&
-                (i.status === 'OUT' || i.status === 'Out')
+                (i.status || '').toLowerCase().includes('out')
             ) : null;
-            const g1 = !playerInjury;
-            gates.push({ name: 'G1: Player Active', pass: g1, detail: g1 ? 'ACTIVE' : `OUT — ${playerInjury?.status || 'Injured'}`, critical: true });
+            // V9.2: If allL5Excluded from projection AND no injury found, flag as likely OUT
+            const projAllL5Excluded = projection?.allL5Excluded === true;
+            const g1InjurySource = playerInjury ? (playerInjury.source || playerInjury.injury || 'Injured') : 
+                                   projAllL5Excluded ? 'All L5 games are DNPs — player likely OUT' : null;
+            const g1 = !playerInjury && !projAllL5Excluded;
+            gates.push({ name: 'G1: Player Active', pass: g1, detail: g1 ? 'ACTIVE' : `OUT — ${g1InjurySource}`, critical: true });
             
             // G2: Data Quality ≥ 70% (based on available data sources)
             let dataQualityScore = 50; // Start at baseline
@@ -20122,6 +20127,61 @@ Return ONLY valid JSON:
             
             // V20: Store on state so generateFactors can access teammate injuries
             state.injuries = gameInjuries;
+            
+            // V9.2 FIX: AI-powered injury verification for the SELECTED player
+            // BDL's injury feed can lag behind real-time injury reports (e.g. game-day calf injury)
+            // If the selected player is NOT in BDL's injury list, do a quick AI check
+            const selectedPlayer = state.lastPlayerName || state.currentPlayer || '';
+            const selectedPlayerLast = selectedPlayer.split(' ').pop()?.toLowerCase() || '';
+            const playerInBDLInjuryList = selectedPlayerLast.length > 1 && gameInjuries.some(i => 
+                (i.playerName || '').toLowerCase().includes(selectedPlayerLast)
+            );
+            
+            if (selectedPlayer && !playerInBDLInjuryList && CONFIG.keys.proxy) {
+                try {
+                    console.log(`🏥 V9.2: BDL has no injury record for ${selectedPlayer} — running AI verification...`);
+                    const aiInjuryRes = await fetch(`${CONFIG.keys.proxy}/api/ai/perplexity`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            prompt: `Is ${selectedPlayer} playing tonight in NBA? Check the OFFICIAL team injury report. Reply ONLY in JSON: {"status": "ACTIVE" or "OUT" or "QUESTIONABLE", "reason": "injury type or null"}`,
+                            maxTokens: 100
+                        })
+                    });
+                    if (aiInjuryRes.ok) {
+                        const aiData = await aiInjuryRes.json();
+                        const aiText = (aiData?.result?.raw || aiData?.result?.parsed || aiData?.result || '').toString();
+                        const jsonMatch = aiText.match(/\{[^}]+\}/);
+                        if (jsonMatch) {
+                            try {
+                                const parsed = JSON.parse(jsonMatch[0]);
+                                if (parsed.status === 'OUT') {
+                                    console.warn(`🚨 V9.2: AI confirms ${selectedPlayer} is OUT — ${parsed.reason || 'injury'}`);
+                                    console.warn(`🚨 V9.2: Adding to injury list (was missing from BDL feed)`);
+                                    // Add to state.injuries so G1 gate catches it
+                                    const aiInjury = {
+                                        playerName: selectedPlayer,
+                                        team: homeTeam || awayTeam || '',
+                                        status: 'OUT',
+                                        injury: parsed.reason || 'Confirmed OUT via AI (not in BDL feed)',
+                                        source: 'AI-verified (Perplexity)'
+                                    };
+                                    state.injuries.push(aiInjury);
+                                    gameInjuries.push(aiInjury);
+                                } else if (parsed.status === 'QUESTIONABLE') {
+                                    console.log(`⚠️ V9.2: AI reports ${selectedPlayer} is QUESTIONABLE — ${parsed.reason || ''}`);
+                                } else {
+                                    console.log(`✅ V9.2: AI confirms ${selectedPlayer} is ACTIVE`);
+                                }
+                            } catch (parseErr) {
+                                console.log(`⚠️ V9.2: AI injury check returned unparseable response`);
+                            }
+                        }
+                    }
+                } catch (aiErr) {
+                    console.log(`⚠️ V9.2: AI injury check failed: ${aiErr.message}`);
+                }
+            }
             
             const outCount = gameInjuries.filter(inj => 
                 inj.status?.toLowerCase()?.includes('out')
@@ -28427,6 +28487,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 smartL5: blowoutContextLow > 0 ? smartL5 : null, // V48: populated when blowout cleaning applied
                 smartL10: blowoutContextLow > 0 ? smartL10 : null, // V48: cleaned L10
                 blowoutGamesInL5: blowoutContextLow, // V48: count of DNP/blowout games filtered
+                allL5Excluded, // V9.2: flag for G1 gate — true when ALL L5 games are DNP
                 variance: playerConsistency,
                 // V8 additions
                 hitRate: intelData.hitRate,
@@ -39101,7 +39162,7 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
 <!-- V8.1: Auto-load console analysis engine if available -->
 <script>
 // ═══════════════════════════════════════════════════════════════════
-// V48 ULTIMATE V9.1 — WORLD CLASS ENGINE + DNP FIX
+// V48 ULTIMATE V9.2 — WORLD CLASS ENGINE + INJURY VERIFICATION
 // Best of Console + UI: Real OddsAPI spread, ESPN B2B, BDL injuries,
 // unified Home/Away splits, UI-matched blowout + B2B penalties
 // ═══════════════════════════════════════════════════════════════════
@@ -44712,7 +44773,7 @@ reasoning must explain your analysis`;
         
         console.log('\n');
         console.log('╔═══════════════════════════════════════════════════════════════════════════════╗');
-        console.log('║   🏆 SBA GENIUS V48 ULTIMATE V9.1 - WORLD CLASS ENGINE + DNP FIX 🏆              ║');
+        console.log('║   🏆 SBA GENIUS V48 ULTIMATE V9.2 - WORLD CLASS + INJURY VERIFICATION 🏆              ║');
         console.log('╠═══════════════════════════════════════════════════════════════════════════════╣');
         console.log(`║  ${displaySubject} | ${statDisplay} @ ${params.line} ${isPlayerProp ? 'vs ' + (params.opponent || 'Unknown') : ''}`.padEnd(78) + '║');
         console.log(`║  Sport: ${sportConfig.name} | Market: ${market} | Type: ${marketType.toUpperCase()}`.padEnd(78) + '║');
@@ -48048,9 +48109,9 @@ if (typeof window !== 'undefined') {
 }
 
 // Startup
-console.log('\n🏆 SBA GENIUS V48 ULTIMATE V9.1 — WORLD CLASS ENGINE + DNP FIX');
+console.log('\n🏆 SBA GENIUS V48 ULTIMATE V9.2 — WORLD CLASS ENGINE + INJURY VERIFICATION');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('V9.1: WORLD CLASS + DNP FIX — All V9.0 features + OUT player detection, game matcher fix, confidence penalty for all-DNP players');
+console.log('V9.2: WORLD CLASS + INJURY VERIFY — V9.1 fixes + AI-powered injury verification for UI engine, enhanced G1 gate with allL5Excluded fallback');
 console.log('   Sources: OddsAPI (spread/total), ESPN (schedule/B2B), BDL (stats/injuries/matrix), 11 AI engines');
 console.log('GATES: 7 (G1-G7) | SPORTS: 12 | MARKETS: 274');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
