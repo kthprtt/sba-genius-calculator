@@ -12410,8 +12410,8 @@ Return ONLY valid JSON:
         }
         
         // V9.3 BOT-READY: Render visual badge showing bot assessment
-        function renderBotReadyBadge(isReady, checks, passCount, total, player, market, line, direction) {
-            // Remove any existing bot badge
+        function renderBetQualityBadge(assessment, player, market, line, direction) {
+            // Remove any existing badge
             const existing = document.getElementById('bot-ready-badge');
             if (existing) existing.remove();
             
@@ -12421,34 +12421,65 @@ Return ONLY valid JSON:
             const badge = document.createElement('div');
             badge.id = 'bot-ready-badge';
             
-            if (isReady) {
-                badge.style.cssText = 'background: linear-gradient(135deg, rgba(0,255,136,0.15), rgba(0,200,255,0.1)); border: 2px solid #00ff88; border-radius: 8px; padding: 12px 16px; margin-top: 10px; text-align: center;';
-                badge.innerHTML = `
-                    <div style="font-size: 18px; font-weight: 800; color: #00ff88; margin-bottom: 4px;">🤖 BOT READY — AUTO-BET APPROVED ✅</div>
-                    <div style="font-size: 12px; color: #00cc66;">${player} ${market} ${direction} @ ${line} — ${passCount}/${total} checks passed</div>
-                    <div style="font-size: 10px; color: #888; margin-top: 4px;">V9.3: All bot-accuracy gates met. Tier 2+ streak safe. High conviction.</div>
-                `;
-            } else {
-                const failures = Object.entries(checks).filter(([,v]) => !v).map(([k]) => {
-                    const labels = {
-                        allGatesPass: 'Gates Failed',
-                        injuryConfirmed: 'Injury Unverified',
-                        hasSufficientBooks: 'Too Few Books',
-                        consensusStrong: 'Weak Consensus',
-                        cvOk: 'High Variance',
-                        tierOk: 'Low Streak Tier'
-                    };
-                    return labels[k] || k;
-                });
-                badge.style.cssText = 'background: rgba(255,68,68,0.08); border: 1px solid rgba(255,68,68,0.3); border-radius: 8px; padding: 10px 16px; margin-top: 10px; text-align: center;';
-                badge.innerHTML = `
-                    <div style="font-size: 14px; font-weight: 700; color: #ff6b6b; margin-bottom: 4px;">🤖 BOT: NOT READY (${passCount}/${total}) ❌</div>
-                    <div style="font-size: 11px; color: #ff8888;">Blocked: ${failures.join(' • ')}</div>
-                    <div style="font-size: 10px; color: #666; margin-top: 4px;">V9.3: Manual analysis only — does not meet auto-bet criteria</div>
-                `;
-            }
+            const { tier, label, color, icon, action, botFire, checks, passCount, total, gatesPassed, gatesTotal, streakTier, cv, consensus, bookCount } = assessment;
+            
+            // Check labels for display
+            const checkLabels = {
+                allGatesPass: `Gates ${gatesPassed}/${gatesTotal}`,
+                injuryConfirmed: `Injury`,
+                hasSufficientBooks: `Books (${bookCount})`,
+                consensusStrong: `AI ${consensus}%`,
+                cvOk: `CV ${(cv || 0).toFixed(0)}%`,
+                tierOk: `Streak T${streakTier}`
+            };
+            
+            const checkIcons = Object.entries(checks).map(([k, v]) => 
+                `<span style="color: ${v ? '#00ff88' : '#ff6b6b'}; font-size: 10px; margin: 0 3px;">${v ? '✅' : '❌'} ${checkLabels[k]}</span>`
+            ).join('');
+            
+            // Tier-specific styling
+            const tierStyles = {
+                DIAMOND: { bg: 'linear-gradient(135deg, rgba(185,143,255,0.2), rgba(255,215,0,0.1))', border: '2px solid #b98fff', glow: '0 0 20px rgba(185,143,255,0.3)' },
+                LOCK: { bg: 'linear-gradient(135deg, rgba(255,215,0,0.15), rgba(255,180,0,0.08))', border: '2px solid #FFD700', glow: '0 0 15px rgba(255,215,0,0.2)' },
+                HIGH: { bg: 'linear-gradient(135deg, rgba(255,136,0,0.12), rgba(255,100,0,0.06))', border: '1px solid #ff8800', glow: 'none' },
+                LEAN: { bg: 'rgba(255,204,0,0.08)', border: '1px solid rgba(255,204,0,0.4)', glow: 'none' },
+                NO_BET: { bg: 'rgba(255,68,68,0.08)', border: '1px solid rgba(255,68,68,0.3)', glow: 'none' }
+            };
+            const style = tierStyles[tier] || tierStyles.NO_BET;
+            
+            badge.style.cssText = `background: ${style.bg}; border: ${style.border}; border-radius: 10px; padding: 14px 16px; margin-top: 10px; text-align: center; box-shadow: ${style.glow};`;
+            
+            // Lock override notice
+            const lockOverride = (tier === 'LOCK' && !checks.tierOk) 
+                ? `<div style="font-size: 10px; color: #FFD700; margin-top: 4px;">🔒 LOCK OVERRIDE: Streak Tier bypassed — 10/10 gates + 5/6 checks confirm quality</div>` 
+                : '';
+            
+            // Bot fire vs manual
+            const verdict = botFire 
+                ? `<div style="font-size: 11px; color: ${color}; margin-top: 2px;">🟢 ${player} ${market} <strong>${direction}</strong> @ ${line} — ${action}</div>`
+                : `<div style="font-size: 11px; color: ${tier === 'NO_BET' ? '#ff6b6b' : color}; margin-top: 2px;">${action}</div>`;
+            
+            badge.innerHTML = `
+                <div style="font-size: 20px; font-weight: 900; color: ${color}; margin-bottom: 4px; letter-spacing: 1px;">${label}</div>
+                ${verdict}
+                <div style="margin-top: 8px; display: flex; flex-wrap: wrap; justify-content: center; gap: 2px;">${checkIcons}</div>
+                ${lockOverride}
+                <div style="font-size: 9px; color: #555; margin-top: 6px;">V9.4 Bet Quality System — ${passCount}/${total} checks • ${gatesPassed}/${gatesTotal} gates • Streak Tier ${streakTier}</div>
+            `;
             
             gatesSection.appendChild(badge);
+        }
+        
+        // Legacy alias for any callers still referencing the old name
+        function renderBotReadyBadge(isReady, checks, passCount, total, player, market, line, direction) {
+            // V9.4: Redirect to new system — build a minimal assessment object
+            renderBetQualityBadge({
+                tier: isReady ? 'DIAMOND' : 'NO_BET', label: isReady ? '💎 DIAMOND' : '🚫 NO BET',
+                color: isReady ? '#b98fff' : '#ff4444', icon: isReady ? '💎' : '🚫',
+                action: isReady ? 'Auto-fire approved' : 'Not ready', botFire: isReady,
+                checks, passCount, total, gatesPassed: passCount, gatesTotal: total,
+                streakTier: 0, cv: 0, consensus: 0, bookCount: 0
+            }, player, market, line, direction);
         }
         
         function renderMarketTabs() {
@@ -30890,58 +30921,80 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                     );
                                     renderConfidenceGates(gateResult);
                                     
-                                    // V9.3 BOT-READY ASSESSMENT
-                                    // Evaluates if this play meets all criteria for automated betting
+                                    // ═══════════════════════════════════════════════════════════════
+                                    // V9.4 BET QUALITY TIER SYSTEM
+                                    // 5-tier hierarchy: 💎 DIAMOND → 🔒 LOCK → 🔥 HIGH → ⚠️ LEAN → 🚫 NO BET
+                                    // ═══════════════════════════════════════════════════════════════
                                     const streakData = state.lastStreakSafe;
                                     const streakTier = streakData?.tier || 0;
+                                    const gatesPassed = gateResult.gates?.filter(g => g.pass).length || 0;
+                                    const gatesTotal = gateResult.gates?.length || 10;
                                     const allGatesPass = gateResult.allPass;
-                                    const noCriticalFail = !gateResult.criticalFail;
                                     const injuryConfirmed = state.verifiedInjuryStatus?.confidence === 'HIGH' || state.verifiedInjuryStatus?.confidence === 'MEDIUM';
-                                    const hasSufficientBooks = (state.liveOdds ? Object.keys(state.liveOdds.lines || {}).length : 0) >= 3;
-                                    const consensusStrong = gateResult.consensusRatio >= 0.70;
-                                    const cvOk = (state.lastProjection?.varianceScore || 0) < 35 || (state.lastProjection?.varianceScore || 0) === 0;
+                                    const bookCount = state.liveOdds ? Object.keys(state.liveOdds.lines || {}).length : 0;
+                                    const hasSufficientBooks = bookCount >= 3;
+                                    const consensusPct = Math.round((gateResult.consensusRatio || 0) * 100);
+                                    const consensusStrong = consensusPct >= 70;
+                                    const cvRaw = state.lastProjection?.varianceScore || 0;
+                                    const cvOk = cvRaw < 35 || cvRaw === 0;
+                                    const cvUnder50 = cvRaw < 50 || cvRaw === 0;
                                     const tierOk = streakTier >= 2 || streakTier === 'diamond';
                                     
-                                    const botChecks = {
-                                        allGatesPass,
-                                        injuryConfirmed,
-                                        hasSufficientBooks,
-                                        consensusStrong,
-                                        cvOk,
-                                        tierOk
-                                    };
+                                    // Core gate checks
+                                    const g1Pass = gateResult.gates?.find(g => g.id === 'G1')?.pass || false;
+                                    const g10Pass = gateResult.gates?.find(g => g.id === 'G10')?.pass || false;
+                                    const g2Pass = gateResult.gates?.find(g => g.id === 'G2')?.pass || false;
+                                    const g3Pass = gateResult.gates?.find(g => g.id === 'G3')?.pass || false;
+                                    const coreGatesPass = g1Pass && g10Pass;
+                                    
+                                    const botChecks = { allGatesPass, injuryConfirmed, hasSufficientBooks, consensusStrong, cvOk, tierOk };
                                     const botPassCount = Object.values(botChecks).filter(Boolean).length;
                                     const botTotal = Object.keys(botChecks).length;
-                                    const isBotReady = botPassCount === botTotal;
                                     
-                                    console.log(`\n🤖 V9.3 BOT-READY ASSESSMENT: ${isBotReady ? '✅ AUTO-BET APPROVED' : `❌ NOT READY (${botPassCount}/${botTotal})`}`);
-                                    console.log(`   ${allGatesPass ? '✅' : '❌'} All Gates Pass (${gateResult.gates?.filter(g => g.pass).length}/${gateResult.gates?.length})`);
-                                    console.log(`   ${injuryConfirmed ? '✅' : '❌'} Injury Verified (${state.verifiedInjuryStatus?.confidence || 'NONE'})`);
-                                    console.log(`   ${hasSufficientBooks ? '✅' : '❌'} Sportsbook Odds (${state.liveOdds ? Object.keys(state.liveOdds.lines || {}).length : 0} books)`);
-                                    console.log(`   ${consensusStrong ? '✅' : '❌'} AI Consensus ≥70% (${Math.round((gateResult.consensusRatio || 0) * 100)}%)`);
-                                    console.log(`   ${cvOk ? '✅' : '❌'} CV < 35% (${(state.lastProjection?.varianceScore || 0).toFixed(1)}%)`);
-                                    console.log(`   ${tierOk ? '✅' : '❌'} Streak Tier ≥2 (Tier ${streakTier})`);
+                                    // ── TIER DETERMINATION ──────────────────────────────────
+                                    let betQualityTier, betQualityLabel, betQualityColor, betQualityIcon, betQualityAction, betQualityBotFire;
                                     
-                                    if (isBotReady) {
-                                        console.log(`   🟢 VERDICT: ${player} ${market} — ${gateResult.consensusDir} @ ${line} — APPROVED FOR AUTO-BET`);
+                                    if (allGatesPass && botPassCount === botTotal) {
+                                        betQualityTier = 'DIAMOND'; betQualityLabel = '💎 DIAMOND'; betQualityColor = '#b98fff'; betQualityIcon = '💎';
+                                        betQualityAction = 'AUTO-FIRE — Maximum conviction, all systems aligned'; betQualityBotFire = true;
+                                    } else if (allGatesPass && botPassCount >= 5 && cvOk && injuryConfirmed) {
+                                        betQualityTier = 'LOCK'; betQualityLabel = '🔒 LOCK'; betQualityColor = '#FFD700'; betQualityIcon = '🔒';
+                                        betQualityAction = 'BOT-FIRE — All gates passed, strong conviction'; betQualityBotFire = true;
+                                    } else if (gatesPassed >= 8 && coreGatesPass && g2Pass && g3Pass && cvUnder50 && hasSufficientBooks && injuryConfirmed) {
+                                        betQualityTier = 'HIGH'; betQualityLabel = '🔥 HIGH'; betQualityColor = '#ff8800'; betQualityIcon = '🔥';
+                                        betQualityAction = 'Strong bet — manual review recommended'; betQualityBotFire = false;
+                                    } else if (gatesPassed >= 6 && coreGatesPass) {
+                                        betQualityTier = 'LEAN'; betQualityLabel = '⚠️ LEAN'; betQualityColor = '#ffcc00'; betQualityIcon = '⚠️';
+                                        betQualityAction = 'Proceed with caution — edge with caveats'; betQualityBotFire = false;
                                     } else {
-                                        const failures = Object.entries(botChecks).filter(([,v]) => !v).map(([k]) => k);
-                                        console.log(`   🔴 BLOCKED: ${failures.join(', ')}`);
+                                        betQualityTier = 'NO_BET'; betQualityLabel = '🚫 NO BET'; betQualityColor = '#ff4444'; betQualityIcon = '🚫';
+                                        betQualityAction = 'Do not bet — critical failures or insufficient data'; betQualityBotFire = false;
                                     }
                                     
-                                    // Store bot assessment in state
+                                    console.log(`\n🏆 V9.4 BET QUALITY: ${betQualityLabel}`);
+                                    console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+                                    console.log(`   ${betQualityBotFire ? '🟢 BOT-FIRE' : '🔴 MANUAL'} — ${betQualityAction}`);
+                                    console.log(`   Gates: ${gatesPassed}/${gatesTotal} | Checks: ${botPassCount}/${botTotal} | Streak: ${streakTier}`);
+                                    console.log(`   ${allGatesPass ? '✅' : '❌'} All 10 Gates (${gatesPassed}/${gatesTotal})`);
+                                    console.log(`   ${injuryConfirmed ? '✅' : '❌'} Injury (${state.verifiedInjuryStatus?.confidence || 'NONE'})`);
+                                    console.log(`   ${hasSufficientBooks ? '✅' : '❌'} Books (${bookCount})`);
+                                    console.log(`   ${consensusStrong ? '✅' : '❌'} Consensus (${consensusPct}%)`);
+                                    console.log(`   ${cvOk ? '✅' : '❌'} CV (${cvRaw.toFixed(1)}%)`);
+                                    console.log(`   ${tierOk ? '✅' : '❌'} Streak Tier (${streakTier})`);
+                                    if (betQualityTier === 'LOCK' && !tierOk) {
+                                        console.log(`   🔒 LOCK OVERRIDE: Streak bypassed — 10/10 gates + ${botPassCount - 1}/5 checks confirm`);
+                                    }
+                                    console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+                                    
                                     state.botReady = {
-                                        ready: isBotReady,
-                                        checks: botChecks,
-                                        passCount: botPassCount,
-                                        total: botTotal,
-                                        direction: gateResult.consensusDir,
-                                        tier: streakTier,
-                                        timestamp: Date.now()
+                                        ready: betQualityBotFire, tier: betQualityTier, label: betQualityLabel,
+                                        color: betQualityColor, icon: betQualityIcon, action: betQualityAction,
+                                        botFire: betQualityBotFire, checks: botChecks, passCount: botPassCount,
+                                        total: botTotal, gatesPassed, gatesTotal, direction: gateResult.consensusDir,
+                                        streakTier, cv: cvRaw, consensus: consensusPct, bookCount, timestamp: Date.now()
                                     };
                                     
-                                    // Render bot-ready badge in UI
-                                    renderBotReadyBadge(isBotReady, botChecks, botPassCount, botTotal, player, market, line, gateResult.consensusDir);
+                                    renderBetQualityBadge(state.botReady, player, market, line, gateResult.consensusDir);
                                     
                                 } catch(gateErr) {
                                     console.warn('⚠️ Confidence Gates error (non-fatal):', gateErr.message);
@@ -48442,11 +48495,11 @@ if (typeof window !== 'undefined') {
 }
 
 // Startup
-console.log('\n🏆 SBA GENIUS V48 ULTIMATE V9.3 — BOT-READY ENGINE');
+console.log('\n🏆 SBA GENIUS V48 ULTIMATE V9.4 — BET QUALITY TIER ENGINE');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('V9.3: BOT-READY — 10-gate system (G1-G10), CV gate, 3+ books gate, injury confidence boost, pipeline cancellation, bot assessment engine');
-console.log('   Sources: OddsAPI (spread/total), ESPN (schedule/B2B), BDL (stats/injuries/matrix), 11 AI engines');
-console.log('GATES: 10 (G1-G10) | BOT CHECKS: 6 | SPORTS: 12 | MARKETS: 274');
+console.log('V9.4: 5-TIER SYSTEM — 💎 DIAMOND → 🔒 LOCK → 🔥 HIGH → ⚠️ LEAN → 🚫 NO BET');
+console.log('   LOCK bypasses Streak Tier when 10/10 gates + 5/6 checks pass');
+console.log('   Sources: OddsAPI, ESPN, BDL, 11 AI engines | GATES: 10 | TIERS: 5');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
 </script>
