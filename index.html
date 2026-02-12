@@ -27998,10 +27998,16 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 }
                 console.log(`🏟️ V10 Game Projection [${market}]: ${gameProjection.toFixed(1)} (via V26 Team Intel — bypassed player pipeline)`);
                 return {
-                    projection: gameProjection, confidence: 65, dataQuality: 75,
+                    value: gameProjection,
+                    projection: gameProjection,
+                    independentProjection: gameProjection,
+                    confidence: 65, dataQuality: 75,
+                    baseProjection: gameProjection, rawProjection: gameProjection,
+                    adjustments: 0, vegasLine: line || 0,
                     variance: 'average', varianceScore: 0,
-                    l5Avg: 0, l10Avg: 0, seasonAvg: gameProjection,
-                    hitRate: null,
+                    l5Avg: 0, l10Avg: 0, l3Avg: 0, seasonAvg: gameProjection,
+                    hitRate: null, momentum: 'neutral', momentumReason: '',
+                    isHome: false,
                     engines: { seasonWeight: 1, l5Weight: 0, l10Weight: 0, matchupWeight: 0 },
                     isGameMarketBypass: true, teamIntelSource: true,
                     projectedTotal: projTotal, projectedMargin: projMargin
