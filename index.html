@@ -12685,7 +12685,7 @@ Return ONLY valid JSON:
             
             // Lock override notice
             const lockOverride = (tier === 'LOCK' && !checks.tierOk) 
-                ? `<div style="font-size: 10px; color: #FFD700; margin-top: 4px;">🔒 LOCK OVERRIDE: Streak Tier bypassed — 10/10 gates + 5/6 checks confirm quality</div>` 
+                ? `<div style="font-size: 10px; color: #FFD700; margin-top: 4px;">🔒 LOCK: Streak Tier bypassed — gates + edge + research harmony confirmed</div>` 
                 : '';
             
             // Bot fire vs manual
@@ -26774,9 +26774,12 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 if (ctxAdj) console.log(`📊 V30 Model+Ctx: ${rawModelProb.toFixed(1)}% + Ctx ${ctxAdj.toFixed(1)} = ${honestProb.toFixed(1)}%`);
             }
             
-            // CHANGE 4: Honesty caps — nothing in sports is more certain than ~82%
-            const PROB_CAP = 82;
-            const EDGE_CAP = 20;
+            // CHANGE 4: Honesty caps — WITHOUT calibration data, be conservative
+            // 82% was too aggressive. Until we have 100+ tracked outcomes, cap at 72%
+            // This means max edge = 22% (72-50), but capped to 15% until calibrated
+            const calDataPoints = state.calibrationData?.totalTracked || 0;
+            const PROB_CAP = calDataPoints >= 100 ? 78 : calDataPoints >= 50 ? 75 : 72;
+            const EDGE_CAP = calDataPoints >= 100 ? 18 : calDataPoints >= 50 ? 15 : 12;
             const rawProb = honestProb;
             const cappedProb = Math.min(PROB_CAP, honestProb);
             const wasCapped = rawProb > PROB_CAP;
@@ -26906,8 +26909,9 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 }
             }
             
-            // Store for use in Coach K and feel-like scoring
+            // Store for use in Coach K, feel-like scoring, and G11 edge detection
             state.sbaModel = { line: pass1.sbaLine, edge, pass1 };
+            state.lastSBAvsBooks = { sbaModel: pass1.sbaLine, bookLine, gap: edge?.gap, direction: edge?.direction };
             
             console.log(`✅ V28 SBA vs Books panel updated: SBA ${pass1.sbaLine} vs Book ${bookLine} = ${edge?.direction} ${Math.abs(edge?.gap || 0)}pts (${edge?.strength})`);
         }
@@ -31772,23 +31776,99 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                                 }
                                             }
                                         } else if (!isML) {
-                                            // For spread/total: check SBA Gap
-                                            const gap = state.lastProjection?.value || state.lastProjection?.projection || 0;
+                                            // For spread/total: use SBA MODEL margin vs book spread for edge
+                                            const mCtxSprd = mCtxEdge?.analysisType === 'spread';
+                                            const mCtxTotal = mCtxEdge?.analysisType === 'game_total';
                                             const lineVal = parseFloat(document.getElementById('line-input')?.value) || 0;
-                                            const gapSize = Math.abs(gap - lineVal);
-                                            if (gapSize < 1.0) {
-                                                edgeDetected = false;
-                                                edgeReason = `SBA projection ${gap.toFixed(1)} vs line ${lineVal} → gap ${gapSize.toFixed(1)} < 1.0 minimum`;
-                                                console.log(`\n💰 G11 EDGE DETECTION [${mCtxEdge?.analysisType?.toUpperCase() || 'GAME'}]:`);
-                                                console.log(`   Gap: ${gapSize.toFixed(1)} pts — ❌ NO EDGE`);
-                                                if (!edgeDetected) console.log(`   ⚠️ LOCK/DIAMOND blocked — demoting to HIGH max`);
+                                            
+                                            if (mCtxSprd) {
+                                                // SPREAD: Model margin vs book spread
+                                                const projMargin = state.teamIntelligence?.projectedMargin || state.teamIntelligence?.matchup?.injuryAdjMargin || state.teamIntelligence?.matchup?.expectedMargin || 0;
+                                                const sbaModel = state.lastSBAvsBooks?.sbaModel ?? projMargin;
+                                                const spreadGap = Math.abs(sbaModel - lineVal);
+                                                
+                                                // Sport-specific spread stdev (NBA ~10pts, NFL ~13pts, NHL ~2pts)
+                                                const sport = (state.sportKey || '').toLowerCase();
+                                                const spreadStdev = sport.includes('nba') ? 10.5 : sport.includes('nfl') ? 13.5 : sport.includes('nhl') ? 2.5 : sport.includes('mlb') ? 3.0 : 8.0;
+                                                
+                                                // Edge = gap as fraction of spread volatility
+                                                // 3pt gap in NBA (~10.5 stdev) = ~28% of 1 stdev = modest edge
+                                                // Must exceed 0.3 stdev (= ~3pts NBA) for edge
+                                                const zSpread = spreadGap / spreadStdev;
+                                                edgePct = Math.min(20, zSpread * 10); // 1 stdev gap = 10% edge, capped at 20%
+                                                
+                                                if (zSpread < 0.25) {
+                                                    edgeDetected = false;
+                                                    edgeReason = `Spread model ${sbaModel.toFixed(1)} vs book ${lineVal} → gap ${spreadGap.toFixed(1)}pts (${(zSpread * 100).toFixed(0)}% of stdev ${spreadStdev}) — below 25% stdev threshold`;
+                                                } else {
+                                                    edgeDetected = true;
+                                                    edgeReason = `Spread model ${sbaModel.toFixed(1)} vs book ${lineVal} → gap ${spreadGap.toFixed(1)}pts (z=${zSpread.toFixed(2)}) → edge ${edgePct.toFixed(1)}%`;
+                                                }
+                                                console.log(`\n💰 G11 EDGE DETECTION [SPREAD]:`);
+                                                console.log(`   Model: ${sbaModel.toFixed(1)}, Book: ${lineVal}, Gap: ${spreadGap.toFixed(1)}pts`);
+                                                console.log(`   Sport stdev: ${spreadStdev}, z-score: ${zSpread.toFixed(2)}`);
+                                                console.log(`   Edge: ${edgePct.toFixed(1)}% ${edgeDetected ? '✅' : '❌ NO EDGE'}`);
+                                                
+                                                // VOLATILITY CHECK: Both superstars out = highly uncertain
+                                                const injuries = state.injuries || [];
+                                                const starOuts = injuries.filter(i => {
+                                                    const ppg = (state.cachedPlayers || []).find(p => 
+                                                        (p.name || '').toLowerCase().includes((i.playerName || '').toLowerCase().split(' ').pop())
+                                                    )?.pts || 0;
+                                                    return ppg >= 20 && (i.status || '').toLowerCase().includes('out');
+                                                }).length;
+                                                if (starOuts >= 2) {
+                                                    // Multiple stars out = wider uncertainty band → shrink edge
+                                                    const volPenalty = 0.5; // halve the edge
+                                                    edgePct *= volPenalty;
+                                                    edgeReason += ` ⚠️ ${starOuts} star(s) OUT → edge halved for volatility`;
+                                                    console.log(`   ⚠️ Volatility: ${starOuts} stars OUT → edge halved to ${edgePct.toFixed(1)}%`);
+                                                    if (edgePct < 2.5) {
+                                                        edgeDetected = false;
+                                                        console.log(`   ❌ Edge below 2.5% after volatility penalty → NO EDGE`);
+                                                    }
+                                                }
+                                            } else {
+                                                // GAME TOTAL / OTHER: simple gap check
+                                                const gap = state.lastProjection?.value || state.lastProjection?.projection || 0;
+                                                const gapSize = Math.abs(gap - lineVal);
+                                                if (gapSize < 1.0) {
+                                                    edgeDetected = false;
+                                                    edgeReason = `SBA projection ${gap.toFixed(1)} vs line ${lineVal} → gap ${gapSize.toFixed(1)} < 1.0 minimum`;
+                                                    console.log(`\n💰 G11 EDGE DETECTION [${mCtxEdge?.analysisType?.toUpperCase() || 'GAME'}]:`);
+                                                    console.log(`   Gap: ${gapSize.toFixed(1)} pts — ❌ NO EDGE`);
+                                                }
                                             }
+                                            if (!edgeDetected) console.log(`   ⚠️ LOCK/DIAMOND blocked — demoting to HIGH max`);
                                         }
                                     } catch (edgeErr) {
                                         console.log(`⚠️ G11 Edge detection error:`, edgeErr.message);
                                         // On error, don't block — assume edge exists
                                     }
                                     // ═══ END G11 ═══
+                                    
+                                    // ═══ G12: RESEARCH CONFLICT CHECK — Prevents BOT-FIRE when Research contradicts AI ═══
+                                    let researchConflictBlocks = false;
+                                    let researchConflictReason = '';
+                                    try {
+                                        const resOverEl = document.getElementById('research-over-score');
+                                        const resUnderEl = document.getElementById('research-under-score');
+                                        const resOver = parseFloat(resOverEl?.textContent) || 50;
+                                        const resUnder = parseFloat(resUnderEl?.textContent) || 50;
+                                        const researchDir = resOver > resUnder ? 'OVER' : 'UNDER';
+                                        const researchSpread = Math.abs(resOver - resUnder);
+                                        const aiDir = gateResult.consensusDir || 'OVER';
+                                        
+                                        if (researchSpread > 10 && researchDir !== aiDir) {
+                                            researchConflictBlocks = true;
+                                            researchConflictReason = `Research ${researchDir} (${Math.max(resOver, resUnder).toFixed(0)}%) conflicts with AI ${aiDir} (${consensusPct}%)`;
+                                            console.log(`\n🔍 G12 RESEARCH CONFLICT:`);
+                                            console.log(`   Research: ${researchDir} (${resOver.toFixed(0)}/${resUnder.toFixed(0)})`);
+                                            console.log(`   AI: ${aiDir} (${consensusPct}% consensus)`);
+                                            console.log(`   ⚠️ BOT-FIRE BLOCKED — research conflicts with AI consensus`);
+                                        }
+                                    } catch (rcErr) { /* Research data not available — don't block */ }
+                                    // ═══ END G12 ═══
                                     
                                     if (isCappedMarket) {
                                         if (allGatesPass && botPassCount >= 5) {
@@ -31801,12 +31881,17 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                             betQualityTier = 'NO_BET'; betQualityLabel = '🚫 NO BET'; betQualityColor = '#ff4444'; betQualityIcon = '🚫';
                                             betQualityAction = 'Do not bet — critical failures'; betQualityBotFire = false;
                                         }
-                                    } else if (allGatesPass && botPassCount === botTotal && edgeDetected && edgePct >= 5) {
+                                    } else if (allGatesPass && botPassCount === botTotal && edgeDetected && edgePct >= 5 && !researchConflictBlocks) {
                                         betQualityTier = 'DIAMOND'; betQualityLabel = '💎 DIAMOND'; betQualityColor = '#b98fff'; betQualityIcon = '💎';
                                         betQualityAction = `AUTO-FIRE — All systems aligned + ${edgePct.toFixed(1)}% edge`; betQualityBotFire = true;
-                                    } else if (allGatesPass && botPassCount >= 5 && cvOk && injuryConfirmed && edgeDetected) {
+                                    } else if (allGatesPass && botPassCount >= 5 && cvOk && injuryConfirmed && edgeDetected && !researchConflictBlocks && edgePct >= 2.5) {
+                                        // V10.3l: LOCK requires meaningful edge (≥2.5%) AND no research conflict
                                         betQualityTier = 'LOCK'; betQualityLabel = '🔒 LOCK'; betQualityColor = '#FFD700'; betQualityIcon = '🔒';
                                         betQualityAction = `BOT-FIRE — All gates + ${edgePct.toFixed(1)}% edge detected`; betQualityBotFire = true;
+                                    } else if (allGatesPass && botPassCount >= 5 && researchConflictBlocks) {
+                                        // All gates pass but research conflicts — demote to HIGH
+                                        betQualityTier = 'HIGH'; betQualityLabel = '🔥 HIGH (CONFLICT)'; betQualityColor = '#ff8800'; betQualityIcon = '🔥';
+                                        betQualityAction = `Strong signal but ${researchConflictReason}`; betQualityBotFire = false;
                                     } else if (allGatesPass && botPassCount >= 5 && !edgeDetected) {
                                         // All gates pass but NO EDGE — strong signal but bad price
                                         betQualityTier = 'HIGH'; betQualityLabel = '🔥 HIGH (NO EDGE)'; betQualityColor = '#ff8800'; betQualityIcon = '🔥';
@@ -31832,9 +31917,11 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                     console.log(`   ${consensusStrong ? '✅' : '❌'} Consensus (${consensusPct}% — need ${consensusThreshold}%)`);
                                     console.log(`   ${cvOk ? '✅' : '❌'} ${isGameMarket ? 'Stability' : 'CV'} (${isGameMarket ? 'N/A' : cvRaw.toFixed(1) + '%'})`);
                                     console.log(`   ${tierOk ? '✅' : '❌'} Streak Tier (${streakTier})`);
+                                    console.log(`   ${!researchConflictBlocks ? '✅' : '❌'} Research Harmony (${researchConflictBlocks ? researchConflictReason : 'aligned'})`);
                                     if (betQualityTier === 'LOCK' && !tierOk) {
-                                        console.log(`   🔒 LOCK OVERRIDE: Streak bypassed — ${gatesPassed}/${gatesTotal} gates + ${botPassCount - 1}/5 checks confirm`);
+                                        console.log(`   🔒 LOCK: Streak bypassed — ${gatesPassed}/${gatesTotal} gates + edge ${edgePct.toFixed(1)}% + no research conflict`);
                                     }
+                                    if (researchConflictBlocks) console.log(`   🔍 RESEARCH CONFLICT: ${researchConflictReason} — BOT-FIRE blocked`);
                                     if (isCappedMarket) console.log(`   ⚠️ CAPPED: ${mktClass} max tier = 🔥 HIGH`);
                                     if (!edgeDetected && (allGatesPass)) console.log(`   💰 NO EDGE: ${edgeReason}`);
                                     if (edgeDetected && edgePct > 0) console.log(`   💰 EDGE: ${edgeReason}`);
