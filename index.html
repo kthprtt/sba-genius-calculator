@@ -29694,10 +29694,11 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                         console.log(`[V9.2] 🚨 BDL confirms ${player} is OUT: ${injReason}`);
                     } else {
                         // BDL doesn't have them as OUT — query live AI sources
-                        // Use verifyInjuryStatus if available (same function console engine uses)
-                        if (typeof verifyInjuryStatus === 'function') {
+                        // Use verifyInjuryStatus via SBA_V47_ULTIMATE (exposed in V9.2)
+                        const sbaEngine = window.SBA_V47_ULTIMATE || window.SBA_V48;
+                        if (sbaEngine && typeof sbaEngine.verifyInjuryStatus === 'function') {
                             const sport = state.sport || 'nba';
-                            const liveCheck = await verifyInjuryStatus(player, sport);
+                            const liveCheck = await sbaEngine.verifyInjuryStatus(player, sport);
                             if (liveCheck.shouldOverride) {
                                 state.verifiedInjuryStatus = {
                                     isOut: true,
@@ -29733,7 +29734,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                 console.log(`[V9.2] ✅ Live AI: ${player} appears ACTIVE (${liveCheck.confidence || 'LOW'} confidence)`);
                             }
                         } else {
-                            console.log(`[V9.2] ⚪ verifyInjuryStatus not available — relying on BDL only`);
+                            console.log(`[V9.2] ⚪ SBA_V47_ULTIMATE.verifyInjuryStatus not available — relying on BDL only`);
                         }
                     }
                     
@@ -48249,9 +48250,11 @@ SOURCE: [where you found this]`,
         getBDLStatsUnified,
         getESPNStats,
         crossValidateStats,
+        // V9.2 - Expose injury verification for UI engine
+        verifyInjuryStatus,
         // Note: Legacy sport-specific functions (getNFLStats, getMLBStats, getNHLStats, getNCAABStats) 
         // are still in code but deprecated - use getBDLStatsUnified instead
-        version: '8.1.0 - V8.1 H2H + OPPONENT FIX'
+        version: '9.2.0 - V9.2 UI INJURY GATE'
     };
 })();
 
