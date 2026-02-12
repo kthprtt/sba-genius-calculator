@@ -25581,10 +25581,18 @@ MATCHUP PROJECTION:
 
 INJURIES: ${injStr}
 
-For TOTALS: Will combined score go OVER or UNDER the line?
-For SPREADS/ML: Will the favored team cover or will the underdog keep it close/win?
-Analyze using team stats, trends, pace, and matchup data above.
-Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueProb":0.55,"reasoning":"explanation"}`;
+${(() => {
+                const _mCtx = typeof getMarketContext === 'function' ? getMarketContext(market, player) : null;
+                const _aType = _mCtx?.analysisType || 'game_total';
+                if (_aType === 'moneyline') {
+                    const _selTeam = player || ti.homeTeam || 'Home';
+                    return 'QUESTION: Will ' + _selTeam + ' WIN this game outright?\nOVER = YES, ' + _selTeam + ' WINS | UNDER = NO, ' + _selTeam + ' LOSES\nDo NOT analyze game totals or combined scoring — focus ONLY on which team wins.\nConsider: team strength, injuries, home court advantage, matchup edges, recent form.\nRespond with ONLY JSON: {"pick":"OVER","confidence":75,"trueProb":0.55,"reasoning":"explanation"}';
+                } else if (_aType === 'spread') {
+                    return 'QUESTION: Will the favorite cover the spread of ' + line + '?\nOVER = favorite covers (wins by more than spread) | UNDER = underdog covers\nRespond with ONLY JSON: {"pick":"OVER","confidence":75,"trueProb":0.55,"reasoning":"explanation"}';
+                } else {
+                    return 'QUESTION: Will the combined score go OVER or UNDER ' + (line || context.total || 'the line') + '?\nOVER = more total points scored | UNDER = fewer total points scored\nAnalyze pace, offensive/defensive ratings, and recent scoring trends.\nRespond with ONLY JSON: {"pick":"OVER","confidence":75,"trueProb":0.55,"reasoning":"explanation"}';
+                }
+            })()}`;
         }
         
                 // Call ALL AI engines via proxy (batch analysis)
@@ -30935,6 +30943,8 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 console.log(`   Player: ${player} | Market: ${market} | Line: ${line}`);
                 if (aiContext.isTeamMarket && aiContext.teamIntelligence) {
                     console.log(`   🏟️ V10 GAME-LEVEL PROMPT — Team data sent to all engines`);
+                    const _promptMCtx = typeof getMarketContext === 'function' ? getMarketContext(market, player) : null;
+                    console.log(`   📋 V10 Prompt Type: ${_promptMCtx?.analysisType || 'game_total'} — ${_promptMCtx?.analysisType === 'moneyline' ? 'WHO WINS?' : _promptMCtx?.analysisType === 'spread' ? 'COVER SPREAD?' : 'OVER/UNDER TOTAL?'}`);
                     console.log(`   🏀 Team Intel: ProjTotal=${aiContext.teamIntelligence.projectedTotal?.toFixed(1)}, Home PPG=${aiContext.teamIntelligence.home?.ppg?.toFixed(1)}, Away PPG=${aiContext.teamIntelligence.away?.ppg?.toFixed(1)}, Margin=${aiContext.teamIntelligence.projectedMargin?.toFixed(1)}`);
                 } else {
                     console.log(`   Context: Season ${market}=${aiContext.seasonAvg}, L5=${aiContext.l5Avg}, L10=${aiContext.l10Avg}, Proj=${aiContext.projection}, Spread=${aiContext.spread}, Total=${aiContext.total}`);
