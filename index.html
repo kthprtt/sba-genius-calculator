@@ -31305,6 +31305,105 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                     
                                     let betQualityTier, betQualityLabel, betQualityColor, betQualityIcon, betQualityAction, betQualityBotFire;
                                     
+                                    // ═══ G11: EDGE DETECTION — Prevents LOCK/DIAMOND on no-value bets ═══
+                                    // A bet isn't worth auto-firing if the book already prices it correctly
+                                    let edgeDetected = true; // assume edge by default
+                                    let edgePct = 0;
+                                    let modelWinProb = 0;
+                                    let bookImpliedProb = 0;
+                                    let edgeReason = '';
+                                    
+                                    try {
+                                        const mCtxEdge = typeof getMarketContext === 'function' ? getMarketContext(market, player) : null;
+                                        const isML = mCtxEdge?.analysisType === 'moneyline';
+                                        
+                                        if (isML && state.liveOdds?.lines && state.lastProjection) {
+                                            // Get model win probability from V26 margin
+                                            const projMargin = state.teamIntelligence?.projectedMargin || 0;
+                                            // Convert margin to win prob: margin 0 = 50%, each point ~2.5%
+                                            modelWinProb = Math.min(95, Math.max(5, 50 + projMargin * 2.5));
+                                            
+                                            // Get best book odds for the consensus direction
+                                            const consensusDir = gateResult.consensusDir; // OVER = selected team wins, UNDER = loses
+                                            const lines = state.liveOdds.lines;
+                                            const bookEntries = Object.values(lines).filter(b => b.type === 'moneyline');
+                                            
+                                            if (bookEntries.length > 0) {
+                                                // Determine which side we're betting
+                                                const isHome = state.marketType === 'team' && (player || '').toLowerCase().includes((state.homeTeamName || '').toLowerCase().split(' ').pop());
+                                                
+                                                // Get odds for consensus side
+                                                let relevantOdds = [];
+                                                bookEntries.forEach(b => {
+                                                    // For moneyline: OVER = selected team wins
+                                                    // The "player" field is the selected team name
+                                                    // We need to figure out if selected = home or away
+                                                    const selTeamLower = (player || '').toLowerCase();
+                                                    const homeTeamLower = (b.homeTeam || '').toLowerCase();
+                                                    const selIsHome = homeTeamLower.includes(selTeamLower) || selTeamLower.includes(homeTeamLower.split(' ').pop());
+                                                    
+                                                    if (consensusDir === 'OVER') {
+                                                        // Betting selected team to WIN
+                                                        relevantOdds.push(selIsHome ? b.home : b.away);
+                                                    } else {
+                                                        // Betting AGAINST selected team (other team wins)
+                                                        relevantOdds.push(selIsHome ? b.away : b.home);
+                                                    }
+                                                });
+                                                
+                                                relevantOdds = relevantOdds.filter(o => o !== null && o !== undefined);
+                                                
+                                                if (relevantOdds.length > 0) {
+                                                    // Use median odds for stability
+                                                    relevantOdds.sort((a, b) => a - b);
+                                                    const medianOdds = relevantOdds[Math.floor(relevantOdds.length / 2)];
+                                                    
+                                                    // Convert American odds to implied probability
+                                                    if (medianOdds < 0) {
+                                                        bookImpliedProb = Math.abs(medianOdds) / (Math.abs(medianOdds) + 100) * 100;
+                                                    } else {
+                                                        bookImpliedProb = 100 / (medianOdds + 100) * 100;
+                                                    }
+                                                    
+                                                    // Calculate true edge = model prob - book implied (after vig removal ~2.5%)
+                                                    const vigAdjusted = bookImpliedProb * 0.975; // remove ~2.5% vig
+                                                    edgePct = modelWinProb - vigAdjusted;
+                                                    
+                                                    // Edge threshold: need at least 3% edge for LOCK, 5% for DIAMOND
+                                                    if (edgePct < 3) {
+                                                        edgeDetected = false;
+                                                        edgeReason = `Model ${modelWinProb.toFixed(1)}% vs Book ${bookImpliedProb.toFixed(1)}% (vig-adj ${vigAdjusted.toFixed(1)}%) → Edge ${edgePct.toFixed(1)}% < 3% minimum`;
+                                                    } else {
+                                                        edgeReason = `Model ${modelWinProb.toFixed(1)}% vs Book ${vigAdjusted.toFixed(1)}% → ${edgePct.toFixed(1)}% edge ✅`;
+                                                    }
+                                                    
+                                                    console.log(`\n💰 G11 EDGE DETECTION [MONEYLINE]:`);
+                                                    console.log(`   Model Win Prob: ${modelWinProb.toFixed(1)}% (V26 margin ${projMargin.toFixed(1)})`);
+                                                    console.log(`   Book Implied: ${bookImpliedProb.toFixed(1)}% (median odds ${medianOdds > 0 ? '+' : ''}${medianOdds})`);
+                                                    console.log(`   Vig-Adjusted: ${vigAdjusted.toFixed(1)}%`);
+                                                    console.log(`   True Edge: ${edgePct.toFixed(1)}% ${edgePct >= 3 ? '✅ EDGE EXISTS' : '❌ NO EDGE — Book already prices correctly'}`);
+                                                    if (!edgeDetected) console.log(`   ⚠️ LOCK/DIAMOND blocked — demoting to HIGH max`);
+                                                }
+                                            }
+                                        } else if (!isML) {
+                                            // For spread/total: check SBA Gap
+                                            const gap = state.lastProjection?.value || state.lastProjection?.projection || 0;
+                                            const lineVal = parseFloat(document.getElementById('line-input')?.value) || 0;
+                                            const gapSize = Math.abs(gap - lineVal);
+                                            if (gapSize < 1.0) {
+                                                edgeDetected = false;
+                                                edgeReason = `SBA projection ${gap.toFixed(1)} vs line ${lineVal} → gap ${gapSize.toFixed(1)} < 1.0 minimum`;
+                                                console.log(`\n💰 G11 EDGE DETECTION [${mCtxEdge?.analysisType?.toUpperCase() || 'GAME'}]:`);
+                                                console.log(`   Gap: ${gapSize.toFixed(1)} pts — ❌ NO EDGE`);
+                                                if (!edgeDetected) console.log(`   ⚠️ LOCK/DIAMOND blocked — demoting to HIGH max`);
+                                            }
+                                        }
+                                    } catch (edgeErr) {
+                                        console.log(`⚠️ G11 Edge detection error:`, edgeErr.message);
+                                        // On error, don't block — assume edge exists
+                                    }
+                                    // ═══ END G11 ═══
+                                    
                                     if (isCappedMarket) {
                                         if (allGatesPass && botPassCount >= 5) {
                                             betQualityTier = 'HIGH'; betQualityLabel = '🔥 HIGH'; betQualityColor = '#ff8800'; betQualityIcon = '🔥';
@@ -31316,12 +31415,16 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                             betQualityTier = 'NO_BET'; betQualityLabel = '🚫 NO BET'; betQualityColor = '#ff4444'; betQualityIcon = '🚫';
                                             betQualityAction = 'Do not bet — critical failures'; betQualityBotFire = false;
                                         }
-                                    } else if (allGatesPass && botPassCount === botTotal) {
+                                    } else if (allGatesPass && botPassCount === botTotal && edgeDetected && edgePct >= 5) {
                                         betQualityTier = 'DIAMOND'; betQualityLabel = '💎 DIAMOND'; betQualityColor = '#b98fff'; betQualityIcon = '💎';
-                                        betQualityAction = 'AUTO-FIRE — Maximum conviction, all systems aligned'; betQualityBotFire = true;
-                                    } else if (allGatesPass && botPassCount >= 5 && cvOk && injuryConfirmed) {
+                                        betQualityAction = `AUTO-FIRE — All systems aligned + ${edgePct.toFixed(1)}% edge`; betQualityBotFire = true;
+                                    } else if (allGatesPass && botPassCount >= 5 && cvOk && injuryConfirmed && edgeDetected) {
                                         betQualityTier = 'LOCK'; betQualityLabel = '🔒 LOCK'; betQualityColor = '#FFD700'; betQualityIcon = '🔒';
-                                        betQualityAction = 'BOT-FIRE — All gates passed, strong conviction'; betQualityBotFire = true;
+                                        betQualityAction = `BOT-FIRE — All gates + ${edgePct.toFixed(1)}% edge detected`; betQualityBotFire = true;
+                                    } else if (allGatesPass && botPassCount >= 5 && !edgeDetected) {
+                                        // All gates pass but NO EDGE — strong signal but bad price
+                                        betQualityTier = 'HIGH'; betQualityLabel = '🔥 HIGH (NO EDGE)'; betQualityColor = '#ff8800'; betQualityIcon = '🔥';
+                                        betQualityAction = `Strong signal but book price too efficient — ${edgeReason}`; betQualityBotFire = false;
                                     } else if (gatesPassed >= 8 && coreGatesPass && g2Pass && g3Pass && cvUnder50 && hasSufficientBooks && injuryConfirmed) {
                                         betQualityTier = 'HIGH'; betQualityLabel = '🔥 HIGH'; betQualityColor = '#ff8800'; betQualityIcon = '🔥';
                                         betQualityAction = 'Strong bet — manual review recommended'; betQualityBotFire = false;
@@ -31347,6 +31450,8 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                         console.log(`   🔒 LOCK OVERRIDE: Streak bypassed — ${gatesPassed}/${gatesTotal} gates + ${botPassCount - 1}/5 checks confirm`);
                                     }
                                     if (isCappedMarket) console.log(`   ⚠️ CAPPED: ${mktClass} max tier = 🔥 HIGH`);
+                                    if (!edgeDetected && (allGatesPass)) console.log(`   💰 NO EDGE: ${edgeReason}`);
+                                    if (edgeDetected && edgePct > 0) console.log(`   💰 EDGE: ${edgeReason}`);
                                     console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
                                     
                                     state.botReady = {
