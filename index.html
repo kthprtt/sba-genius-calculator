@@ -31787,9 +31787,14 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                                 const sbaModel = state.lastSBAvsBooks?.sbaModel ?? projMargin;
                                                 const spreadGap = Math.abs(sbaModel - lineVal);
                                                 
-                                                // Sport-specific spread stdev (NBA ~10pts, NFL ~13pts, NHL ~2pts)
-                                                const sport = (state.sportKey || '').toLowerCase();
-                                                const spreadStdev = sport.includes('nba') ? 10.5 : sport.includes('nfl') ? 13.5 : sport.includes('nhl') ? 2.5 : sport.includes('mlb') ? 3.0 : 8.0;
+                                                // Sport-specific spread stdev (NBA ~10.5pts, NFL ~13pts, NHL ~2pts)
+                                                const sport = (state.sport || 'nba').toLowerCase();
+                                                const spreadStdev = sport === 'nba' || sport === 'ncaab' || sport === 'wnba' ? 10.5 
+                                                    : sport === 'nfl' || sport === 'ncaaf' ? 13.5 
+                                                    : sport === 'nhl' ? 2.5 
+                                                    : sport === 'mlb' ? 3.0 
+                                                    : sport.startsWith('soccer') ? 1.5 
+                                                    : 8.0;
                                                 
                                                 // Edge = gap as fraction of spread volatility
                                                 // 3pt gap in NBA (~10.5 stdev) = ~28% of 1 stdev = modest edge
@@ -35444,11 +35449,12 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 rawModelProb = rawModelProb * 0.75 + empProb * 0.25;
             }
             
-            // V28b: Honesty caps
-            const PROB_CAP = 82;
-            const EDGE_CAP = 20;
-            const modelProb = Math.min(PROB_CAP, rawModelProb);
-            const wasCapped = rawModelProb > PROB_CAP;
+            // V28b: Honesty caps — SYNC with computePass2Edge dynamic caps
+            const calDataPts = state.calibrationData?.totalTracked || 0;
+            const PROB_CAP_PANEL = calDataPts >= 100 ? 78 : calDataPts >= 50 ? 75 : 72;
+            const EDGE_CAP_PANEL = calDataPts >= 100 ? 18 : calDataPts >= 50 ? 15 : 12;
+            const modelProb = Math.min(PROB_CAP_PANEL, rawModelProb);
+            const wasCapped = rawModelProb > PROB_CAP_PANEL;
             const modelProbStr = modelProb.toFixed(1);
             
             // Book implied probability (from vig-adjusted odds)
@@ -35465,7 +35471,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             
             // True edge = SBA model prob - book implied prob (capped)
             const rawTrueEdge = modelProb - bookProbForSide;
-            const trueEdge = Math.min(EDGE_CAP, Math.max(-EDGE_CAP, rawTrueEdge));
+            const trueEdge = Math.min(EDGE_CAP_PANEL, Math.max(-EDGE_CAP_PANEL, rawTrueEdge));
             
             // ─── Conviction Score ───
             // How many independent signals agree with the model direction?
