@@ -18403,11 +18403,22 @@ Return ONLY valid JSON:
                             const injName = (inj.playerName || '').toLowerCase().trim();
                             if (!injName) return;
                             // Look up PPG — BDL stats are spread directly on player object as .pts
+                            // V10.3g: Prioritize exact full-name match to avoid last-name collisions (e.g. 3 Antetokounmpos)
                             const injNameLast = injName.split(' ').pop();
+                            const injNameFirst = injName.split(' ')[0];
                             const pMatch = players.find(p => {
                                 const pName = (p.name || p.fullName || p.displayName || '').toLowerCase().trim();
+                                return pName === injName; // Exact match first
+                            }) || players.find(p => {
+                                const pName = (p.name || p.fullName || p.displayName || '').toLowerCase().trim();
                                 const pLast = pName.split(' ').pop();
-                                return pName === injName || pLast === injNameLast;
+                                const pFirst = pName.split(' ')[0];
+                                // Last name match + first name starts with same letter (avoid Alex vs Giannis)
+                                return pLast === injNameLast && pFirst[0] === injNameFirst[0];
+                            }) || players.find(p => {
+                                const pName = (p.name || p.fullName || p.displayName || '').toLowerCase().trim();
+                                const pLast = pName.split(' ').pop();
+                                return pLast === injNameLast; // Last resort: last name only
                             });
                             const ppg = pMatch?.pts || pMatch?.seasonAvg?.pts || 0;
                             if (ppg < 12) {
