@@ -39070,8 +39070,9 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
 <!-- V8.1: Auto-load console analysis engine if available -->
 <script>
 // ═══════════════════════════════════════════════════════════════════
-// V48 ULTIMATE V8.2 — EMBEDDED
-// Fixes: oppTeamId scope, V7 adj ordering, Vegas Anchor, Home/Away, Minutes, Efficiency
+// V48 ULTIMATE V9.0 — WORLD CLASS ENGINE EMBEDDED
+// Best of Console + UI: Real OddsAPI spread, ESPN B2B, BDL injuries,
+// unified Home/Away splits, UI-matched blowout + B2B penalties
 // ═══════════════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════════
 // SBA GENIUS V48 ULTIMATE V6.0 - FULL PROJECTION ENGINE + BLOWOUT CLEAN + STREAK SAFE
@@ -40718,6 +40719,60 @@ Reply in format: LINE: [number] ODDS: [over odds like -110]`,
     // FIX #5: BACK-TO-BACK DETECTION
     // ═══════════════════════════════════════════════════════════════════════════
     async function checkBackToBack(player, team, sport = 'nba') {
+        // V9.0: PRIMARY — Use real schedule data from ESPN/BDL game logs (same as UI engine)
+        try {
+            // Method 1: Check ESPN scoreboard for yesterday's games
+            const espnSport = { nba: 'basketball/nba', nhl: 'hockey/nhl', wnba: 'basketball/wnba', ncaab: 'basketball/mens-college-basketball' }[sport];
+            if (espnSport && team) {
+                const today = new Date();
+                const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+                const yDate = yesterday.toISOString().slice(0, 10).replace(/-/g, '');
+                const url = `https://site.api.espn.com/apis/site/v2/sports/${espnSport}/scoreboard?dates=${yDate}`;
+                const res = await fetch(url);
+                if (res.ok) {
+                    const data = await res.json();
+                    const events = data?.events || [];
+                    const teamLower = (team || '').toLowerCase();
+                    const playedYesterday = events.some(ev => {
+                        const competitors = ev.competitions?.[0]?.competitors || [];
+                        return competitors.some(c => {
+                            const tName = (c.team?.displayName || c.team?.name || '').toLowerCase();
+                            const tAbbr = (c.team?.abbreviation || '').toLowerCase();
+                            return tName.includes(teamLower) || teamLower.includes(tAbbr) || 
+                                   teamLower.includes(tName.split(' ').pop());
+                        });
+                    });
+                    if (playedYesterday) {
+                        console.log(`[V9.0] ✅ B2B Detection: ${team} played yesterday (ESPN schedule confirmed)`);
+                        return { isB2B: true, lastGame: `Yesterday (${yDate})`, restDays: 0, adjustment: SPORT_CONFIG[sport]?.b2bImpact || -0.05 };
+                    }
+                    // Also check 2 days ago for rest calculation
+                    const twoDaysAgo = new Date(today); twoDaysAgo.setDate(today.getDate() - 2);
+                    const d2Date = twoDaysAgo.toISOString().slice(0, 10).replace(/-/g, '');
+                    const res2 = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${espnSport}/scoreboard?dates=${d2Date}`);
+                    if (res2.ok) {
+                        const data2 = await res2.json();
+                        const played2DaysAgo = (data2?.events || []).some(ev => {
+                            const competitors = ev.competitions?.[0]?.competitors || [];
+                            return competitors.some(c => {
+                                const tName = (c.team?.displayName || c.team?.name || '').toLowerCase();
+                                return tName.includes(teamLower) || teamLower.includes(tName.split(' ').pop());
+                            });
+                        });
+                        if (played2DaysAgo) {
+                            console.log(`[V9.0] ✅ Rest: ${team} played 2 days ago (normal rest)`);
+                            return { isB2B: false, lastGame: `2 days ago (${d2Date})`, restDays: 1, adjustment: 0 };
+                        }
+                    }
+                    console.log(`[V9.0] ✅ Rest: ${team} well-rested (2+ days)`);
+                    return { isB2B: false, restDays: 2, adjustment: 0 };
+                }
+            }
+        } catch(e) {
+            console.log(`[V9.0] ⚠️ ESPN B2B check failed: ${e.message}`);
+        }
+
+        // Method 2: Fallback to AI inference
         try {
             const res = await fetch(`${PROXY}/api/ai/perplexity`, {
                 method: 'POST',
@@ -40728,17 +40783,12 @@ Reply in format: LINE: [number] ODDS: [over odds like -110]`,
                     maxTokens: 150
                 })
             });
-            
             if (res.ok) {
                 const data = await res.json();
                 const parsed = safeParseJSON(extractText(data));
                 if (parsed) {
-                    return {
-                        isB2B: parsed.isB2B || false,
-                        lastGame: parsed.lastGame,
-                        restDays: parsed.restDays || (parsed.isB2B ? 0 : 1),
-                        adjustment: parsed.isB2B ? (SPORT_CONFIG[sport]?.b2bImpact || -0.05) : 0
-                    };
+                    console.log(`[V9.0] ⚠️ B2B via AI fallback: isB2B=${parsed.isB2B}`);
+                    return { isB2B: parsed.isB2B || false, lastGame: parsed.lastGame, restDays: parsed.restDays || (parsed.isB2B ? 0 : 1), adjustment: parsed.isB2B ? (SPORT_CONFIG[sport]?.b2bImpact || -0.05) : 0 };
                 }
             }
         } catch(e) {}
@@ -42166,86 +42216,95 @@ CONFIDENCE: [HIGH/MEDIUM/LOW]`,
         // Get baseline minutes from stats or use defaults
         const avgMinutes = stats?.season?.min || stats?.l10?.min || 32;
         
+        // V9.0: PRIMARY — Get real spread/total from OddsAPI (same as UI engine)
+        let realSpread = null;
+        let realTotal = null;
         try {
-            // Use Grok for faster, more reliable response
-            const res = await fetch(`${PROXY}/api/ai/grok`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    prompt: `${sport.toUpperCase()} tonight: ${team || player}'s team vs ${opponent}
-
-Quick check:
-1. Point spread for this game? (number only, negative means favorite)
-2. Any load management or injury concerns for ${player}?
-
-Reply in exactly this format:
-SPREAD: [number]
-LOAD_MGMT: [yes/no]
-MINUTES: [expected minutes]`,
-                    maxTokens: 100
-                })
-            });
-            
-            if (res.ok) {
-                const data = await res.json();
-                const text = extractText(data);
-                
-                // Parse simple format
-                const spreadMatch = text.match(/SPREAD:\s*([-+]?\d+\.?\d*)/i);
-                const loadMatch = text.match(/LOAD_MGMT:\s*(yes|no)/i);
-                const minMatch = text.match(/MINUTES:\s*(\d+)/i);
-                
-                const spread = spreadMatch ? parseFloat(spreadMatch[1]) : 0;
-                const loadMgmt = loadMatch ? loadMatch[1].toLowerCase() === 'yes' : false;
-                const projectedMin = minMatch ? parseInt(minMatch[1]) : avgMinutes;
-                
-                // Calculate risk and adjustment
-                let adjustment = 0;
-                let risk = 'LOW';
-                let blowoutRisk = 'LOW';
-                
-                if (Math.abs(spread) >= 12) {
-                    adjustment = -0.03;
-                    risk = 'HIGH';
-                    blowoutRisk = 'HIGH';
-                } else if (Math.abs(spread) >= 8) {
-                    adjustment = -0.015;
-                    risk = 'MEDIUM';
-                    blowoutRisk = 'MEDIUM';
+            const sportKey = { nba: 'basketball_nba', wnba: 'basketball_wnba', ncaab: 'basketball_ncaab' }[sport];
+            if (sportKey && ODDS_API_KEY) {
+                const url = `${ODDS_API_BASE}/sports/${sportKey}/odds?apiKey=${ODDS_API_KEY}&regions=us,us2,eu,uk,au&markets=spreads,totals&oddsFormat=american`;
+                const res = await fetch(url);
+                if (res.ok) {
+                    const data = await res.json();
+                    const games = Array.isArray(data) ? data : (data.data || []);
+                    const oppLower = (opponent || '').toLowerCase();
+                    const teamLower = (team || '').toLowerCase();
+                    const matchingGame = games.find(g => {
+                        const h = (g.home_team || '').toLowerCase();
+                        const a = (g.away_team || '').toLowerCase();
+                        return (h.includes(oppLower) || oppLower.includes(h.split(' ').pop()) || h.includes(teamLower) || teamLower.includes(h.split(' ').pop())) &&
+                               (a.includes(oppLower) || oppLower.includes(a.split(' ').pop()) || a.includes(teamLower) || teamLower.includes(a.split(' ').pop()));
+                    });
+                    if (matchingGame?.bookmakers?.length > 0) {
+                        let spreads = [], totals = [];
+                        matchingGame.bookmakers.slice(0, 3).forEach(book => {
+                            book.markets?.forEach(mkt => {
+                                if (mkt.key === 'spreads') {
+                                    const playerTeamSpread = mkt.outcomes?.find(o => {
+                                        const oName = (o.name || '').toLowerCase();
+                                        return oName.includes(teamLower) || teamLower.includes(oName.split(' ').pop());
+                                    });
+                                    if (playerTeamSpread) spreads.push(playerTeamSpread.point);
+                                }
+                                if (mkt.key === 'totals') {
+                                    const over = mkt.outcomes?.find(o => o.name === 'Over');
+                                    if (over) totals.push(over.point);
+                                }
+                            });
+                        });
+                        if (spreads.length > 0) realSpread = spreads.reduce((a,b) => a+b, 0) / spreads.length;
+                        if (totals.length > 0) realTotal = totals.reduce((a,b) => a+b, 0) / totals.length;
+                        if (realSpread !== null) {
+                            console.log(`[V9.0] ✅ Real OddsAPI: Spread=${realSpread > 0 ? '+' : ''}${realSpread.toFixed(1)}, Total=${realTotal?.toFixed(1) || 'N/A'} (${spreads.length} books)`);
+                        }
+                    }
                 }
-                
-                if (loadMgmt) {
-                    adjustment -= 0.02;
-                    risk = 'HIGH';
-                }
-                
-                return {
-                    projected: projectedMin,
-                    average: avgMinutes,
-                    blowoutRisk,
-                    spreadEstimate: spread,
-                    loadManagement: loadMgmt,
-                    adjustment,
-                    risk
-                };
             }
         } catch(e) {
-            console.log(`[V5.4] Minutes projection error: ${e.message}`);
+            console.log(`[V9.0] ⚠️ OddsAPI spread fetch: ${e.message}`);
+        }
+
+        let spread = realSpread || 0;
+        let loadMgmt = false;
+        let projectedMin = avgMinutes;
+
+        if (realSpread === null) {
+            try {
+                const res = await fetch(`${PROXY}/api/ai/grok`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prompt: `${sport.toUpperCase()} tonight: ${team || player}'s team vs ${opponent}\n\nQuick check:\n1. Point spread for this game? (number only, negative means favorite)\n2. Any load management or injury concerns for ${player}?\n\nReply in exactly this format:\nSPREAD: [number]\nLOAD_MGMT: [yes/no]\nMINUTES: [expected minutes]`,
+                        maxTokens: 100
+                    })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const text = extractText(data);
+                    const spreadMatch = text.match(/SPREAD:\s*([-+]?\d+\.?\d*)/i);
+                    const loadMatch = text.match(/LOAD_MGMT:\s*(yes|no)/i);
+                    const minMatch = text.match(/MINUTES:\s*(\d+)/i);
+                    spread = spreadMatch ? parseFloat(spreadMatch[1]) : 0;
+                    loadMgmt = loadMatch ? loadMatch[1].toLowerCase() === 'yes' : false;
+                    projectedMin = minMatch ? parseInt(minMatch[1]) : avgMinutes;
+                    console.log(`[V9.0] ⚠️ AI Spread fallback: ${spread > 0 ? '+' : ''}${spread}`);
+                }
+            } catch(e) {}
         }
         
-        // Fallback: Return default projection based on player's average
-        return { 
-            projected: avgMinutes, 
-            adjustment: 0, 
-            risk: 'UNKNOWN',
-            blowoutRisk: 'UNKNOWN',
-            average: avgMinutes
+        const absSpread = Math.abs(spread);
+        let adjustment = 0, risk = 'LOW', blowoutRisk = 'LOW';
+        if (absSpread >= 12) { adjustment = -0.03; risk = 'HIGH'; blowoutRisk = 'HIGH'; }
+        else if (absSpread >= 8) { adjustment = -0.015; risk = 'MEDIUM'; blowoutRisk = 'MEDIUM'; }
+        if (loadMgmt) { adjustment -= 0.02; risk = 'HIGH'; }
+        
+        return {
+            projected: projectedMin, average: avgMinutes, blowoutRisk,
+            spreadEstimate: spread, realSpread, realTotal,
+            loadManagement: loadMgmt, adjustment, risk,
+            source: realSpread !== null ? 'OddsAPI' : 'AI'
         };
     }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // UTILITY FUNCTIONS
-    // ═══════════════════════════════════════════════════════════════════════════
     function extractText(data) {
         if (typeof data === 'string') return data;
         if (data?.result?.raw) return data.result.raw;
@@ -44612,7 +44671,7 @@ reasoning must explain your analysis`;
         
         console.log('\n');
         console.log('╔═══════════════════════════════════════════════════════════════════════════════╗');
-        console.log('║   🏆 SBA GENIUS V48 ULTIMATE V8.0 - BOTH SIDES + FULL PIPELINE 🏆         ║');
+        console.log('║   🏆 SBA GENIUS V48 ULTIMATE V9.0 - WORLD CLASS ENGINE 🏆              ║');
         console.log('╠═══════════════════════════════════════════════════════════════════════════════╣');
         console.log(`║  ${displaySubject} | ${statDisplay} @ ${params.line} ${isPlayerProp ? 'vs ' + (params.opponent || 'Unknown') : ''}`.padEnd(78) + '║');
         console.log(`║  Sport: ${sportConfig.name} | Market: ${market} | Type: ${marketType.toUpperCase()}`.padEnd(78) + '║');
@@ -45599,16 +45658,30 @@ reasoning must explain your analysis`;
                         if (absSpread >= 7) console.log(`[V7.0] ⚠️ Blowout Risk: ${risk} (spread ${spread > 0 ? '+' : ''}${spread.toFixed(1)}) → ${adjustment.toFixed(1)} adj`);
                     }
 
-                    // ── Injury Usage Boost ──
-                    if (injuryData?.injuries?.length > 0) {
-                        const teamInjuries = injuryData.injuries.filter(inj => 
-                            inj.status?.toLowerCase().includes('out') && !inj.status?.toLowerCase().includes('questionable'));
+                    // ── Injury Usage Boost (V9.0: Use BDL injury cache like UI engine) ──
+                    // injuryData is the PLAYER's status — doesn't have game injuries list
+                    // V9.0: Try BDL injury cache first, then fallback to injuryData.injuries
+                    let gameInjuries = injuryData?.injuries || [];
+                    if (gameInjuries.length === 0 && typeof BDL_API !== 'undefined' && BDL_API?.injuryCache) {
+                        // Pull from BDL injury cache (same source as UI)
+                        gameInjuries = Object.values(BDL_API.injuryCache).flat().filter(inj => {
+                            const injTeam = (inj.team?.full_name || inj.team || '').toLowerCase();
+                            const playerTeam = (stats?.team || '').toLowerCase();
+                            return injTeam.includes(playerTeam) || playerTeam.includes(injTeam.split(' ').pop());
+                        });
+                    }
+                    if (gameInjuries.length > 0) {
+                        const teamInjuries = gameInjuries.filter(inj => {
+                            const st = (inj.status || '').toLowerCase();
+                            return st.includes('out') && !st.includes('questionable');
+                        });
                         if (teamInjuries.length > 0) {
-                            const usagePerPlayer = 20; // rough estimate
-                            const totalMissingUsage = teamInjuries.length * usagePerPlayer;
+                            // V9.0: Use 22% usage per player (matches UI) instead of flat 20
+                            const usagePerPlayer = 22;
+                            const totalMissingUsage = Math.min(teamInjuries.length * usagePerPlayer, 60); // cap 60%
                             const boost = Math.min(totalMissingUsage * 0.15, 5); // cap at +5
-                            v7InjuryBoost = { count: teamInjuries.length, missingUsage: totalMissingUsage, boost: parseFloat(boost.toFixed(1)), names: teamInjuries.map(i => i.name || 'unknown').slice(0, 3) };
-                            console.log(`[V7.0] 🏥 Injury Boost: ${teamInjuries.length} OUT (~${totalMissingUsage}% usage) → +${boost.toFixed(1)} pts`);
+                            v7InjuryBoost = { count: teamInjuries.length, missingUsage: totalMissingUsage, boost: parseFloat(boost.toFixed(1)), names: teamInjuries.map(i => i.player?.full_name || i.name || 'unknown').slice(0, 3) };
+                            console.log(`[V9.0] 🏥 Injury Boost: ${teamInjuries.length} OUT (~${totalMissingUsage}% usage) → +${boost.toFixed(1)} pts`);
                         }
                     }
 
@@ -45837,11 +45910,23 @@ reasoning must explain your analysis`;
                 
                 // ── Sport-Specific Adjustments ──
                 let totalAdj=0; const adjList=[];
-                // Home/Away
+                // Home/Away — V9.0: Use player-specific split from BDL Matrix (matches UI E4)
+                // If Matrix has real splits, use those. Only fall back to generic if no Matrix data
                 const isH = homeAwayData?.isHome ?? null;
-                if(isH!==null){const ha={nba:1.0,nhl:0.3,nfl:2.5,mlb:0.3,ncaab:1.5,ncaaf:3.0,wnba:1.0,soccer:0.4}[sport]||0.5;const a=isH?ha*0.15:-ha*0.15;if(Math.abs(a)>=0.1){totalAdj+=a;adjList.push(`${isH?'Home':'Away'} ${a>=0?'+':''}${a.toFixed(1)}`);}}
-                // B2B (basketball, hockey)
-                if(['nba','wnba','ncaab','nhl'].includes(sport)){if(b2bData?.isB2B){totalAdj-=1.5;adjList.push('B2B -1.5');}else if((b2bData?.restDays||1)>=3){totalAdj+=0.5;adjList.push('Rest +0.5');}}
+                const v9HomeSplit = v7Matrix?.scoring?.home_games_ppg || null;
+                const v9AwaySplit = v7Matrix?.scoring?.away_games_ppg || null;
+                if (v9HomeSplit && v9AwaySplit && isH !== null) {
+                    const splitAvg = isH ? v9HomeSplit : v9AwaySplit;
+                    const splitDiff = splitAvg - seasonAvg;
+                    if (Math.abs(splitDiff) >= 0.3) {
+                        const cappedSplit = Math.max(-4, Math.min(4, splitDiff));
+                        totalAdj += cappedSplit;
+                        adjList.push(`${isH ? 'Home' : 'Away'}Split ${cappedSplit >= 0 ? '+' : ''}${cappedSplit.toFixed(1)}`);
+                        console.log(`[V9.0] 📊 E4 Home/Away: ${isH ? 'HOME' : 'AWAY'} split = ${cappedSplit >= 0 ? '+' : ''}${cappedSplit.toFixed(1)} (real: ${splitAvg.toFixed(1)} vs season ${seasonAvg.toFixed(1)})`);
+                    }
+                } else if(isH!==null){const ha={nba:1.0,nhl:0.3,nfl:2.5,mlb:0.3,ncaab:1.5,ncaaf:3.0,wnba:1.0,soccer:0.4}[sport]||0.5;const a=isH?ha*0.15:-ha*0.15;if(Math.abs(a)>=0.1){totalAdj+=a;adjList.push(`${isH?'Home':'Away'} ${a>=0?'+':''}${a.toFixed(1)}`);}}
+                // B2B (basketball, hockey) — V9.0: Match UI engine penalty strength
+                if(['nba','wnba','ncaab','nhl'].includes(sport)){if(b2bData?.isB2B){const b2bPenalty = seasonAvg * 0.08; totalAdj-=b2bPenalty;adjList.push(`B2B -${b2bPenalty.toFixed(1)}`);}else if((b2bData?.restDays||1)>=3){totalAdj+=0.5;adjList.push('Rest +0.5');}}
                 // Pace
                 if(paceData?.found){const pm={nba:1.2,wnba:1.0,ncaab:1.0,nfl:0.8,ncaaf:0.8}[sport]||0.5;const pa=paceData.paceImpact==='FAST'?pm:paceData.paceImpact==='SLOW'?-pm*0.8:0;if(pa!==0){totalAdj+=pa;adjList.push(`Pace ${paceData.paceImpact} ${pa>=0?'+':''}${pa.toFixed(1)}`);}}
                 // Usage (basketball)
@@ -45851,8 +45936,20 @@ reasoning must explain your analysis`;
                 if(momA!==0){totalAdj+=momA;adjList.push(`Mom ${smartMomentumLabel} ${momA>=0?'+':''}${momA.toFixed(1)}`);}
                 // Defense
                 if(defenseData?.found){const r=defenseData.rank||15;const tt={nba:30,nhl:32,nfl:32,mlb:30,ncaab:362,ncaaf:130,wnba:12}[sport]||30;const pr=r/tt;const dm=pr<=0.18?0.96:pr<=0.35?0.98:pr>=0.82?1.04:pr>=0.65?1.02:1.0;const da=baseProj*(dm-1);if(Math.abs(da)>=0.1){totalAdj+=da;adjList.push(`Def #${r} ${da>=0?'+':''}${da.toFixed(1)}`);}}
-                // Blowout risk
-                if(v48TeamIntel&&v48TeamIntel.margin>8&&hasMin){totalAdj-=1.1;adjList.push('Blowout -1.1');}
+                // Blowout risk — V9.0: Use REAL spread from OddsAPI (matches UI E12)
+                // Primary: v7BlowoutRisk (from real OddsAPI spread via minutesData)
+                // Fallback: team intel margin
+                if (v7BlowoutRisk?.adjustment && Math.abs(v7BlowoutRisk.adjustment) >= 0.5) {
+                    // Already calculated from real spread in V7 enrichment
+                } else if (minutesData?.realSpread && Math.abs(minutesData.realSpread) >= 7) {
+                    // V9.0: Calculate blowout from real OddsAPI spread (UI E12 formula)
+                    const absSpread = Math.abs(minutesData.realSpread);
+                    const garbageProb = absSpread >= 12 ? 0.65 : absSpread >= 10 ? 0.4 : 0.2;
+                    const minMultiplier = 1 - (garbageProb * 0.4);
+                    const blowoutAdj = -(absSpread * 0.15); // match UI: -4.6 for spread +19.5
+                    v7BlowoutRisk = { spread: minutesData.realSpread, risk: absSpread >= 12 ? 'High' : 'Medium', garbageProb, minMultiplier, adjustment: parseFloat(blowoutAdj.toFixed(1)), source: 'OddsAPI-V9' };
+                    console.log(`[V9.0] ⚠️ Blowout Risk: ${v7BlowoutRisk.risk} (real spread ${minutesData.realSpread > 0 ? '+' : ''}${minutesData.realSpread.toFixed(1)}) → ${blowoutAdj.toFixed(1)} adj`);
+                } else if(v48TeamIntel&&v48TeamIntel.margin>8&&hasMin){totalAdj-=1.1;adjList.push('Blowout -1.1');}
                 // Weather (outdoor: NFL, NCAAF, MLB, soccer)
                 if(['nfl','ncaaf'].includes(sport)&&weatherData?.found){const wa=weatherData.scoringEffect==='LOW'?-1.5:weatherData.scoringEffect==='HIGH'?1.0:0;if(wa!==0){totalAdj+=wa;adjList.push(`Weather ${wa>=0?'+':''}${wa.toFixed(1)}`);}}
                 if(sport==='mlb'&&weatherData?.found){const wa=weatherData.scoringEffect==='HIGH'?0.3:weatherData.scoringEffect==='LOW'?-0.3:0;if(wa!==0){totalAdj+=wa;adjList.push(`Weather ${wa>=0?'+':''}${wa.toFixed(1)}`);}}
@@ -45900,19 +45997,7 @@ reasoning must explain your analysis`;
                 if (v7PositionDefense?.posDefAdj && Math.abs(v7PositionDefense.posDefAdj) >= 0.1) { totalAdj += v7PositionDefense.posDefAdj; adjList.push(`PosDef ${v7PositionDefense.posDefAdj >= 0 ? '+' : ''}${v7PositionDefense.posDefAdj.toFixed(1)}`); }
                 if (refereeData?.found && refereeData.avgTotalDiff && Math.abs(refereeData.avgTotalDiff) >= 1.0) { const refAdj = refereeData.avgTotalDiff * (((advancedStats?.usagePct || 0.25) * 100)) / 100 * 0.3; totalAdj += refAdj; adjList.push(`Ref ${refAdj >= 0 ? '+' : ''}${refAdj.toFixed(1)}`); }
 
-                // V8.1 FIX: Home/Away split from actual player data (matches UI E4)
-                // Use home/away stats from BDL enrichment if available
-                const v48HomeSplit = v7Matrix?.scoring?.home_games_ppg || null;
-                const v48AwaySplit = v7Matrix?.scoring?.away_games_ppg || null;
-                if (v48HomeSplit && v48AwaySplit && isH !== null) {
-                    const splitAvg = isH ? v48HomeSplit : v48AwaySplit;
-                    const splitDiff = splitAvg - seasonAvg;
-                    if (Math.abs(splitDiff) >= 0.5) {
-                        const cappedSplit = Math.max(-3, Math.min(3, splitDiff));
-                        totalAdj += cappedSplit;
-                        adjList.push(`${isH ? 'Home' : 'Away'}Split ${cappedSplit >= 0 ? '+' : ''}${cappedSplit.toFixed(1)}`);
-                    }
-                }
+                // V9.0: Home/Away splits now unified in E4 block above (removed V8.2 duplicate)
 
                 // V8.1 FIX: Minutes projection (matches UI E7) 
                 if (hasMin) {
@@ -47901,9 +47986,10 @@ if (typeof window !== 'undefined') {
 }
 
 // Startup
-console.log('\n🏆 SBA GENIUS V48 ULTIMATE V8.1 — H2H FIX + CONSOLE EXPORT');
+console.log('\n🏆 SBA GENIUS V48 ULTIMATE V9.0 — WORLD CLASS ENGINE');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log('V8.2: oppTeamId scope fix, V7 adj ordering fix, Vegas Anchor, Home/Away splits, Minutes, Efficiency');
+console.log('V9.0: WORLD CLASS — Real OddsAPI spread, ESPN B2B, BDL injuries, unified Home/Away, UI-matched blowout+B2B penalties');
+console.log('   Sources: OddsAPI (spread/total), ESPN (schedule/B2B), BDL (stats/injuries/matrix), 11 AI engines');
 console.log('GATES: 7 (G1-G7) | SPORTS: 12 | MARKETS: 274');
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
