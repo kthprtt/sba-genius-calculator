@@ -2785,6 +2785,17 @@
         // 20 Sports • 325+ Markets • Both Sides Analysis • Real-Time Data Quality Rating
         // ═══════════════════════════════════════════════════════════════════════════
         
+        // V10.3: Safe localStorage wrapper — prevents crashes in restricted environments
+        function safeGetItem(key, fallback) {
+            try { return localStorage.getItem(key); } catch(e) { return null; }
+        }
+        function safeSetItem(key, value) {
+            try { localStorage.setItem(key, value); return true; } catch(e) { return false; }
+        }
+        function safeRemoveItem(key) {
+            try { localStorage.removeItem(key); return true; } catch(e) { return false; }
+        }
+        
         const CONFIG = {
             // ═══════════════════════════════════════════════════════════════
             // API SERVERS
@@ -2795,43 +2806,43 @@
             // AI Proxy Server - Deploy the sba-ai-proxy to Railway and set this URL
             // This handles ALL AI engine calls securely with server-side API keys
             // Set to your deployed URL, e.g.: 'https://sba-ai-proxy-production.up.railway.app'
-            aiProxy: localStorage.getItem('sba_ai_proxy') || '',
+            aiProxy: safeGetItem('sba_ai_proxy') || '',
             
-            bankroll: parseInt(localStorage.getItem('sba_bankroll')) || 1000,
+            bankroll: parseInt(safeGetItem('sba_bankroll')) || 1000,
             
             // ═══════════════════════════════════════════════════════════════
             // DATA APIs (Built-in - These work directly from browser)
             // ═══════════════════════════════════════════════════════════════
             keys: {
-                odds: localStorage.getItem('sba_key_odds') || '1471a01061d779e05019e1cc9e03c78e', // The Odds API
-                bdl: localStorage.getItem('sba_key_bdl') || '1b29d9a4-56ef-40d8-b2f9-4d3eefb13a6b', // BallDontLie
-                betburger: localStorage.getItem('sba_key_betburger') || 'db8500a4ffa7bd95fdbfd07c8df838da', // BetBurger
+                odds: safeGetItem('sba_key_odds') || '1471a01061d779e05019e1cc9e03c78e', // The Odds API
+                bdl: safeGetItem('sba_key_bdl') || '1b29d9a4-56ef-40d8-b2f9-4d3eefb13a6b', // BallDontLie
+                betburger: safeGetItem('sba_key_betburger') || 'db8500a4ffa7bd95fdbfd07c8df838da', // BetBurger
                 boltodds: (() => {
                     // V43: Force unblocked key - clear any cached trial keys
-                    const stored = localStorage.getItem('sba_key_boltodds');
+                    const stored = safeGetItem('sba_key_boltodds');
                     if (stored && stored.startsWith('ff60a225')) {
-                        localStorage.removeItem('sba_key_boltodds');
+                        safeRemoveItem('sba_key_boltodds');
                         console.log('⚡ BoltOdds: Cleared old trial key from cache');
                     }
-                    return localStorage.getItem('sba_key_boltodds') || 'e884ac49-bce0-4ea3-a9b0-a704ff5dd125';
+                    return safeGetItem('sba_key_boltodds') || 'e884ac49-bce0-4ea3-a9b0-a704ff5dd125';
                 })(), // BoltOdds real-time WebSocket (unblocked key)
-                sgo: localStorage.getItem('sba_key_sgo') || '', // Sports Game Odds API (Circa, Bet365, 82 books)
+                sgo: safeGetItem('sba_key_sgo') || '', // Sports Game Odds API (Circa, Bet365, 82 books)
                 
                 // V45: AI Engine API Keys (stored in localStorage for security)
                 // Set via Settings or: localStorage.setItem('sba_key_openai', 'sk-...')
-                openai: localStorage.getItem('sba_key_openai') || '',
-                anthropic: localStorage.getItem('sba_key_anthropic') || '',
-                perplexity: localStorage.getItem('sba_key_perplexity') || '',
-                together: localStorage.getItem('sba_key_together') || '',
-                deepseek: localStorage.getItem('sba_key_deepseek') || '',
-                groq: localStorage.getItem('sba_key_groq') || '',
-                gemini: localStorage.getItem('sba_key_gemini') || ''
+                openai: safeGetItem('sba_key_openai') || '',
+                anthropic: safeGetItem('sba_key_anthropic') || '',
+                perplexity: safeGetItem('sba_key_perplexity') || '',
+                together: safeGetItem('sba_key_together') || '',
+                deepseek: safeGetItem('sba_key_deepseek') || '',
+                groq: safeGetItem('sba_key_groq') || '',
+                gemini: safeGetItem('sba_key_gemini') || ''
             },
             
             // V22: BetBurger saved filter IDs (created on betburger.com → API page)
             // POST /api/v1/arbs/bot_pro_search requires search_filter[] (array of filter IDs)
             // Store as comma-separated: localStorage.setItem('sba_bb_filter_ids', '123,456')
-            betburgerFilterIds: (localStorage.getItem('sba_bb_filter_ids') || '1278039').split(',').filter(Boolean).map(Number),
+            betburgerFilterIds: (safeGetItem('sba_bb_filter_ids') || '1278039').split(',').filter(Boolean).map(Number),
             
             // AI Engine configuration — V2.0 weights (actual API calls go through aiProxy)
             aiEngines: {
@@ -3554,7 +3565,7 @@ Return ONLY valid JSON:
         const ENGINE_ACCURACY_BY_SPORT = {
             // Will be populated by outcome tracking
             // Structure: { engineId: { sport: { correct: N, total: N } } }
-            data: JSON.parse(localStorage.getItem('sba_engine_sport_accuracy') || '{}'),
+            data: (() => { try { return JSON.parse(localStorage.getItem('sba_engine_sport_accuracy') || '{}'); } catch(e) { return {}; } })(),
             
             // Record a prediction result
             record(engineId, sport, wasCorrect) {
@@ -3595,7 +3606,7 @@ Return ONLY valid JSON:
             },
             
             save() {
-                localStorage.setItem('sba_engine_sport_accuracy', JSON.stringify(this.data));
+                try { localStorage.setItem('sba_engine_sport_accuracy', JSON.stringify(this.data)); } catch(e) { /* in-memory */ }
             },
             
             // Get leaderboard for a sport
@@ -3620,7 +3631,7 @@ Return ONLY valid JSON:
         // ═══════════════════════════════════════════════════════════════════════════
         
         const OUTCOME_TRACKER_V42 = {
-            bets: JSON.parse(localStorage.getItem('sba_outcome_tracker_v42') || '[]'),
+            bets: (() => { try { return JSON.parse(localStorage.getItem('sba_outcome_tracker_v42') || '[]'); } catch(e) { console.log('⚠️ localStorage unavailable — using in-memory outcome tracker'); return []; } })(),
             
             // Log a new bet
             logBet(betData) {
@@ -3951,7 +3962,12 @@ Return ONLY valid JSON:
             save() {
                 // Keep last 2000 bets
                 const toSave = this.bets.slice(-2000);
-                localStorage.setItem('sba_outcome_tracker_v42', JSON.stringify(toSave));
+                try {
+                    localStorage.setItem('sba_outcome_tracker_v42', JSON.stringify(toSave));
+                } catch(e) {
+                    // In-memory only — data persists for session but not across reloads
+                    console.log('⚠️ Outcome tracker: localStorage unavailable, using in-memory storage');
+                }
             }
         };
         
@@ -12485,7 +12501,7 @@ Return ONLY valid JSON:
                 const marginGap = teamIntel.matchup?.expectedMargin || teamIntel.projectedMargin || 0;
                 const spread = state.gameLines?.spread || 0;
                 if (spread && Math.abs(marginGap - spread) > 8) {
-                    g7Detail = `Large model-line spread discrepancy: model ${marginGap.toFixed(1)} vs line ${spread}`;
+                    g7Detail = `Large model-line spread discrepancy: model ${marginGap.toFixed(1)} vs line ${typeof spread === 'number' ? spread.toFixed(1) : spread}`;
                     // Don't fail, just warn — spreads are inherently close
                 } else {
                     g7Detail = `Model margin ${marginGap.toFixed(1)} aligns with spread`;
@@ -25888,7 +25904,43 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 
                 // Compute SBA Independent Line (weighted average of engine projections)
                 let sbaLine = null, sbaLow = null, sbaHigh = null;
-                if (engineProjections.length > 0) {
+                
+                // V10.3 FIX: For moneyline, compute win probability from engine confidences
+                const mCtxP1 = typeof getMarketContext === 'function' ? getMarketContext(market, blindContext.player) : null;
+                const isMLPass1 = mCtxP1?.analysisType === 'moneyline';
+                
+                if (isMLPass1 && engineProjections.length > 0) {
+                    // Convert engine picks + confidence to win probability
+                    let weightedProb = 0, totalWeight = 0;
+                    const probValues = [];
+                    engineProjections.forEach(ep => {
+                        const w = ep.weight || 0.1;
+                        // OVER = selected team wins, confidence indicates how likely
+                        const winProb = ep.pick === 'OVER' 
+                            ? (50 + (ep.confidence - 50) * 0.8) // Scale confidence to prob
+                            : (50 - (ep.confidence - 50) * 0.8);
+                        weightedProb += winProb * w;
+                        totalWeight += w;
+                        probValues.push(winProb);
+                        // Override projectedTotal with win probability
+                        ep.projectedTotal = Math.round(winProb * 10) / 10;
+                    });
+                    sbaLine = Math.round((weightedProb / totalWeight) * 10) / 10;
+                    
+                    const mean = probValues.reduce((a,b) => a+b, 0) / probValues.length;
+                    const variance = probValues.reduce((a,b) => a + (b - mean)**2, 0) / probValues.length;
+                    const stdev = Math.sqrt(variance);
+                    sbaLow = Math.round((sbaLine - stdev - 3) * 10) / 10;
+                    sbaHigh = Math.round((sbaLine + stdev + 3) * 10) / 10;
+                    
+                    // Also blend V26 margin-based win probability
+                    const v26Margin = blindContext.teamIntelligence?.matchup?.expectedMargin || 0;
+                    const v26WinProb = Math.min(95, Math.max(5, 50 + v26Margin * 2.5));
+                    if (v26Margin !== 0) {
+                        sbaLine = Math.round((sbaLine * 0.60 + v26WinProb * 0.40) * 10) / 10;
+                        console.log(`   🏀 V28: V26 margin (${v26Margin.toFixed(1)}) → win prob ${v26WinProb.toFixed(1)}% blended (40%) → SBA Line ${sbaLine}%`);
+                    }
+                } else if (engineProjections.length > 0) {
                     let weightedSum = 0, totalWeight = 0;
                     const projValues = [];
                     engineProjections.forEach(ep => {
@@ -25917,7 +25969,11 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     sbaLine = Math.round((sbaLine * 0.70 + v26Proj * 0.30) * 10) / 10;
                     console.log(`   🏀 V28: V26 game total blended (30%): ${v26Proj.toFixed(1)} → SBA Line adjusted to ${sbaLine}`);
                 } else if (v26Proj && !isGameTotal) {
-                    console.log(`   ⚠️ V28: V26 projectedTotal (${v26Proj.toFixed(1)}) is GAME TOTAL — skipping blend for player prop market "${market}"`);
+                    if (isMLPass1) {
+                        console.log(`   ✅ V28: ML uses win-prob pipeline (above) — V26 projectedTotal (${v26Proj.toFixed(1)}) is game total, correctly skipped`);
+                    } else {
+                        console.log(`   ⚠️ V28: V26 projectedTotal (${v26Proj.toFixed(1)}) is GAME TOTAL — skipping blend for player prop market "${market}"`);
+                    };
                 }
                 
                 const pass1Result = {
@@ -25930,13 +25986,13 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     consensus: data.consensus
                 };
                 
-                console.log(`\n🔬 V28 PASS 1 RESULTS:`);
-                console.log(`   SBA Independent Line: ${sbaLine}`);
-                console.log(`   Confidence Band: ${sbaLow} — ${sbaHigh}`);
+                console.log(`\n🔬 V28 PASS 1 RESULTS${isMLPass1 ? ' [MONEYLINE WIN PROB]' : ''}:`);
+                console.log(`   SBA Independent Line: ${sbaLine}${isMLPass1 ? '%' : ''}`);
+                console.log(`   Confidence Band: ${sbaLow}${isMLPass1 ? '%' : ''} — ${sbaHigh}${isMLPass1 ? '%' : ''}`);
                 console.log(`   V26 Matchup Model: ${v26Proj?.toFixed(1) || 'N/A'}`);
                 console.log(`   Engine Projections:`);
                 engineProjections.forEach(ep => {
-                    console.log(`     ${ep.icon} ${ep.name}: ${ep.projectedTotal} (${ep.pick} @ ${ep.confidence}%)`);
+                    console.log(`     ${ep.icon} ${ep.name}: ${ep.projectedTotal}${isMLPass1 ? '%' : ''} (${ep.pick} @ ${ep.confidence}%)`);
                 });
                 
                 return pass1Result;
@@ -31097,7 +31153,10 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                 const calFactor = Math.min(1.0, calDataPoints / 100); // 100+ predictions = full cal trust
                                 
                                 // Dynamic AI weight: base 0.40, modified by factors
-                                const aiWeight = Math.min(0.55, Math.max(0.25, 0.40 * coverageFactor * dispersionFactor));
+                                // V10.3 FIX: When calibration has 0 data, AI gets up to 0.80 weight
+                                // because uncalibrated probabilities are just prior estimates
+                                const calPenalty = calDataPoints < 10 ? (1 - calFactor) * 0.35 : 0; // up to +35% AI weight with 0 cal data
+                                const aiWeight = Math.min(0.80, Math.max(0.25, (0.40 + calPenalty) * coverageFactor * dispersionFactor));
                                 const calWeight = 1.0 - aiWeight;
                                 
                                 const blendedOverProb = currentOverProb * calWeight + aiTrueProb * aiWeight;
@@ -31333,14 +31392,45 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                                 const isHome = state.marketType === 'team' && (player || '').toLowerCase().includes((state.homeTeamName || '').toLowerCase().split(' ').pop());
                                                 
                                                 // Get odds for consensus side
+                                                // V10.3 FIX: Robust team matching — handles partial names, nicknames, etc.
                                                 let relevantOdds = [];
                                                 bookEntries.forEach(b => {
-                                                    // For moneyline: OVER = selected team wins
-                                                    // The "player" field is the selected team name
-                                                    // We need to figure out if selected = home or away
-                                                    const selTeamLower = (player || '').toLowerCase();
-                                                    const homeTeamLower = (b.homeTeam || '').toLowerCase();
-                                                    const selIsHome = homeTeamLower.includes(selTeamLower) || selTeamLower.includes(homeTeamLower.split(' ').pop());
+                                                    const selTeamLower = (player || '').toLowerCase().trim();
+                                                    const homeTeamLower = (b.homeTeam || '').toLowerCase().trim();
+                                                    const awayTeamLower = (b.awayTeam || '').toLowerCase().trim();
+                                                    
+                                                    // Multi-strategy matching:
+                                                    // 1. Exact match
+                                                    let selIsHome = (homeTeamLower === selTeamLower);
+                                                    let selIsAway = (awayTeamLower === selTeamLower);
+                                                    
+                                                    if (!selIsHome && !selIsAway) {
+                                                        // 2. Selected team is contained in full name (e.g., "Thunder" in "Oklahoma City Thunder")
+                                                        selIsHome = homeTeamLower.includes(selTeamLower);
+                                                        selIsAway = awayTeamLower.includes(selTeamLower);
+                                                    }
+                                                    
+                                                    if (!selIsHome && !selIsAway) {
+                                                        // 3. Last word of full name matches (e.g., "Trail Blazers" → "Blazers")
+                                                        const homeWords = homeTeamLower.split(' ');
+                                                        const awayWords = awayTeamLower.split(' ');
+                                                        const selWords = selTeamLower.split(' ');
+                                                        const homeLast = homeWords[homeWords.length - 1];
+                                                        const awayLast = awayWords[awayWords.length - 1];
+                                                        const selLast = selWords[selWords.length - 1];
+                                                        selIsHome = homeLast === selLast || selTeamLower.includes(homeLast);
+                                                        selIsAway = awayLast === selLast || selTeamLower.includes(awayLast);
+                                                    }
+                                                    
+                                                    if (!selIsHome && !selIsAway) {
+                                                        // 4. Fuzzy — any word overlap (e.g., "76ers" matches "Philadelphia 76ers")
+                                                        const selTokens = selTeamLower.split(/\s+/);
+                                                        selIsHome = selTokens.some(t => t.length > 2 && homeTeamLower.includes(t));
+                                                        selIsAway = selTokens.some(t => t.length > 2 && awayTeamLower.includes(t));
+                                                    }
+                                                    
+                                                    // Default to home if no match (shouldn't happen)
+                                                    if (!selIsHome && !selIsAway) selIsHome = true;
                                                     
                                                     if (consensusDir === 'OVER') {
                                                         // Betting selected team to WIN
@@ -34760,16 +34850,68 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             
             // V28: Independent model = Pass 1 SBA line (NO Vegas anchor)
             // Priority: Pass 1 line-blind result > independentProjection > rawProjection
-            const sbaModel = state.sbaModel?.line || proj.independentProjection || proj.rawProjection || proj.value;
-            const bookLine = proj.vegasLine || parseFloat(document.getElementById('line-input')?.value) || 0;
+            // V10.3 FIX: Moneyline uses win probability, not point values
+            const mCtxPanel = getMarketContext(state.analysisMarket || state.currentMarket || 'Points', state.currentPlayer || '');
+            const isMLPanel = mCtxPanel?.analysisType === 'moneyline';
+            
+            let sbaModel, bookLine;
+            if (isMLPanel) {
+                // For moneyline: sbaModel = model win prob, bookLine = book implied prob
+                const projMargin = state.teamIntelligence?.projectedMargin || state.teamIntelligence?.matchup?.expectedMargin || 0;
+                sbaModel = Math.min(95, Math.max(5, 50 + projMargin * 2.5));
+                
+                // Get book implied probability from actual odds
+                const mlLines = state.liveOdds?.lines ? Object.values(state.liveOdds.lines).filter(b => b.type === 'moneyline') : [];
+                if (mlLines.length > 0) {
+                    // Determine which side we're betting (selected team)
+                    const selTeam = (state.currentPlayer || '').toLowerCase().trim();
+                    let relevantOdds = [];
+                    mlLines.forEach(b => {
+                        const homeTeam = (b.homeTeam || '').toLowerCase().trim();
+                        const awayTeam = (b.awayTeam || '').toLowerCase().trim();
+                        // Robust matching: exact → contains → last word → token overlap
+                        let selIsHome = (homeTeam === selTeam) || homeTeam.includes(selTeam);
+                        let selIsAway = (awayTeam === selTeam) || awayTeam.includes(selTeam);
+                        if (!selIsHome && !selIsAway) {
+                            const homeLast = homeTeam.split(' ').pop();
+                            const awayLast = awayTeam.split(' ').pop();
+                            const selLast = selTeam.split(' ').pop();
+                            selIsHome = homeLast === selLast || selTeam.includes(homeLast);
+                            selIsAway = awayLast === selLast || selTeam.includes(awayLast);
+                        }
+                        if (!selIsHome && !selIsAway) {
+                            const selTokens = selTeam.split(/\s+/);
+                            selIsHome = selTokens.some(t => t.length > 2 && homeTeam.includes(t));
+                            selIsAway = selTokens.some(t => t.length > 2 && awayTeam.includes(t));
+                        }
+                        if (!selIsHome && !selIsAway) selIsHome = true;
+                        relevantOdds.push(selIsHome ? b.home : b.away);
+                    });
+                    relevantOdds = relevantOdds.filter(o => o !== null && o !== undefined);
+                    if (relevantOdds.length > 0) {
+                        relevantOdds.sort((a, b) => a - b);
+                        const medOdds = relevantOdds[Math.floor(relevantOdds.length / 2)];
+                        bookLine = medOdds < 0 ? Math.abs(medOdds) / (Math.abs(medOdds) + 100) * 100 : 100 / (medOdds + 100) * 100;
+                    } else {
+                        bookLine = 50;
+                    }
+                } else {
+                    bookLine = 50;
+                }
+            } else {
+                sbaModel = state.sbaModel?.line || proj.independentProjection || proj.rawProjection || proj.value;
+                bookLine = proj.vegasLine || parseFloat(document.getElementById('line-input')?.value) || 0;
+            }
             if (!sbaModel || !bookLine) { panel.style.display = 'none'; return; }
             
             const gap = sbaModel - bookLine;
             const absGap = Math.abs(gap);
-            const mCtx = getMarketContext(state.analysisMarket || state.currentMarket || 'Points', state.currentPlayer || '');
+            const mCtx = mCtxPanel; // Already computed above
             const sideA = mCtx.sideA; // OVER
             const sideB = mCtx.sideB; // UNDER
-            const modelSide = gap > 0.5 ? sideA : gap < -0.5 ? sideB : 'TOSS-UP';
+            const modelSide = isMLPanel 
+                ? (gap > 1 ? sideA : gap < -1 ? sideB : 'TOSS-UP')  // ML: 1% threshold
+                : (gap > 0.5 ? sideA : gap < -0.5 ? sideB : 'TOSS-UP'); // Props: 0.5pt threshold
             
             // ─── V28b: SBA Model Probability (Unified Stdev) ───
             // Use the SAME stdev function as computePass2Edge — single source of truth
@@ -34825,7 +34967,12 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             
             // 1. Gap magnitude (0-20 pts)
             convictionMax += 20;
-            convictionPoints += Math.min(20, absGap * 4); // 5pt gap = 20pts
+            if (isMLPanel) {
+                // For ML: each 1% edge = 4pts, so 5% edge = 20pts
+                convictionPoints += Math.min(20, absGap * 4);
+            } else {
+                convictionPoints += Math.min(20, absGap * 4); // 5pt gap = 20pts
+            }
             
             // 2. AI engine agreement (0-25 pts)
             convictionMax += 25;
@@ -34930,9 +35077,16 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             
             // ─── Gap Reasons ───
             const reasons = [];
-            if (absGap >= 3) reasons.push(`📊 Model sees ${absGap.toFixed(1)}pt gap — significant edge`);
-            else if (absGap >= 1) reasons.push(`📊 Model sees ${absGap.toFixed(1)}pt gap — modest edge`);
-            else reasons.push(`📊 Model and books nearly agree — thin edge`);
+            const gapUnit = isMLPanel ? '%' : 'pt';
+            if (isMLPanel) {
+                if (absGap >= 5) reasons.push(`📊 Model ${sbaModel.toFixed(1)}% win prob vs Book ${bookLine.toFixed(1)}% — ${absGap.toFixed(1)}% edge`);
+                else if (absGap >= 2) reasons.push(`📊 Model ${sbaModel.toFixed(1)}% vs Book ${bookLine.toFixed(1)}% — modest ${absGap.toFixed(1)}% edge`);
+                else reasons.push(`📊 Model ${sbaModel.toFixed(1)}% ≈ Book ${bookLine.toFixed(1)}% — no meaningful edge`);
+            } else {
+                if (absGap >= 3) reasons.push(`📊 Model sees ${absGap.toFixed(1)}pt gap — significant edge`);
+                else if (absGap >= 1) reasons.push(`📊 Model sees ${absGap.toFixed(1)}pt gap — modest edge`);
+                else reasons.push(`📊 Model and books nearly agree — thin edge`);
+            }
             
             if (agreeingEngines.length >= 8) reasons.push(`🤖 ${agreeingEngines.length}/10 AI engines align with model`);
             else if (agreeingEngines.length >= 5) reasons.push(`🤖 ${agreeingEngines.length}/10 AI engines agree (split consensus)`);
@@ -35193,7 +35347,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 verdictEl.style.color = '#888';
             }
             
-            console.log(`🧠 V28 SBA vs Books: Model=${sbaModel.toFixed(1)}, Book=${bookLine.toFixed(1)}, Gap=${gap.toFixed(1)}, ModelProb=${modelProbStr}%, Edge=${trueEdge.toFixed(1)}%, Conviction=${conviction.toFixed(0)}% ${convictionLabel}`);
+            console.log(`🧠 V28 SBA vs Books: Model=${sbaModel.toFixed(1)}${isMLPanel ? '%' : ''}, Book=${bookLine.toFixed(1)}${isMLPanel ? '%' : ''}, Gap=${gap.toFixed(1)}${isMLPanel ? '%' : ''}, ModelProb=${modelProbStr}%, Edge=${trueEdge.toFixed(1)}%, Conviction=${conviction.toFixed(0)}% ${convictionLabel}`);
         }
         
         // ═══════════════════════════════════════════════════════════════════════════
@@ -35764,7 +35918,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
         // ═══════════════════════════════════════════════════════════════════════════
         
         const OUTCOME_TRACKER = {
-            bets: JSON.parse(localStorage.getItem('sba_outcome_tracker') || '[]'),
+            bets: (() => { try { return JSON.parse(localStorage.getItem('sba_outcome_tracker') || '[]'); } catch(e) { return []; } })(),
             
             // Log a bet when user takes action
             logBet(bet) {
@@ -35844,7 +35998,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             },
             
             save() {
-                localStorage.setItem('sba_outcome_tracker', JSON.stringify(this.bets.slice(-500))); // Keep last 500
+                try { localStorage.setItem('sba_outcome_tracker', JSON.stringify(this.bets.slice(-500))); } catch(e) { /* in-memory only */ }
             },
             
             export() {
