@@ -12349,17 +12349,23 @@ Return ONLY valid JSON:
                 const liveVerifiedOut = state.verifiedInjuryStatus?.shouldOverride === true;
                 if (liveVerifiedOut) { dataQualityScore = 0; }
             } else {
-                // Game-level data quality
-                if (teamIntel) {
-                    if (teamIntel.expectedTotal > 0) dataQualityScore += 8;
-                    if (teamIntel.teamA?.ppg > 0) dataQualityScore += 5;
-                    if (teamIntel.teamB?.ppg > 0) dataQualityScore += 5;
-                    if (teamIntel.teamA?.rolling) dataQualityScore += 5;
-                    if (teamIntel.teamB?.rolling) dataQualityScore += 5;
-                    if (teamIntel.h2h?.games > 0) dataQualityScore += 5;
-                    if (teamIntel.expectedPace || teamIntel.expectedTempo) dataQualityScore += 3;
-                    if (teamIntel.teamA?.offRtg > 0) dataQualityScore += 2;
-                    if (teamIntel.teamA?.defRtg > 0) dataQualityScore += 2;
+                // V10: Game-level data quality — uses teamIntel.matchup structure
+                const m = teamIntel?.matchup;
+                if (m) {
+                    if (m.expectedTotal > 0) dataQualityScore += 10;
+                    if (m.teamA?.ppg > 0) dataQualityScore += 5;
+                    if (m.teamB?.ppg > 0) dataQualityScore += 5;
+                    if (m.teamA?.rolling) dataQualityScore += 5;
+                    if (m.teamB?.rolling) dataQualityScore += 5;
+                    if (m.h2h?.games > 0) dataQualityScore += 5;
+                    if (m.expectedPace > 0 || m.expectedTempo > 0) dataQualityScore += 3;
+                    if (m.teamA?.offRtg > 0) dataQualityScore += 3;
+                    if (m.teamA?.defRtg > 0) dataQualityScore += 2;
+                    if (m.teamB?.offRtg > 0) dataQualityScore += 2;
+                    if (m.teamA?.wPct !== undefined) dataQualityScore += 3;
+                    if (m.expectedMargin !== undefined) dataQualityScore += 2;
+                } else if (teamIntel?.projectedTotal > 0) {
+                    dataQualityScore += 15; // Has top-level projection even without matchup
                 } else if (projection?.seasonAvg > 0) {
                     dataQualityScore += 10; // Fallback: some projection data exists
                 }
@@ -12403,8 +12409,8 @@ Return ONLY valid JSON:
                 }
             } else if (marketClass === 'GAME_TOTAL') {
                 // Check if team scoring is stable (L5 team PPG not >20% off season)
-                const teamA = teamIntel?.teamA;
-                const teamB = teamIntel?.teamB;
+                const teamA = teamIntel?.matchup?.teamA;
+                const teamB = teamIntel?.matchup?.teamB;
                 if (teamA?.rolling?.scoring?.l5?.mean && teamA?.ppg) {
                     const aRatio = teamA.rolling.scoring.l5.mean / teamA.ppg;
                     const bRatio = teamB?.rolling?.scoring?.l5?.mean && teamB?.ppg ? teamB.rolling.scoring.l5.mean / teamB.ppg : 1;
@@ -12414,8 +12420,8 @@ Return ONLY valid JSON:
                 } else { g5Detail = 'Limited team rolling data'; }
             } else if (marketClass === 'SPREAD_ML') {
                 // Check if team records support direction (no extreme upsets without data)
-                const teamA = teamIntel?.teamA;
-                const teamB = teamIntel?.teamB;
+                const teamA = teamIntel?.matchup?.teamA;
+                const teamB = teamIntel?.matchup?.teamB;
                 if (teamA?.wPct !== undefined && teamB?.wPct !== undefined) {
                     g5Detail = `Home ${(teamA.wPct*100).toFixed(0)}% W | Away ${(teamB.wPct*100).toFixed(0)}% W`;
                 } else { g5Detail = 'Team records available'; }
@@ -12462,7 +12468,7 @@ Return ONLY valid JSON:
                     }
                 }
             } else if (marketClass === 'GAME_TOTAL' && teamIntel && line > 0) {
-                const projTotal = teamIntel.expectedTotal || 0;
+                const projTotal = teamIntel.matchup?.expectedTotal || teamIntel.projectedTotal || 0;
                 if (projTotal > 0) {
                     const gap = projTotal - line;
                     if (gap > 10 && consensusDir === 'UNDER') {
@@ -12476,7 +12482,7 @@ Return ONLY valid JSON:
                     }
                 }
             } else if (marketClass === 'SPREAD_ML' && teamIntel) {
-                const marginGap = teamIntel.expectedMargin || 0;
+                const marginGap = teamIntel.matchup?.expectedMargin || teamIntel.projectedMargin || 0;
                 const spread = state.gameLines?.spread || 0;
                 if (spread && Math.abs(marginGap - spread) > 8) {
                     g7Detail = `Large model-line spread discrepancy: model ${marginGap.toFixed(1)} vs line ${spread}`;
@@ -27971,6 +27977,35 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             if (state.analysisMarket && market !== state.analysisMarket) {
                 console.warn(`🚨 V34 MARKET DRIFT: calculateAIProjection received '${market}' but state.analysisMarket='${state.analysisMarket}'. Using locked market.`);
                 market = state.analysisMarket;
+            }
+            
+            // V10: Bypass player-prop projection pipeline for game/team markets
+            // Game markets use V26 Team Intel directly, not L5/L10 player logic
+            const mCtx = typeof getMarketContext === 'function' ? getMarketContext(market, state.selectedPlayer) : null;
+            const isGameMarket = mCtx && ['game_total', 'team_total', 'spread', 'moneyline'].includes(mCtx.analysisType);
+            if (isGameMarket && state.teamIntelligence?.matchup) {
+                const ti = state.teamIntelligence.matchup;
+                const projTotal = ti.expectedTotal || 0;
+                const projMargin = ti.expectedMargin || 0;
+                let gameProjection;
+                if (market === 'Moneyline' || market === 'h2h' || market?.toLowerCase?.()?.includes('moneyline')) {
+                    gameProjection = 50 + (projMargin * 2.5);
+                    gameProjection = Math.max(5, Math.min(95, gameProjection));
+                } else if (market?.toLowerCase?.()?.includes('spread') || market?.toLowerCase?.()?.includes('handicap')) {
+                    gameProjection = projMargin;
+                } else {
+                    gameProjection = projTotal;
+                }
+                console.log(`🏟️ V10 Game Projection [${market}]: ${gameProjection.toFixed(1)} (via V26 Team Intel — bypassed player pipeline)`);
+                return {
+                    projection: gameProjection, confidence: 65, dataQuality: 75,
+                    variance: 'average', varianceScore: 0,
+                    l5Avg: 0, l10Avg: 0, seasonAvg: gameProjection,
+                    hitRate: null,
+                    engines: { seasonWeight: 1, l5Weight: 0, l10Weight: 0, matchupWeight: 0 },
+                    isGameMarketBypass: true, teamIntelSource: true,
+                    projectedTotal: projTotal, projectedMargin: projMargin
+                };
             }
             
             const seasonAvg = intelData.seasonAvg || 22;
