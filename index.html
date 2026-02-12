@@ -25951,6 +25951,20 @@ Injuries: ${blindContext.injuries?.map(i => i.name+'('+i.status+')').join(', ') 
 DO NOT use any sportsbook odds. Estimate ${selTeam}'s win probability.
 Respond with ONLY JSON: {"pick":"OVER","confidence":65,"trueProb":0.55,"reasoning":"explanation"}
 OVER = ${selTeam} WINS, UNDER = ${selTeam} LOSES`;
+                        } else if (isTeam && ti && mCtxP1Prompt?.analysisType === 'spread') {
+                            // V10.3l: Spread Pass 1 — ask for projected margin
+                            const homeTeam = ti.homeTeam || 'Home';
+                            const awayTeam = ti.awayTeam || 'Away';
+                            return `Spread/margin projection (NO book lines/spreads):
+Matchup: ${awayTeam} @ ${homeTeam}
+QUESTION: By how many points will ${homeTeam} win (positive) or lose (negative)?
+HOME: PPG ${ti.home?.ppg?.toFixed(1) || 'N/A'}, Opp PPG ${ti.home?.oppPpg?.toFixed(1) || 'N/A'}, Net ${ti.home?.margin?.toFixed(1) || 'N/A'}, L5 scoring ${ti.home?.l5Scoring?.toFixed(1) || 'N/A'}
+AWAY: PPG ${ti.away?.ppg?.toFixed(1) || 'N/A'}, Opp PPG ${ti.away?.oppPpg?.toFixed(1) || 'N/A'}, Net ${ti.away?.margin?.toFixed(1) || 'N/A'}, L5 scoring ${ti.away?.l5Scoring?.toFixed(1) || 'N/A'}
+Pace: ${ti.expectedPace?.toFixed(0) || ti.expectedTempo?.toFixed(0) || 'N/A'}
+H2H: ${ti.h2h ? ti.h2h.games+'g, avg total '+ti.h2h.avgTotal?.toFixed(1)+', avg margin '+ti.h2h.avgMargin?.toFixed(1) : 'None'}
+Injuries: ${blindContext.injuries?.map(i => i.name+'('+i.status+')').join(', ') || 'None'}
+DO NOT use any sportsbook spread. Project the HOME TEAM margin of victory (positive = home wins, negative = away wins).
+Respond with ONLY JSON: {"margin":-3.5,"confidence":70,"reasoning":"explanation"}`;
                         } else if (isTeam && ti) {
                             return `Game-level projection (NO book lines):
 Matchup: ${ti.awayTeam || player} @ ${ti.homeTeam || 'Home'}
@@ -25980,6 +25994,58 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 const data = await response.json();
                 _pass1Consensus = data?.consensus || null; // V10.3h: capture for pass1Result
                 
+                // V10.3l: Check if this is a spread response with margin instead of pick
+                const mCtxP1Check2 = typeof getMarketContext === 'function' ? getMarketContext(market, blindContext.player) : null;
+                const isSpreadP1 = mCtxP1Check2?.analysisType === 'spread';
+                
+                if (isSpreadP1) {
+                    // Spread Pass 1: Extract margin from {"margin":-3.5,"confidence":70,"reasoning":"..."}
+                    let marginVal = null, spreadConf = 65, spreadReason = '';
+                    let raw = '';
+                    if (typeof data === 'string') raw = data;
+                    else if (data?.result?.raw) raw = data.result.raw;
+                    else if (data?.result?.parsed?.margin != null) {
+                        marginVal = parseFloat(data.result.parsed.margin);
+                        spreadConf = parseInt(data.result.parsed.confidence) || 65;
+                        spreadReason = data.result.parsed.reasoning || '';
+                    }
+                    else if (data?.result) raw = typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
+                    else raw = JSON.stringify(data);
+                    
+                    if (marginVal == null && raw) {
+                        if (typeof raw !== 'string') raw = JSON.stringify(raw);
+                        raw = raw.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+                        // Try JSON parse for margin field
+                        const marginMatch = raw.match(/"margin"\s*:\s*(-?\d+\.?\d*)/);
+                        if (marginMatch) marginVal = parseFloat(marginMatch[1]);
+                        const confMatch = raw.match(/"confidence"\s*:\s*(\d+)/);
+                        if (confMatch) spreadConf = parseInt(confMatch[1]);
+                        const reasonMatch = raw.match(/"reasoning"\s*:\s*"([^"]+)"/);
+                        if (reasonMatch) spreadReason = reasonMatch[1];
+                        // Fallback: try projection field as margin
+                        if (marginVal == null) {
+                            const projMatch = raw.match(/"projection"\s*:\s*(-?\d+\.?\d*)/);
+                            if (projMatch) {
+                                const pv = parseFloat(projMatch[1]);
+                                // If value looks like a margin (<50) vs game total (>100), use appropriately
+                                marginVal = Math.abs(pv) < 50 ? pv : null;
+                            }
+                        }
+                    }
+                    
+                    if (marginVal != null) {
+                        engineProjections.push({
+                            id: 'claude', name: 'Claude', icon: '🟣', weight: 0.18,
+                            projectedTotal: Math.round(marginVal * 10) / 10, // This IS the margin
+                            pick: marginVal > 0 ? 'OVER' : 'UNDER', // positive margin = home covers
+                            confidence: Math.min(95, Math.max(50, spreadConf)),
+                            reason: spreadReason.substring(0, 200)
+                        });
+                        console.log(`   🟣 V10.3l Pass 1 Spread: Claude → Margin ${marginVal.toFixed(1)} @ ${spreadConf}%`);
+                    } else {
+                        console.log(`   ⚠️ V10.3l Pass 1 Spread: Failed to extract margin from response`);
+                    }
+                } else {
                 // V47 FIX: We're calling a single engine (/api/ai/claude), not batch
                 // Parse the single response using proven parser
                 const parsed = parseProxyAIResponse(data, 'claude');
@@ -26082,6 +26148,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     });
                     } // end else (non-ML)
                 }
+                } // end else (non-spread — uses pick-based parsing)
                 } // end if (!_isMLPass1Multi) — single engine for non-ML
                 
                 // Compute SBA Independent Line (weighted average of engine projections)
@@ -26148,14 +26215,24 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 // is the game total (e.g., 231.3), NOT a player prop projection
                 const v26Proj = blindContext.teamIntelligence?.projectedTotal;
                 const isGameTotal = market && (market.toUpperCase().includes('GAME_TOTAL') || market.toUpperCase().includes('GAME TOTAL'));
-                if (v26Proj && sbaLine && isGameTotal) {
+                const isSpreadP1Blend = mCtxP1?.analysisType === 'spread';
+                
+                if (isSpreadP1Blend && sbaLine != null) {
+                    // V10.3l: For spread, blend V26 injury-adjusted margin with Pass 1 margin
+                    const v26AdjMargin = blindContext.teamIntelligence?.matchup?.injuryAdjMargin ?? blindContext.teamIntelligence?.matchup?.expectedMargin ?? null;
+                    if (v26AdjMargin != null) {
+                        const v26Weight = engineProjections.length >= 5 ? 0.25 : 0.40;
+                        sbaLine = Math.round((sbaLine * (1 - v26Weight) + v26AdjMargin * v26Weight) * 10) / 10;
+                        console.log(`   🏀 V28: V26 adjMargin (${v26AdjMargin.toFixed(1)}) blended (${(v26Weight*100).toFixed(0)}%) → SBA Spread Line ${sbaLine}`);
+                    }
+                } else if (v26Proj && sbaLine && isGameTotal) {
                     // V26 model gets 30% weight for game totals only
                     sbaLine = Math.round((sbaLine * 0.70 + v26Proj * 0.30) * 10) / 10;
                     console.log(`   🏀 V28: V26 game total blended (30%): ${v26Proj.toFixed(1)} → SBA Line adjusted to ${sbaLine}`);
                 } else if (v26Proj && !isGameTotal) {
                     if (isMLPass1) {
                         console.log(`   ✅ V28: ML uses win-prob pipeline (above) — V26 projectedTotal (${v26Proj.toFixed(1)}) is game total, correctly skipped`);
-                    } else {
+                    } else if (!isSpreadP1Blend) {
                         console.log(`   ⚠️ V28: V26 projectedTotal (${v26Proj.toFixed(1)}) is GAME TOTAL — skipping blend for player prop market "${market}"`);
                     };
                 }
@@ -26170,10 +26247,11 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     consensus: _pass1Consensus
                 };
                 
-                console.log(`\n🔬 V28 PASS 1 RESULTS${isMLPass1 ? ' [MONEYLINE WIN PROB]' : ''}:`);
+                const _isSpreadP1Log = mCtxP1?.analysisType === 'spread';
+                console.log(`\n🔬 V28 PASS 1 RESULTS${isMLPass1 ? ' [MONEYLINE WIN PROB]' : _isSpreadP1Log ? ' [SPREAD MARGIN]' : ''}:`);
                 console.log(`   SBA Independent Line: ${sbaLine}${isMLPass1 ? '%' : ''}`);
                 console.log(`   Confidence Band: ${sbaLow}${isMLPass1 ? '%' : ''} — ${sbaHigh}${isMLPass1 ? '%' : ''}`);
-                console.log(`   V26 Matchup Model: ${v26Proj?.toFixed(1) || 'N/A'}`);
+                console.log(`   V26 Matchup Model: ${v26Proj?.toFixed(1) || 'N/A'}${_isSpreadP1Log ? ` (margin: ${blindContext.teamIntelligence?.matchup?.injuryAdjMargin?.toFixed(1) || 'N/A'})` : ''}`);
                 console.log(`   Engine Projections:`);
                 engineProjections.forEach(ep => {
                     console.log(`     ${ep.icon} ${ep.name}: ${ep.projectedTotal}${isMLPass1 ? '%' : ''} (${ep.pick} @ ${ep.confidence}%)`);
@@ -29610,9 +29688,15 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                         prelGap = Math.abs(independentValue - 50);
                         prelDir = independentValue > 50 ? prelMktCtx.sideA || 'YES' : prelMktCtx.sideB || 'NO';
                         prelStrength = prelGap >= 20 ? 'STRONG' : prelGap >= 10 ? 'MODERATE' : prelGap >= 5 ? 'LEAN' : 'TOSS-UP';
+                    } else if (prelMktCtx.analysisType === 'spread') {
+                        // V10.3l: For spread, compare projected margin vs book spread
+                        // independentValue is the projected margin (e.g., -3.7), vegasLine is book spread (e.g., -6.8)
+                        prelGap = Math.abs(independentValue - vegasLine);
+                        prelDir = independentValue > vegasLine ? 'OVER' : 'UNDER';
+                        prelStrength = prelGap >= 5 ? 'STRONG' : prelGap >= 3 ? 'MODERATE' : prelGap >= 1 ? 'LEAN' : 'TOSS-UP';
                     } else {
-                        // For props/totals/spreads: edge = independent projected value vs book line
-                        prelGap = vegasLine > 0 ? Math.abs(independentValue - vegasLine) : 0;
+                        // For props/totals: edge = independent projected value vs book line
+                        prelGap = vegasLine != null && vegasLine !== 0 ? Math.abs(independentValue - vegasLine) : 0;
                         prelDir = independentValue > vegasLine ? 'OVER' : 'UNDER';
                         prelStrength = prelGap >= 5 ? 'STRONG' : prelGap >= 3 ? 'MODERATE' : prelGap >= 1 ? 'LEAN' : 'TOSS-UP';
                     }
@@ -33830,10 +33914,12 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             // Green 2: SBA vs Book Gap
             // V10.3j: ML-specific edge gap (win probability % vs book implied %)
             const _isMLStreak = isGameOrTeam && state.marketType === 'team' && (result.market === 'Moneyline' || result.market === 'moneyline');
+            const _isSpreadStreak = isGameOrTeam && state.marketType === 'team' && 
+                ['Spread', 'Alt Spread', 'Run Line', 'Puck Line', 'Asian Handicap', '1H Spread', 'F5 Run Line'].includes(result.market);
             const pass2GapPost = Math.abs(sba?.edge?.gap || 0);
             const projValuePost = state.lastProjection?.value || 0;
             const linePost = parseFloat(result.line) || 0;
-            const v11GapPost = (projValuePost && linePost) ? Math.abs(projValuePost - linePost) : 0;
+            const v11GapPost = (projValuePost != null && linePost != null) ? Math.abs(projValuePost - linePost) : 0;
             let sbaGap, sbaDirection, gapAligned;
             
             if (_isMLStreak) {
@@ -33892,6 +33978,23 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     value: `Home ${(homeWPct*100).toFixed(0)}% W | Away ${(awayWPct*100).toFixed(0)}% W | Margin ${adjMargin > 0 ? '+' : ''}${adjMargin.toFixed(1)} (${majorityDir})`,
                     label: 'Record/Margin Confirms'
                 };
+            } else if (_isSpreadStreak) {
+                // V10.3l: Spread — use margin model vs book spread as "trend" equivalent
+                const ti = state.teamIntelligence?.matchup;
+                const rawMargin = ti?.expectedMargin || 0;
+                const adjMargin = ti?.injuryAdjMargin ?? rawMargin;
+                const bookSpread = parseFloat(result.line) || 0;
+                // "Trend confirms" for spread = model margin agrees with AI direction vs book spread
+                // OVER = team covers (wins by more than spread), UNDER = doesn't cover
+                const modelSaysCovers = adjMargin > bookSpread; // model margin beats the spread
+                const trendConfirms = (majorityDir === 'OVER' && modelSaysCovers) ||
+                                       (majorityDir === 'UNDER' && !modelSaysCovers);
+                const marginDiff = adjMargin - bookSpread;
+                checks.trendConfirm = {
+                    pass: trendConfirms,
+                    value: `Model margin ${adjMargin > 0 ? '+' : ''}${adjMargin.toFixed(1)} vs Spread ${bookSpread} (diff ${marginDiff > 0 ? '+' : ''}${marginDiff.toFixed(1)})`,
+                    label: 'Margin Model Confirms'
+                };
             } else {
                 const trendSupports = majorityDir === 'OVER' 
                     ? (l5 > line * 0.9 || l5 > seasonAvg * 0.85)
@@ -33948,6 +34051,25 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                         ? `H2H: ${h2hGames}g (margin ${h2hMargin > 0 ? '+' : ''}${h2hMargin.toFixed(1)}) | AdjMargin: ${adjMargin > 0 ? '+' : ''}${adjMargin.toFixed(1)}`
                         : `No H2H — AdjMargin: ${adjMargin > 0 ? '+' : ''}${adjMargin.toFixed(1)} (${marginStrongEnough ? 'strong' : 'weak'})`,
                     label: 'H2H / Margin Confirm'
+                };
+            } else if (_isSpreadStreak) {
+                // V10.3l: Spread — same relaxed H2H as ML (teams play 2-4x/season)
+                const h2hMargin = h2h?.avgMargin || 0;
+                const ti = state.teamIntelligence?.matchup;
+                const adjMargin = ti?.injuryAdjMargin ?? ti?.expectedMargin ?? 0;
+                const bookSpread = parseFloat(result.line) || 0;
+                // For spread: H2H margin vs book spread helps confirm
+                const h2hConfirms = h2hGames >= 1 && (
+                    (majorityDir === 'OVER' && h2hMargin > bookSpread) || // H2H margin covers
+                    (majorityDir === 'UNDER' && h2hMargin < bookSpread)   // H2H margin doesn't cover
+                );
+                const modelMarginStrong = Math.abs(adjMargin - bookSpread) >= 2;
+                checks.h2h = {
+                    pass: h2hConfirms || modelMarginStrong,
+                    value: h2hGames > 0 
+                        ? `H2H: ${h2hGames}g (margin ${h2hMargin > 0 ? '+' : ''}${h2hMargin.toFixed(1)}) vs Spread ${bookSpread}`
+                        : `No H2H — Model gap: ${Math.abs(adjMargin - bookSpread).toFixed(1)}pts (${modelMarginStrong ? 'strong' : 'weak'})`,
+                    label: 'H2H / Spread Confirm'
                 };
             } else {
                 const h2hSupports = h2hGames >= 5 && (
