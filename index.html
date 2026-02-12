@@ -25928,6 +25928,7 @@ Respond with ONLY JSON: {"pick":"OVER","confidence":75,"reasoning":"explanation"
                 // Non-ML: Single engine (Claude) for projection number
                 if (!_isMLPass1Multi) {
                 const response = await fetch(`${CONFIG.aiProxy}/api/ai/claude`, {
+                    method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
                         prompt: (() => {
@@ -34767,7 +34768,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 
                 <div class="side-card ${r.under.recommended ? 'recommended' : 'fade'}">
                     <div class="side-header">
-                        <span class="side-direction under">${mCtx.sideB}${mCtx.hasLine ? ' ' + r.line : ''}</span>
+                        <span class="side-direction under">${mCtx.sideB}${mCtx.hasLine ? ' ' + (mCtx.analysisType === 'spread' ? (parseFloat(r.line) > 0 ? '-' : '+') + Math.abs(parseFloat(r.line)) : r.line) : ''}</span>
                         <span class="side-badge ${r.under.recommended ? 'recommended' : 'fade'}">${r.under.recommended ? '⭐ RECOMMENDED' : 'FADE'}</span>
                     </div>
                     
