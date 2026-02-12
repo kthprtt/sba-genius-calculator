@@ -26219,7 +26219,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 
                 if (isSpreadP1Blend && sbaLine != null) {
                     // V10.3l: For spread, blend V26 injury-adjusted margin with Pass 1 margin
-                    const v26AdjMargin = blindContext.teamIntelligence?.matchup?.injuryAdjMargin ?? blindContext.teamIntelligence?.matchup?.expectedMargin ?? null;
+                    const v26AdjMargin = blindContext.teamIntelligence?.projectedMargin ?? blindContext.teamIntelligence?.matchup?.injuryAdjMargin ?? blindContext.teamIntelligence?.matchup?.expectedMargin ?? null;
                     if (v26AdjMargin != null) {
                         const v26Weight = engineProjections.length >= 5 ? 0.25 : 0.40;
                         sbaLine = Math.round((sbaLine * (1 - v26Weight) + v26AdjMargin * v26Weight) * 10) / 10;
@@ -26248,10 +26248,11 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 };
                 
                 const _isSpreadP1Log = mCtxP1?.analysisType === 'spread';
+                const _v26MarginForLog = blindContext.teamIntelligence?.projectedMargin ?? blindContext.teamIntelligence?.matchup?.injuryAdjMargin ?? null;
                 console.log(`\n🔬 V28 PASS 1 RESULTS${isMLPass1 ? ' [MONEYLINE WIN PROB]' : _isSpreadP1Log ? ' [SPREAD MARGIN]' : ''}:`);
                 console.log(`   SBA Independent Line: ${sbaLine}${isMLPass1 ? '%' : ''}`);
                 console.log(`   Confidence Band: ${sbaLow}${isMLPass1 ? '%' : ''} — ${sbaHigh}${isMLPass1 ? '%' : ''}`);
-                console.log(`   V26 Matchup Model: ${v26Proj?.toFixed(1) || 'N/A'}${_isSpreadP1Log ? ` (margin: ${blindContext.teamIntelligence?.matchup?.injuryAdjMargin?.toFixed(1) || 'N/A'})` : ''}`);
+                console.log(`   V26 Matchup Model: ${v26Proj?.toFixed(1) || 'N/A'}${_isSpreadP1Log ? ` (margin: ${_v26MarginForLog != null ? _v26MarginForLog.toFixed(1) : 'N/A'})` : ''}`);
                 console.log(`   Engine Projections:`);
                 engineProjections.forEach(ep => {
                     console.log(`     ${ep.icon} ${ep.name}: ${ep.projectedTotal}${isMLPass1 ? '%' : ''} (${ep.pick} @ ${ep.confidence}%)`);
@@ -33982,7 +33983,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 // V10.3l: Spread — use margin model vs book spread as "trend" equivalent
                 const ti = state.teamIntelligence?.matchup;
                 const rawMargin = ti?.expectedMargin || 0;
-                const adjMargin = ti?.injuryAdjMargin ?? rawMargin;
+                const adjMargin = state.teamIntelligence?.projectedMargin ?? ti?.injuryAdjMargin ?? rawMargin;
                 const bookSpread = parseFloat(result.line) || 0;
                 // "Trend confirms" for spread = model margin agrees with AI direction vs book spread
                 // OVER = team covers (wins by more than spread), UNDER = doesn't cover
@@ -34056,7 +34057,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 // V10.3l: Spread — same relaxed H2H as ML (teams play 2-4x/season)
                 const h2hMargin = h2h?.avgMargin || 0;
                 const ti = state.teamIntelligence?.matchup;
-                const adjMargin = ti?.injuryAdjMargin ?? ti?.expectedMargin ?? 0;
+                const adjMargin = state.teamIntelligence?.projectedMargin ?? ti?.injuryAdjMargin ?? ti?.expectedMargin ?? 0;
                 const bookSpread = parseFloat(result.line) || 0;
                 // For spread: H2H margin vs book spread helps confirm
                 const h2hConfirms = h2hGames >= 1 && (
