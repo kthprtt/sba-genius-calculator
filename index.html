@@ -35710,8 +35710,8 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 showLocks: true,
                 showArbs: true,
                 showHigh: true,
-                showStreak: true,
-                showMonitor: true,
+                showStreak: false,
+                showMonitor: false,
                 minEdge: 0,
                 hiddenIds: new Set() // Bets user dismissed
             },
@@ -36229,15 +36229,19 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 if (viewMode === 'arbs' && !isArb) { filterReasons.viewMode++; return false; }
                 
                 // Individual tier checkboxes
+                // V49 FIX: Check arbs FIRST — arbs should always pass if showArbs is on,
+                // regardless of their estimatedTier. Then check tier filters.
                 if (viewMode === 'all' && scanMode === 'all') {
-                    // V49 FIX: Arbs always pass if showArbs is on, regardless of tier
-                    if (isArb && f.showArbs) { /* pass through */ }
-                    else if (r.estimatedTier === 'diamond' && !f.showDiamonds) { filterReasons.tier++; return false; }
-                    else if (r.estimatedTier === 'lock' && !f.showLocks) { filterReasons.tier++; return false; }
-                    else if (r.estimatedTier === 'high' && !f.showDiamonds && !f.showLocks && !f.showHigh) { filterReasons.tier++; return false; }
-                    else if (r.estimatedTier === 'streak' && !f.showStreak) { filterReasons.tier++; return false; }
-                    else if ((r.estimatedTier === 'none' || r.estimatedTier === 'monitor') && !f.showMonitor) { filterReasons.tier++; return false; }
-                    else if (isArb && !f.showArbs) { filterReasons.tier++; return false; }
+                    // Arbs get priority pass — they can have any estimatedTier
+                    if (isArb) {
+                        if (!f.showArbs) { filterReasons.tier++; return false; }
+                        // Arb passes — skip tier filtering
+                    } else {
+                        // Non-arb tier filtering
+                        if (r.estimatedTier === 'high' && !f.showDiamonds && !f.showLocks && !f.showHigh) { filterReasons.tier++; return false; }
+                        if (r.estimatedTier === 'streak' && !f.showStreak) { filterReasons.tier++; return false; }
+                        if (r.estimatedTier === 'none' && !f.showMonitor) { filterReasons.tier++; return false; }
+                    }
                 }
                 
                 // Check minimum edge
@@ -36581,8 +36585,8 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 showLocks: true,
                 showArbs: true,
                 showHigh: true,
-                showStreak: true,
-                showMonitor: true,
+                showStreak: false,
+                showMonitor: false,
                 minEdge: 0,
                 bookFilter: 'all',
                 myBooks: scannerState.filters.myBooks || {},
@@ -38066,13 +38070,7 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                                     break; // Skip remaining events for this sport
                                 }
                                 
-                                // V49 FIX: Handle 422 Unprocessable — means requested markets aren't valid for this sport
-                                if (propsRes.status === 422) {
-                                    console.warn(`💎 Scanner: ${sportLabel} props returned 422 — invalid markets for this sport, skipping props`);
-                                    // Don't break — still try game markets, just skip this fetch
-                                }
-                                
-                                const propsData = propsRes.ok ? await propsRes.json() : null;
+                                const propsData = await propsRes.json();
                                 
                                 let eventPlayerCount = 0;
                                 // Extract unique player+market combinations with their lines
@@ -38154,14 +38152,8 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                                     // Skip if 401
                                     if (gameRes.status === 401) {
                                         gameData = null;
-                                    } else if (gameRes.status === 422) {
-                                        // V49 FIX: 422 = invalid market keys for this sport
-                                        console.warn(`💎 Scanner: ${sportLabel} game markets returned 422 — invalid markets for this sport`);
-                                        gameData = null;
-                                    } else if (gameRes.ok) {
-                                        gameData = await gameRes.json();
                                     } else {
-                                        gameData = null;
+                                        gameData = await gameRes.json();
                                     }
                                     
                                     // V40 PHASE 4: Reverse-lookup market key → display name from MARKET_REGISTRY
@@ -38554,7 +38546,7 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                     // Filter based on scan mode
                     // V50 FIX: Scanner uses tiers 'high', 'streak', 'none' — never 'diamond' or 'lock'
                     // Map user mode to scanner tiers: 'diamond' → only score>=82, 'lock' → all 'high'
-                    if (mode === 'diamond' && !(quickScore.estimatedTier === 'high' && quickScore.score >= 70)) continue;
+                    if (mode === 'diamond' && !(quickScore.estimatedTier === 'high' && quickScore.score >= 82)) continue;
                     if (mode === 'lock' && quickScore.estimatedTier !== 'high') continue;
                     
                     // Only add if it has some potential
@@ -39026,18 +39018,15 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
             // ═══ TIER ASSIGNMENT — PRE-AI ONLY ═══
             // CRITICAL: Scanner NEVER assigns 'diamond' or 'lock' — those require AI synthesis
             // Scanner tiers indicate POTENTIAL only
-            // V49 FIX: Adjusted thresholds — without season stats loaded, max structural
-            // score is ~57, so old 65/82 thresholds were unreachable for most markets.
-            // New thresholds: 70+ = HIGH EDGE, 50+ = GOOD EDGE, 30+ = STREAK, <30 = MONITOR
-            if (score >= 70) {
+            if (score >= 82) {
                 estimatedTier = 'high';
                 signals.unshift('⚡ HIGH EDGE — AI synthesis needed for Lock/Diamond');
             }
-            else if (score >= 50) {
+            else if (score >= 65) {
                 estimatedTier = 'high';
                 signals.unshift('🟢 GOOD EDGE — potential Lock candidate');
             }
-            else if (score >= 30) {
+            else if (score >= 50) {
                 estimatedTier = 'streak';
                 signals.unshift('📊 MODERATE — potential Streak Safe');
             }
