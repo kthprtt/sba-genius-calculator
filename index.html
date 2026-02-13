@@ -29311,7 +29311,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             
             // Use the LINE that was passed in (from input field)
             // V50: For moneyline, line=0 is valid (win/lose threshold)
-            const isMoneylineBoth = intelData._isMoneyline || (currentMarket || '').toLowerCase() === 'moneyline';
+            const isMoneylineBoth = intelData._isMoneyline || (market || '').toLowerCase() === 'moneyline';
             const vegasLine = isMoneylineBoth ? 0 : (line || seasonAvg);
             
             // Update projection value
@@ -32718,7 +32718,12 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             
             narrative += '\n\n';
             if (blendMeta) {
-                narrative += `<strong>AI Blend:</strong> Cal <span class="stat">${blendMeta.calProb?.toFixed(1)}%</span> × ${(blendMeta.calWeight * 100).toFixed(0)}% + AI <span class="stat">${blendMeta.aiProb?.toFixed(1)}%</span> × ${(blendMeta.aiWeight * 100).toFixed(0)}% = <span class="stat">${blendMeta.blendedProb?.toFixed(1)}%</span>.\n\n`;
+                const _calP = parseFloat(blendMeta.calProb) || 0;
+                const _aiP = parseFloat(blendMeta.aiProb) || 0;
+                const _blP = parseFloat(blendMeta.blendedProb) || 0;
+                const _calW = parseFloat(blendMeta.calWeight) || 0;
+                const _aiW = parseFloat(blendMeta.aiWeight) || 0;
+                narrative += `<strong>AI Blend:</strong> Cal <span class="stat">${_calP.toFixed(1)}%</span> × ${(_calW * 100).toFixed(0)}% + AI <span class="stat">${_aiP.toFixed(1)}%</span> × ${(_aiW * 100).toFixed(0)}% = <span class="stat">${_blP.toFixed(1)}%</span>.\n\n`;
             }
             
             // V27: Unified Score Breakdown — compute research magnitude directly (not from stale DOM)
@@ -34723,13 +34728,15 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             const currentSport = state.sport?.toUpperCase() || 'NBA';
             let overProb, underProb;
             
+            let stdevInfo = { source: 'moneyline', stdev: 10, sampleSize: 0 };
+            let stdDev = 10;
             if (isMLPanel) {
                 // V50: For moneyline, sbaModel IS already a win probability
                 overProb = sbaModel; // e.g. 49.7% = win probability for selected team
                 underProb = 100 - sbaModel;
             } else {
-                const stdevInfo = getMarketStdev(currentMarket, currentSport, bookLine);
-                const stdDev = stdevInfo.stdev;
+                stdevInfo = getMarketStdev(currentMarket, currentSport, bookLine);
+                stdDev = stdevInfo.stdev;
                 const zScore = gap / stdDev;
                 // Use shared normalCDF (no local duplicate)
                 overProb = normalCDF(zScore) * 100;
