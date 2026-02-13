@@ -30575,6 +30575,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     console.log(`⚠️ Team stats fetch failed for ${teamName} (CORS/network): ${fetchErr.message} — trying team page`);
                     response = { ok: false, status: 0 };
                 }
+                console.log(`📊 Team stats response for ${teamName}: status=${response.status}, ok=${response.ok}`);
                 if (!response.ok) {
                     console.log(`⚠️ Team stats ${response.status || 'ERR'} for ${teamName} — trying team page fallback`);
                     
@@ -30655,6 +30656,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     return null;
                 }
                 const data = await response.json();
+                console.log(`📊 Team stats data keys for ${teamName}:`, Object.keys(data).join(', '));
                 
                 if (data.splits && data.splits.categories) {
                     const stats = {};
@@ -30665,20 +30667,73 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                         });
                     });
                     
-                    return {
-                        teamName,
-                        ppg: stats.avgPoints || stats.pts || 0,
-                        oppPpg: stats.avgPointsAgainst || 0,
-                        pace: stats.pace || 0,
-                        offRtg: stats.offensiveRating || 0,
-                        defRtg: stats.defensiveRating || 0,
-                        rebPerGame: stats.avgRebounds || stats.reb || 0,
-                        astPerGame: stats.avgAssists || stats.ast || 0,
-                        fgPct: stats.fgPct || 0,
-                        threePct: stats['3pPct'] || stats.threePtPct || 0,
-                        ftPct: stats.ftPct || 0,
-                        source: 'ESPN'
-                    };
+                    if (stats.avgPoints || stats.pts) {
+                        return {
+                            teamName,
+                            ppg: stats.avgPoints || stats.pts || 0,
+                            oppPpg: stats.avgPointsAgainst || 0,
+                            pace: stats.pace || 0,
+                            offRtg: stats.offensiveRating || 0,
+                            defRtg: stats.defensiveRating || 0,
+                            rebPerGame: stats.avgRebounds || stats.reb || 0,
+                            astPerGame: stats.avgAssists || stats.ast || 0,
+                            fgPct: stats.fgPct || 0,
+                            threePct: stats['3pPct'] || stats.threePtPct || 0,
+                            ftPct: stats.ftPct || 0,
+                            source: 'ESPN'
+                        };
+                    }
+                }
+                
+                // ESPN /statistics returned 200 but no usable data — try team page fallback
+                console.log(`⚠️ Team stats 200 but no splits data for ${teamName} — trying team page fallback`);
+                {
+                    const teamUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${teamId}`;
+                    try {
+                        const teamRes = await fetch(teamUrl);
+                        if (teamRes.ok) {
+                            const teamData = await teamRes.json();
+                            const team = teamData.team || teamData;
+                            console.log(`📊 ESPN team page keys for ${teamName}:`, Object.keys(team).join(', '));
+                            
+                            const recordItems = team.record?.items || [];
+                            console.log(`📊 Record items count: ${recordItems.length}`);
+                            if (recordItems.length > 0) {
+                                const firstItem = recordItems[0];
+                                console.log(`📊 First record keys:`, Object.keys(firstItem).join(', '));
+                                if (firstItem.stats) {
+                                    console.log(`📊 Record stats (${firstItem.stats.length}):`, firstItem.stats.slice(0, 8).map(s => `${s.name}=${s.value}`).join(', '));
+                                }
+                            }
+                            
+                            const record = recordItems[0]?.stats || [];
+                            const statMap = {};
+                            record.forEach(s => { statMap[s.name] = s.value; });
+                            
+                            const gp = statMap.gamesPlayed || statMap.GP || (statMap.wins || 0) + (statMap.losses || 0) || 1;
+                            const ppg = statMap.pointsFor ? statMap.pointsFor / gp 
+                                      : statMap.avgPointsFor || statMap.pointsPerGame || statMap.ppg || 0;
+                            const oppPpg = statMap.pointsAgainst ? statMap.pointsAgainst / gp 
+                                         : statMap.avgPointsAgainst || statMap.oppPointsPerGame || 0;
+                            
+                            const overallRecord = team.record?.items?.find(i => i.type === 'total' || i.description === 'Overall')?.summary || 
+                                                  recordItems[0]?.summary || '';
+                            console.log(`📊 Overall record: ${overallRecord}, Computed PPG: ${ppg.toFixed?.(1) || ppg}, OppPPG: ${oppPpg.toFixed?.(1) || oppPpg}`);
+                            
+                            if (ppg > 0) {
+                                console.log(`✅ ESPN team page stats for ${teamName}: ${ppg.toFixed(1)} PPG, ${oppPpg.toFixed(1)} OppPPG (${gp} games)`);
+                                return {
+                                    teamName, ppg: Math.round(ppg * 10) / 10, oppPpg: Math.round(oppPpg * 10) / 10,
+                                    pace: 0, offRtg: 0, defRtg: 0, rebPerGame: 0, astPerGame: 0,
+                                    fgPct: 0, threePct: 0, ftPct: 0,
+                                    wins: statMap.wins || 0, losses: statMap.losses || 0,
+                                    source: 'ESPN-TeamPage'
+                                };
+                            } else {
+                                console.log(`⚠️ Team page had no PPG data for ${teamName}, statMap keys: ${Object.keys(statMap).join(', ')}`);
+                            }
+                        }
+                    } catch(e2) { console.warn(`⚠️ Team page fallback failed for ${teamName}:`, e2.message); }
                 }
             } catch (e) {
                 console.error(`Team stats fetch error for ${teamName}:`, e);
