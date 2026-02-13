@@ -18056,7 +18056,10 @@ Return ONLY valid JSON:
                 let completedGames = _espnBoxScoreCache[schedCacheKey];
                 
                 if (!completedGames) {
-                    const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${teamESPNId}/schedule?season=2025`;
+                    // ESPN uses the END year of the season (2025-26 season = 2026)
+                    const now = new Date();
+                    const espnSeasonYear = now.getMonth() >= 9 ? now.getFullYear() + 1 : now.getFullYear(); // Oct+ = next year
+                    const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${teamESPNId}/schedule?season=${espnSeasonYear}`;
                     console.log(`📅 V49.5: Fetching schedule for team ${teamESPNId}...`);
                     const schedRes = await fetch(schedUrl);
                     if (!schedRes.ok) return null;
@@ -22507,7 +22510,7 @@ Return ONLY valid JSON:
                                     const sportPath = ESPN_SPORT_PATHS[state.sport];
                                     
                                     if (homeESPNId && sportPath) {
-                                        const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${homeESPNId}/schedule?season=2025`;
+                                        const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${homeESPNId}/schedule?season=${new Date().getMonth() >= 9 ? new Date().getFullYear() + 1 : new Date().getFullYear()}`;
                                         console.log(`🔍 V49.2 H2H: Checking ESPN schedule for ${selectedEvent.homeTeam?.shortDisplayName} (ID: ${homeESPNId})...`);
                                         const schedRes = await fetch(schedUrl);
                                         if (schedRes.ok) {
@@ -22814,7 +22817,7 @@ Return ONLY valid JSON:
                                     const awayESPNId = state.teamStats?.away?.espnId || await resolveESPNTeamId(selectedEvent.awayTeam?.shortDisplayName || '', state.sport);
                                     const sportPathH2H = ESPN_SPORT_PATHS[state.sport];
                                     if (homeESPNId && sportPathH2H) {
-                                        const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPathH2H}/teams/${homeESPNId}/schedule?season=2025`;
+                                        const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPathH2H}/teams/${homeESPNId}/schedule?season=${new Date().getMonth() >= 9 ? new Date().getFullYear() + 1 : new Date().getFullYear()}`;
                                         const schedRes = await fetch(schedUrl);
                                         if (schedRes.ok) {
                                             const schedData = await schedRes.json();
@@ -22902,7 +22905,7 @@ Return ONLY valid JSON:
                                 const awayESPNId = state.teamStats?.away?.espnId || await resolveESPNTeamId(selectedEvent.awayTeam?.shortDisplayName || '', state.sport);
                                 const sportPath = ESPN_SPORT_PATHS[state.sport];
                                 if (homeESPNId && sportPath) {
-                                    const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${homeESPNId}/schedule?season=2025`;
+                                    const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${homeESPNId}/schedule?season=${new Date().getMonth() >= 9 ? new Date().getFullYear() + 1 : new Date().getFullYear()}`;
                                     console.log(`🔍 V49.4 Player H2H: Checking ESPN schedule for team context...`);
                                     const schedRes = await fetch(schedUrl);
                                     if (schedRes.ok) {
