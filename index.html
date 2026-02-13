@@ -21005,21 +21005,26 @@ Return ONLY valid JSON:
                                 console.log(`📊 V26 Team Total (${playerName}): Season=${selTeam.ppg?.toFixed(1)}, L5=${intelData.l5Avg?.toFixed(1)}, Proj=${expPts.toFixed(1)}`);
                                 
                             } else if (mktCtx.analysisType === 'spread') {
-                                // Spread: use margin data
+                                // Spread: use margin data from selected team's perspective
+                                const selName = playerName?.toLowerCase() || '';
+                                const homeName = (selectedEvent.homeTeam?.shortDisplayName || '').toLowerCase();
+                                const isHomeSpread = selName.includes(homeName) || homeName.includes(selName);
+                                const spreadTeam = isHomeSpread ? m.teamA : m.teamB;
+                                
                                 intelData.seasonAvg = m.expectedMargin;
-                                if (m.teamA?.rolling?.margins?.l5) {
-                                    intelData.l5Avg = m.teamA.rolling.margins.l5.mean;
-                                    intelData.l10Avg = m.teamA.rolling.margins.l10.mean;
+                                if (spreadTeam?.rolling?.margins?.l5) {
+                                    intelData.l5Avg = spreadTeam.rolling.margins.l5.mean;
+                                    intelData.l10Avg = spreadTeam.rolling.margins.l10?.mean || spreadTeam.rolling.margins.l5.mean;
                                     intelData.rollingStats = {
-                                        l5: m.teamA.rolling.margins.l5,
-                                        l10: m.teamA.rolling.margins.l10,
-                                        full: m.teamA.rolling.margins.l10
+                                        l5: spreadTeam.rolling.margins.l5,
+                                        l10: spreadTeam.rolling.margins.l10 || spreadTeam.rolling.margins.l5,
+                                        full: spreadTeam.rolling.margins.l10 || spreadTeam.rolling.margins.l5
                                     };
                                 }
                                 if (m.h2h) {
                                     intelData.matchupHistory = { avg: m.h2h.avgMargin, games: m.h2h.games, statKey: 'margin' };
                                 }
-                                console.log(`📊 V26 Spread: ProjMargin=${m.expectedMargin.toFixed(1)}, L5Margin=${intelData.l5Avg?.toFixed(1)}`);
+                                console.log(`📊 V26 Spread (${isHomeSpread ? 'HOME' : 'AWAY'}): ProjMargin=${m.expectedMargin.toFixed(1)}, L5Margin=${intelData.l5Avg?.toFixed(1)}`);
                                 
                             } else if (mktCtx.analysisType === 'moneyline') {
                                 // Moneyline: use win probability proxy from margin
@@ -21252,10 +21257,10 @@ Return ONLY valid JSON:
             
             // V31: Data pipeline audit — log what populated and what's missing
             const pipelineCheck = {
-                seasonAvg: intelData.seasonAvg > 0,
-                l3Avg: intelData.l3Avg != null && intelData.l3Avg > 0,
-                l5Avg: intelData.l5Avg != null && intelData.l5Avg > 0,
-                l10Avg: intelData.l10Avg != null && intelData.l10Avg > 0,
+                seasonAvg: intelData.seasonAvg != null && intelData.seasonAvg !== 0,
+                l3Avg: intelData.l3Avg != null && intelData.l3Avg !== 0,
+                l5Avg: intelData.l5Avg != null && intelData.l5Avg !== 0,
+                l10Avg: intelData.l10Avg != null && intelData.l10Avg !== 0,
                 recentForm: !!(intelData.recentForm?.recentGames?.length > 0),
                 advancedStats: !!intelData.advancedStats,
                 matchupHistory: !!(intelData.matchupHistory?.games > 0),
