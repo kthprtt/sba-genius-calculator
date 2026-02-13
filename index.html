@@ -29239,7 +29239,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     projection: !!state.lastProjection,
                     sbaModel: !!(state.sbaModel?.edge),
                     h2hData: !!(state.h2hData?.games > 0),
-                    situational: !!(state.situationalH2H?.filters?.length > 0),
+                    situational: !!(state.situationalH2H?.filters?.length > 0 || state.lastProjection?.situationalSpots),
                     l5: !!(state.lastProjection?.l5Avg > 0),
                     l10: !!(state.lastProjection?.l10Avg > 0),
                     variance: !!(state.lastProjection?.dataQuality?.varianceCV),
