@@ -17041,8 +17041,8 @@ Return ONLY valid JSON:
                 const allEvents = [];
                 const now = new Date();
                 
-                // Fetch today + next 3 days (72+ hours)
-                for (let dayOffset = 0; dayOffset <= 3; dayOffset++) {
+                // Fetch today + next 5 days (120+ hours)
+                for (let dayOffset = 0; dayOffset <= 5; dayOffset++) {
                     const targetDate = new Date(now);
                     targetDate.setDate(targetDate.getDate() + dayOffset);
                     // V31 FIX: Use LOCAL date, not UTC — toISOString() would shift days after 7pm ET
@@ -17117,7 +17117,7 @@ Return ONLY valid JSON:
                         return a.date - b.date;
                     });
                 
-                console.log(`📊 Total: ${upcomingEvents.length} games (today + next 3 days)`);
+                console.log(`📊 Total: ${upcomingEvents.length} games (today + next 5 days)`);
                 return upcomingEvents;
                 
             } catch (e) {
