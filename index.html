@@ -23084,7 +23084,7 @@ Return ONLY valid JSON:
             // When player has BDL season stats but no game logs, populate pipeline from season averages
             // Check pipeline completeness - if fewer than 8/17 sources loaded, we need to fill gaps
             const pipelineSources = ['seasonAvg','l3Avg','l5Avg','l10Avg','recentForm','advancedStats','matchupHistory','homeAwaySplit','paceData','defensiveMatchup','shootingRange','clutchStats','opponentProfile','v2Advanced','halfBreakdown','situationalSpots','styleMatchup'];
-            const loadedPipelineCount = pipelineSources.filter(k => intelData[k] != null && intelData[k] !== 0).length;
+            const loadedPipelineCount = pipelineSources.filter(k => intelData[k] != null && (typeof intelData[k] === 'number' ? true : intelData[k] !== 0)).length;
             console.log(`📊 V49.3 CHECK: isTeamGameMarket=${isTeamGameMarket}, seasonAvg=${intelData.seasonAvg}, pipeline=${loadedPipelineCount}/17, playerName=${playerName}, playerData?.pts=${playerData?.pts}, playerData?.name=${playerData?.name}`);
             
             // V49.5: Try ESPN Gamelog for REAL per-game data (NCAAB and other non-NBA sports)
