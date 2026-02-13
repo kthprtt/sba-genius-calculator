@@ -18008,112 +18008,171 @@ Return ONLY valid JSON:
             return null;
         }
         
-        // V49.5: ESPN Player Gamelog — fetches per-game stats for NCAAB and other sports
-        // Endpoint: site.web.api.espn.com/apis/common/v3/sports/basketball/mens-college-basketball/athletes/{ID}/gamelog
-        // Returns: per-game pts, reb, ast, etc. for every game this season
-        const _espnGamelogCache = {};
-        async function fetchESPNPlayerGamelog(espnPlayerId, sport = 'ncaab') {
-            if (!espnPlayerId) return null;
-            const cacheKey = `${sport}_${espnPlayerId}`;
-            if (_espnGamelogCache[cacheKey]) return _espnGamelogCache[cacheKey];
+        // V49.5: ESPN Box Score Pipeline — fetches real per-game stats from game summaries
+        // Uses team schedule (already fetched) + /summary?event={gameId} for player box scores
+        // Works for ALL Division I NCAAB players (not dependent on BDL or gamelog endpoint)
+        const _espnBoxScoreCache = {};  // Cache per team schedule
+        const _espnPlayerGameCache = {}; // Cache per player
+        
+        async function fetchESPNPlayerGamelog(espnPlayerId, sport = 'ncaab', playerName = '', teamESPNId = null) {
+            if (!espnPlayerId && !playerName) return null;
+            const cacheKey = `${sport}_${espnPlayerId || playerName}`;
+            if (_espnPlayerGameCache[cacheKey]) return _espnPlayerGameCache[cacheKey];
             
             const sportPaths = {
                 'ncaab': 'basketball/mens-college-basketball',
                 'basketball_ncaab': 'basketball/mens-college-basketball',
                 'nba': 'basketball/nba',
-                'wnba': 'basketball/wnba',
-                'nfl': 'football/nfl',
-                'nhl': 'hockey/nhl'
+                'wnba': 'basketball/wnba'
             };
             const sportPath = sportPaths[sport];
             if (!sportPath) return null;
             
-            try {
-                const url = `https://site.web.api.espn.com/apis/common/v3/sports/${sportPath}/athletes/${espnPlayerId}/gamelog`;
-                console.log(`📊 V49.5 ESPN Gamelog: Fetching for player ${espnPlayerId}...`);
-                const res = await fetch(url);
-                if (!res.ok) {
-                    console.log(`⚠️ V49.5 ESPN Gamelog: HTTP ${res.status} for ${espnPlayerId}`);
-                    return null;
-                }
-                const data = await res.json();
-                
-                // Parse gamelog structure: data.seasonTypes[].categories[].events[]
-                // Each event has stats array matching the labels array
-                const games = [];
-                const seasonTypes = data.seasonTypes || [];
-                
-                for (const st of seasonTypes) {
-                    const categories = st.categories || [];
-                    // Find the main stats category (usually index 0 for basketball)
-                    const mainCat = categories.find(c => c.name === 'total' || c.type === 'total') || categories[0];
-                    if (!mainCat) continue;
-                    
-                    // Get stat labels (column headers like PTS, REB, AST)
-                    const labels = (mainCat.labels || []).map(l => (l || '').toLowerCase());
-                    const events = mainCat.events || [];
-                    
-                    for (const evt of events) {
-                        const stats = evt.stats || [];
-                        if (stats.length === 0) continue;
-                        
-                        const gameStats = {};
-                        labels.forEach((label, i) => {
-                            const val = parseFloat(stats[i]) || 0;
-                            gameStats[label] = val;
-                        });
-                        
-                        // Map common stat names
-                        const game = {
-                            gameId: evt.eventId || evt.id || null,
-                            date: evt.gameDate || evt.date || null,
-                            opponent: evt.opponent?.displayName || evt.opponent?.abbreviation || null,
-                            homeAway: evt.homeAway || null,
-                            result: evt.gameResult || null,
-                            pts: gameStats.pts || gameStats.points || 0,
-                            reb: gameStats.reb || gameStats.rebounds || 0,
-                            ast: gameStats.ast || gameStats.assists || 0,
-                            stl: gameStats.stl || gameStats.steals || 0,
-                            blk: gameStats.blk || gameStats.blocks || 0,
-                            to: gameStats.to || gameStats.turnovers || 0,
-                            fg3m: gameStats['3pm'] || gameStats['fg3m'] || gameStats.threepointersmade || 0,
-                            min: gameStats.min || gameStats.minutes || 0,
-                            fgm: gameStats.fgm || 0,
-                            fga: gameStats.fga || 0,
-                            ftm: gameStats.ftm || 0,
-                            fta: gameStats.fta || 0,
-                            pra: (gameStats.pts || 0) + (gameStats.reb || 0) + (gameStats.ast || 0),
-                            pr: (gameStats.pts || 0) + (gameStats.reb || 0),
-                            pa: (gameStats.pts || 0) + (gameStats.ast || 0),
-                            ra: (gameStats.reb || 0) + (gameStats.ast || 0)
-                        };
-                        if (game.pts > 0 || game.reb > 0 || game.min > 0) games.push(game);
+            // Step 1: Resolve team ESPN ID if not provided
+            if (!teamESPNId) {
+                const playerObj = state.cachedPlayers?.find(p => 
+                    String(p.id) === String(espnPlayerId) || p.name === playerName
+                );
+                if (playerObj?.team) {
+                    const teamName = playerObj.team;
+                    const homeTeamName = (state.selectedEvent?.homeTeam?.shortDisplayName || '').toLowerCase();
+                    const awayTeamName = (state.selectedEvent?.awayTeam?.shortDisplayName || '').toLowerCase();
+                    if (teamName.toLowerCase().includes(homeTeamName) || homeTeamName.includes(teamName.toLowerCase())) {
+                        teamESPNId = state.teamStats?.home?.espnId;
+                    } else {
+                        teamESPNId = state.teamStats?.away?.espnId;
                     }
+                    if (!teamESPNId) teamESPNId = await resolveESPNTeamId(teamName, sport);
+                }
+            }
+            if (!teamESPNId) {
+                console.log(`⚠️ V49.5: Cannot resolve team for ${playerName || espnPlayerId}`);
+                return null;
+            }
+            
+            try {
+                // Step 2: Get team schedule (cached per team)
+                const schedCacheKey = `${sport}_${teamESPNId}`;
+                let completedGames = _espnBoxScoreCache[schedCacheKey];
+                
+                if (!completedGames) {
+                    const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${teamESPNId}/schedule?season=2025`;
+                    console.log(`📅 V49.5: Fetching schedule for team ${teamESPNId}...`);
+                    const schedRes = await fetch(schedUrl);
+                    if (!schedRes.ok) return null;
+                    const schedData = await schedRes.json();
+                    completedGames = (schedData.events || [])
+                        .filter(e => e.competitions?.[0]?.status?.type?.completed)
+                        .map(e => ({
+                            id: e.id,
+                            date: e.date,
+                            homeAway: (e.competitions?.[0]?.competitors || []).find(c => 
+                                String(c.id) === String(teamESPNId))?.homeAway || 'unknown',
+                            opponents: (e.competitions?.[0]?.competitors || [])
+                                .filter(c => String(c.id) !== String(teamESPNId))
+                                .map(c => c.team?.abbreviation || c.team?.shortDisplayName || 'UNK')
+                        }))
+                        .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+                    _espnBoxScoreCache[schedCacheKey] = completedGames;
+                    console.log(`📅 V49.5: ${completedGames.length} completed games for team ${teamESPNId}`);
+                }
+                
+                if (!completedGames || completedGames.length === 0) return null;
+                
+                // Step 3: Fetch box scores for last 10 games
+                const gamesToFetch = completedGames.slice(0, Math.min(10, completedGames.length));
+                const games = [];
+                const nameMatch = (playerName || '').toLowerCase().trim();
+                const pidMatch = String(espnPlayerId || '');
+                
+                console.log(`📊 V49.5: Fetching ${gamesToFetch.length} box scores for ${playerName || espnPlayerId}...`);
+                
+                for (let i = 0; i < gamesToFetch.length; i += 3) {
+                    const batch = gamesToFetch.slice(i, i + 3);
+                    const batchResults = await Promise.all(batch.map(async (game) => {
+                        try {
+                            const summaryUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/summary?event=${game.id}`;
+                            const res = await fetch(summaryUrl);
+                            if (!res.ok) return null;
+                            const data = await res.json();
+                            const boxScore = data.boxscore;
+                            if (!boxScore?.players) return null;
+                            
+                            for (const teamBox of boxScore.players) {
+                                for (const statGroup of (teamBox.statistics || [])) {
+                                    const labels = (statGroup.labels || []).map(l => l.toLowerCase());
+                                    for (const athlete of (statGroup.athletes || [])) {
+                                        const aName = (athlete.athlete?.displayName || athlete.athlete?.shortName || '').toLowerCase();
+                                        const aId = String(athlete.athlete?.id || '');
+                                        
+                                        if ((pidMatch && aId === pidMatch) || 
+                                            (nameMatch && (aName === nameMatch || aName.includes(nameMatch) || nameMatch.includes(aName)))) {
+                                            
+                                            const stats = athlete.stats || [];
+                                            const statMap = {};
+                                            labels.forEach((label, idx) => {
+                                                const raw = stats[idx];
+                                                if (typeof raw === 'string' && raw.includes('-')) {
+                                                    const [made, attempted] = raw.split('-').map(Number);
+                                                    statMap[label + 'm'] = made || 0;
+                                                    statMap[label + 'a'] = attempted || 0;
+                                                    statMap[label] = attempted > 0 ? (made / attempted * 100) : 0;
+                                                } else {
+                                                    statMap[label] = parseFloat(raw) || 0;
+                                                }
+                                            });
+                                            
+                                            const opp = game.opponents?.[0] || 'UNK';
+                                            let gameResult = null;
+                                            try {
+                                                const header = data.header?.competitions?.[0];
+                                                if (header) {
+                                                    const tc = header.competitors?.find(c => String(c.id) === String(teamESPNId));
+                                                    if (tc) {
+                                                        const s1 = parseInt(tc.score) || 0;
+                                                        const s2 = parseInt(header.competitors?.find(c => String(c.id) !== String(teamESPNId))?.score) || 0;
+                                                        gameResult = `${tc.winner ? 'W' : 'L'} ${Math.abs(s1 - s2)}`;
+                                                    }
+                                                }
+                                            } catch(e) {}
+                                            
+                                            return {
+                                                gameId: game.id, date: game.date, opponent: opp, homeAway: game.homeAway, result: gameResult,
+                                                pts: statMap.pts || statMap.points || 0, reb: statMap.reb || statMap.rebounds || 0,
+                                                ast: statMap.ast || statMap.assists || 0, stl: statMap.stl || statMap.steals || 0,
+                                                blk: statMap.blk || statMap.blocks || 0, to: statMap.to || statMap.turnovers || 0,
+                                                min: statMap.min || statMap.minutes || 0,
+                                                fg3m: statMap['3ptm'] || statMap['fg3m'] || 0, fg3a: statMap['3pta'] || statMap['fg3a'] || 0,
+                                                fgm: statMap.fgm || 0, fga: statMap.fga || 0, ftm: statMap.ftm || 0, fta: statMap.fta || 0,
+                                                pra: (statMap.pts||0) + (statMap.reb||0) + (statMap.ast||0),
+                                                pr: (statMap.pts||0) + (statMap.reb||0), pa: (statMap.pts||0) + (statMap.ast||0), ra: (statMap.reb||0) + (statMap.ast||0)
+                                            };
+                                        }
+                                    }
+                                }
+                            }
+                            return null;
+                        } catch (e) { return null; }
+                    }));
+                    for (const g of batchResults) { if (g && (g.pts > 0 || g.reb > 0 || g.min > 0)) games.push(g); }
+                    if (i + 3 < gamesToFetch.length) await new Promise(r => setTimeout(r, 100));
                 }
                 
                 if (games.length === 0) {
-                    console.log(`⚠️ V49.5 ESPN Gamelog: No games found for ${espnPlayerId}`);
+                    console.log(`⚠️ V49.5: No box score data found for ${playerName || espnPlayerId} in ${gamesToFetch.length} games`);
                     return null;
                 }
                 
-                // Sort by date descending (most recent first)
                 games.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-                
-                // Compute rolling averages
                 const computeAvg = (arr, key, n) => {
                     const slice = arr.slice(0, n).filter(g => g[key] != null);
                     return slice.length > 0 ? slice.reduce((s, g) => s + g[key], 0) / slice.length : 0;
                 };
                 
-                const statKeys = ['pts', 'reb', 'ast', 'stl', 'blk', 'to', 'fg3m', 'min', 'pra', 'pr', 'pa', 'ra', 'fgm', 'fga', 'ftm', 'fta'];
-                const result = {
-                    games: games,
-                    gamesPlayed: games.length,
-                    season: {}, l3: {}, l5: {}, l10: {},
-                    homeGames: games.filter(g => g.homeAway === 'home' || g.homeAway === 'H'),
-                    awayGames: games.filter(g => g.homeAway === 'away' || g.homeAway === 'A'),
-                    source: 'ESPN_GAMELOG'
-                };
+                const statKeys = ['pts','reb','ast','stl','blk','to','fg3m','min','pra','pr','pa','ra','fgm','fga','ftm','fta'];
+                const result = { games, gamesPlayed: games.length, season: {}, l3: {}, l5: {}, l10: {},
+                    homeGames: games.filter(g => g.homeAway === 'home'), awayGames: games.filter(g => g.homeAway === 'away'),
+                    source: 'ESPN_BOX_SCORES' };
                 
                 for (const key of statKeys) {
                     result.season[key] = computeAvg(games, key, games.length);
@@ -18121,37 +18180,35 @@ Return ONLY valid JSON:
                     result.l5[key] = computeAvg(games, key, 5);
                     result.l10[key] = computeAvg(games, key, 10);
                 }
-                
-                // Home/away splits
-                result.homeSplits = {};
-                result.awaySplits = {};
+                result.homeSplits = {}; result.awaySplits = {};
                 for (const key of statKeys) {
                     result.homeSplits[key] = result.homeGames.length > 0 ? computeAvg(result.homeGames, key, result.homeGames.length) : result.season[key];
                     result.awaySplits[key] = result.awayGames.length > 0 ? computeAvg(result.awayGames, key, result.awayGames.length) : result.season[key];
                 }
-                
-                // Variance for each stat
                 result.variance = {};
                 for (const key of statKeys) {
                     const vals = games.map(g => g[key]).filter(v => v != null);
                     if (vals.length >= 3) {
                         const mean = vals.reduce((s, v) => s + v, 0) / vals.length;
-                        const variance = vals.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / vals.length;
-                        result.variance[key] = { stdDev: Math.sqrt(variance), cv: mean > 0 ? (Math.sqrt(variance) / mean * 100) : 0, mean };
+                        const vari = vals.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / vals.length;
+                        result.variance[key] = { stdDev: Math.sqrt(vari), cv: mean > 0 ? (Math.sqrt(vari) / mean * 100) : 0, mean };
                     }
                 }
+                result.clutchGames = games.filter(g => { if (!g.result) return false; const m = parseInt((g.result.match(/\d+/)||['99'])[0])||99; return m <= 5; });
                 
-                console.log(`✅ V49.5 ESPN Gamelog: ${games.length} games loaded for ${espnPlayerId} | Season: ${result.season.pts?.toFixed(1)} PPG, ${result.season.reb?.toFixed(1)} RPG, ${result.season.ast?.toFixed(1)} APG`);
-                console.log(`   L3: ${result.l3.pts?.toFixed(1)} | L5: ${result.l5.pts?.toFixed(1)} | L10: ${result.l10.pts?.toFixed(1)} | Home: ${result.homeSplits.pts?.toFixed(1)} | Away: ${result.awaySplits.pts?.toFixed(1)}`);
+                console.log(`✅ V49.5 ESPN Box Scores: ${games.length} games for ${playerName || espnPlayerId}`);
+                console.log(`   📊 Season: ${result.season.pts?.toFixed(1)} PPG, ${result.season.reb?.toFixed(1)} RPG, ${result.season.ast?.toFixed(1)} APG`);
+                console.log(`   📊 L3: ${result.l3.pts?.toFixed(1)} | L5: ${result.l5.pts?.toFixed(1)} | L10: ${result.l10.pts?.toFixed(1)}`);
+                console.log(`   📊 Home: ${result.homeSplits.pts?.toFixed(1)} (${result.homeGames.length}g) | Away: ${result.awaySplits.pts?.toFixed(1)} (${result.awayGames.length}g)`);
+                if (result.variance.pts) console.log(`   📊 Variance: StdDev=${result.variance.pts.stdDev.toFixed(1)}, CV=${result.variance.pts.cv.toFixed(1)}%`);
                 
-                _espnGamelogCache[cacheKey] = result;
+                _espnPlayerGameCache[cacheKey] = result;
                 return result;
             } catch (e) {
-                console.log(`⚠️ V49.5 ESPN Gamelog error: ${e.message}`);
+                console.log(`⚠️ V49.5 ESPN Box Score error: ${e.message}`);
                 return null;
             }
         }
-        
         // Fetch player stats from ESPN scoreboard (includes season averages)
         async function fetchGamePlayersWithStats(eventId) {
             try {
@@ -22577,9 +22634,9 @@ Return ONLY valid JSON:
             // V49.5: Try ESPN Gamelog for REAL per-game data (NCAAB and other non-NBA sports)
             // This replaces all synthetic data with actual game-by-game stats
             let espnGamelogUsed = false;
-            if (!isTeamGameMarket && loadedPipelineCount < 8 && (playerData?.espnId || playerData?.id)) {
-                const espnIdForGamelog = playerData.espnId || playerData.id;
-                const gamelog = await fetchESPNPlayerGamelog(espnIdForGamelog, state.sport);
+            if (!isTeamGameMarket && loadedPipelineCount < 8) {
+                const espnIdForGamelog = playerData?.espnId || playerData?.id || null;
+                const gamelog = await fetchESPNPlayerGamelog(espnIdForGamelog, state.sport, playerName);
                 if (gamelog && gamelog.gamesPlayed >= 3) {
                     const statKey = mktCtx.statKey || 'pts';
                     // Map market statKey to gamelog key
@@ -22662,11 +22719,15 @@ Return ONLY valid JSON:
                         
                         // REAL half breakdown estimated from scoring distribution 
                         if (!intelData.halfBreakdown || intelData.halfBreakdown.source === 'ESTIMATED') {
-                            // Use L5 vs L10 trend as proxy for 1H/2H split
-                            const trendRatio = l10Val > 0 ? l5Val / l10Val : 1;
-                            const firstHalf = seasonVal * 0.48; // Slightly less than half (fatigue effect)
-                            const secondHalf = seasonVal * 0.52;
-                            intelData.halfBreakdown = { firstHalf, secondHalf, trendRatio, source: 'ESPN_GAMELOG_EST' };
+                            // Use real half data from box scores if available
+                            if (gamelog.halfBreakdown && gamelog.halfBreakdown.source === 'ESPN_LINESCORES') {
+                                intelData.halfBreakdown = gamelog.halfBreakdown;
+                            } else {
+                                const trendRatio = l10Val > 0 ? l5Val / l10Val : 1;
+                                const firstHalf = seasonVal * 0.48;
+                                const secondHalf = seasonVal * 0.52;
+                                intelData.halfBreakdown = { firstHalf, secondHalf, trendRatio, source: 'ESPN_BOX_EST' };
+                            }
                         }
                         
                         // Clutch: use games decided by <=5 points
