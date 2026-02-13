@@ -18185,9 +18185,9 @@ Return ONLY valid JSON:
                             const pFirstLower = p.first_name.toLowerCase();
                             const pFullName = `${p.first_name} ${p.last_name}`.toLowerCase();
                             
-                            // Check all first name variants
+                            // Check all first name variants — MUST also match last name
                             for (const variant of firstNameVariants) {
-                                if (pFirstLower === variant.toLowerCase()) return true;
+                                if (pFirstLower === variant.toLowerCase() && p.last_name.toLowerCase() === lastName.toLowerCase()) return true;
                             }
                             
                             // Check full name match
@@ -18267,33 +18267,39 @@ Return ONLY valid JSON:
                                 
                                 console.log(`✅ BDL: Got ${seasonYear} stats for ${playerName}:`, s);
                                 
+                                // V49: NCAAB player_season_stats returns TOTALS, not averages
+                                // Must divide by games_played to get per-game averages
+                                const gp = s.games_played || s.gp || 1;
+                                const isNCAAB = sport === 'ncaab';
+                                const divider = isNCAAB ? gp : 1; // NBA season_averages are already per-game
+                                
                                 // Parse stats from the response - INCLUDE bdlId for advanced stats fetch
                                 // V24: Full box score coverage — all BDL season average attributes
                                 return {
                                     bdlId: playerId,
-                                    pts: s.pts || 0,
-                                    reb: s.reb || 0,
-                                    ast: s.ast || 0,
-                                    stl: s.stl || 0,
-                                    blk: s.blk || 0,
-                                    to: s.tov || s.turnover || 0,
-                                    threes: s.fg3m || 0,
-                                    min: parseFloat(s.min) || 0,
-                                    gamesPlayed: s.gp || s.games_played || 0,
+                                    pts: Math.round(((s.pts || 0) / divider) * 10) / 10,
+                                    reb: Math.round(((s.reb || 0) / divider) * 10) / 10,
+                                    ast: Math.round(((s.ast || 0) / divider) * 10) / 10,
+                                    stl: Math.round(((s.stl || 0) / divider) * 10) / 10,
+                                    blk: Math.round(((s.blk || 0) / divider) * 10) / 10,
+                                    to: Math.round((((s.tov || s.turnover || 0)) / divider) * 10) / 10,
+                                    threes: Math.round(((s.fg3m || 0) / divider) * 10) / 10,
+                                    min: Math.round((parseFloat(s.min) || 0) * 10) / 10,
+                                    gamesPlayed: gp,
                                     // V24: Shooting splits (volume + efficiency)
-                                    fgm: s.fgm || 0,
-                                    fga: s.fga || 0,
-                                    fgPct: s.fg_pct || 0,
-                                    fg3m: s.fg3m || 0,
-                                    fg3a: s.fg3a || 0,
-                                    fg3Pct: s.fg3_pct || 0,
-                                    ftm: s.ftm || 0,
-                                    fta: s.fta || 0,
-                                    ftPct: s.ft_pct || 0,
+                                    fgm: Math.round(((s.fgm || 0) / divider) * 10) / 10,
+                                    fga: Math.round(((s.fga || 0) / divider) * 10) / 10,
+                                    fgPct: s.fg_pct || (s.fga > 0 ? Math.round(((s.fgm || 0) / s.fga) * 1000) / 10 : 0),
+                                    fg3m: Math.round(((s.fg3m || 0) / divider) * 10) / 10,
+                                    fg3a: Math.round(((s.fg3a || 0) / divider) * 10) / 10,
+                                    fg3Pct: s.fg3_pct || (s.fg3a > 0 ? Math.round(((s.fg3m || 0) / s.fg3a) * 1000) / 10 : 0),
+                                    ftm: Math.round(((s.ftm || 0) / divider) * 10) / 10,
+                                    fta: Math.round(((s.fta || 0) / divider) * 10) / 10,
+                                    ftPct: s.ft_pct || (s.fta > 0 ? Math.round(((s.ftm || 0) / s.fta) * 1000) / 10 : 0),
                                     // V24: Rebound splits + extra stats
-                                    oreb: s.oreb || 0,
-                                    dreb: s.dreb || 0,
-                                    pf: s.pf || 0,
+                                    oreb: Math.round(((s.oreb || 0) / divider) * 10) / 10,
+                                    dreb: Math.round(((s.dreb || 0) / divider) * 10) / 10,
+                                    pf: Math.round(((s.pf || 0) / divider) * 10) / 10,
                                     plusMinus: s.plus_minus || 0,
                                     season: seasonYear,
                                     source: 'BallDontLie',
@@ -30470,14 +30476,41 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
         
         // Fetch team statistics from ESPN
         async function fetchTeamStats(teamName) {
-            const teamId = ESPN_TEAM_IDS[teamName];
+            // V49: Use dynamic ESPN team directory first (works for all sports including NCAAB)
+            const sport = state?.sport || 'nba';
+            let teamId = ESPN_TEAM_IDS[teamName]; // Try hardcoded NBA IDs first
+            
+            if (!teamId) {
+                // Try dynamic ESPN team directory
+                teamId = await getESPNTeamId(teamName, sport);
+            }
+            
             if (!teamId) return null;
             
             try {
-                const url = `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/${teamId}/statistics`;
-                console.log(`📡 Fetching team stats for ${teamName}...`);
+                // Determine correct sport path
+                const sportPaths = {
+                    'nba': 'basketball/nba',
+                    'ncaab': 'basketball/mens-college-basketball',
+                    'nhl': 'hockey/nhl',
+                    'nfl': 'football/nfl',
+                    'mlb': 'baseball/mlb',
+                    'wnba': 'basketball/wnba',
+                    'ncaaf': 'football/college-football',
+                    'basketball_ncaab': 'basketball/mens-college-basketball',
+                    'basketball_nba': 'basketball/nba',
+                    'icehockey_nhl': 'hockey/nhl'
+                };
+                const sportPath = sportPaths[sport] || 'basketball/nba';
+                
+                const url = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${teamId}/statistics`;
+                console.log(`📡 Fetching team stats for ${teamName} (${sport}, ID: ${teamId})...`);
                 
                 const response = await fetch(url);
+                if (!response.ok) {
+                    console.log(`⚠️ Team stats ${response.status} for ${teamName}`);
+                    return null;
+                }
                 const data = await response.json();
                 
                 if (data.splits && data.splits.categories) {
