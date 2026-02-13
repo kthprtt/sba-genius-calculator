@@ -21030,7 +21030,28 @@ Return ONLY valid JSON:
                                 // Moneyline: use win probability proxy from margin
                                 intelData.seasonAvg = m.expectedMargin > 0 ? 55 + m.expectedMargin * 2 : 45 + m.expectedMargin * 2;
                                 intelData.seasonAvg = Math.max(20, Math.min(80, intelData.seasonAvg));
-                                console.log(`📊 V26 Moneyline: ProjMargin=${m.expectedMargin.toFixed(1)}, WinProxy=${intelData.seasonAvg.toFixed(1)}%`);
+                                // V49.1: Populate rolling stats for moneyline (use margin data like spread)
+                                const selNameML = playerName?.toLowerCase() || '';
+                                const homeNameML = (selectedEvent.homeTeam?.shortDisplayName || '').toLowerCase();
+                                const isHomeML = selNameML.includes(homeNameML) || homeNameML.includes(selNameML);
+                                const mlTeam = isHomeML ? m.teamA : m.teamB;
+                                if (mlTeam?.rolling?.margins?.l5) {
+                                    // Convert margin to win proxy scale for consistency
+                                    intelData.l5Avg = mlTeam.rolling.margins.l5.mean > 0 ? 55 + mlTeam.rolling.margins.l5.mean * 2 : 45 + mlTeam.rolling.margins.l5.mean * 2;
+                                    intelData.l5Avg = Math.max(20, Math.min(80, intelData.l5Avg));
+                                    const l10margin = mlTeam.rolling.margins.l10?.mean || mlTeam.rolling.margins.l5.mean;
+                                    intelData.l10Avg = l10margin > 0 ? 55 + l10margin * 2 : 45 + l10margin * 2;
+                                    intelData.l10Avg = Math.max(20, Math.min(80, intelData.l10Avg));
+                                    intelData.rollingStats = {
+                                        l5: mlTeam.rolling.margins.l5,
+                                        l10: mlTeam.rolling.margins.l10 || mlTeam.rolling.margins.l5,
+                                        full: mlTeam.rolling.margins.l10 || mlTeam.rolling.margins.l5
+                                    };
+                                }
+                                if (m.h2h) {
+                                    intelData.matchupHistory = { avg: m.h2h.avgMargin, games: m.h2h.games, statKey: 'margin' };
+                                }
+                                console.log(`📊 V26 Moneyline (${isHomeML ? 'HOME' : 'AWAY'}): ProjMargin=${m.expectedMargin.toFixed(1)}, WinProxy=${intelData.seasonAvg.toFixed(1)}%, L5=${intelData.l5Avg?.toFixed(1)}`);
                             }
                             
                             // Enrich contextData with team intelligence
