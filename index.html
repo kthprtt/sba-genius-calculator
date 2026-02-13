@@ -36203,6 +36203,9 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             const scanMode = scannerState.scanMode || 'all';
             const liveFilter = document.getElementById('scanner-live-filter')?.value || 'all';
             
+            // V50 DEBUG: Track filter reasons
+            const filterReasons = { live: 0, scanMode: 0, viewMode: 0, tier: 0, minEdge: 0, book: 0, myBooks: 0, hidden: 0, passed: 0 };
+            
             let filtered = results.filter(r => {
                 const isArb = r.arbPct && r.arbPct > 0;
                 const isQuality = r.estimatedTier === 'high' || r.score >= 65;
@@ -36210,33 +36213,33 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 // Live vs Pre-game filter
                 if (liveFilter === 'pregame') {
                     const commence = r.commenceTime ? new Date(r.commenceTime) : null;
-                    if (commence && commence <= new Date()) return false;
+                    if (commence && commence <= new Date()) { filterReasons.live++; return false; }
                 }
                 if (liveFilter === 'live') {
                     const commence = r.commenceTime ? new Date(r.commenceTime) : null;
-                    if (!commence || commence > new Date()) return false;
+                    if (!commence || commence > new Date()) { filterReasons.live++; return false; }
                 }
                 
                 // Scanner mode filter — V48: "diamond" mode = highest edge, "lock" = high edge+
-                if (scanMode === 'diamond' && r.score < 82) return false;
-                if (scanMode === 'lock' && r.score < 65) return false;
+                if (scanMode === 'diamond' && r.score < 82) { filterReasons.scanMode++; return false; }
+                if (scanMode === 'lock' && r.score < 65) { filterReasons.scanMode++; return false; }
                 
                 // View mode filter
-                if (viewMode === 'quality' && !isQuality) return false;
-                if (viewMode === 'arbs' && !isArb) return false;
+                if (viewMode === 'quality' && !isQuality) { filterReasons.viewMode++; return false; }
+                if (viewMode === 'arbs' && !isArb) { filterReasons.viewMode++; return false; }
                 
                 // Individual tier checkboxes
                 if (viewMode === 'all' && scanMode === 'all') {
-                    if (r.estimatedTier === 'high' && !f.showDiamonds && !f.showLocks && !f.showHigh) return false;
-                    if (r.estimatedTier === 'streak' && !f.showStreak) return false;
-                    if (r.estimatedTier === 'none' && !f.showMonitor) return false;
-                    if (isArb && !f.showArbs) return false;
+                    if (r.estimatedTier === 'high' && !f.showDiamonds && !f.showLocks && !f.showHigh) { filterReasons.tier++; return false; }
+                    if (r.estimatedTier === 'streak' && !f.showStreak) { filterReasons.tier++; return false; }
+                    if (r.estimatedTier === 'none' && !f.showMonitor) { filterReasons.tier++; return false; }
+                    if (isArb && !f.showArbs) { filterReasons.tier++; return false; }
                 }
                 
                 // Check minimum edge
                 if (f.minEdge > 0) {
                     const edge = r.arbPct || r.edgePct || 0;
-                    if (edge < f.minEdge) return false;
+                    if (edge < f.minEdge) { filterReasons.minEdge++; return false; }
                 }
                 
                 // Check sportsbook filter
@@ -36247,7 +36250,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                         bp.bookTitle?.toLowerCase().includes(bookKey) ||
                         bp.bookKey?.toLowerCase() === bookKey
                     );
-                    if (!hasBook) return false;
+                    if (!hasBook) { filterReasons.book++; return false; }
                 }
                 
                 // Check My Books — for arbs, BOTH books must be in My Books
@@ -36259,14 +36262,25 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                             enabled && k.includes(mk)
                         );
                     };
-                    if (!matchesMyBook(r.bestOverBookKey) || !matchesMyBook(r.bestUnderBookKey)) return false;
+                    if (!matchesMyBook(r.bestOverBookKey) || !matchesMyBook(r.bestUnderBookKey)) { filterReasons.myBooks++; return false; }
                 }
                 
                 // Check hidden
-                if (f.hiddenIds.has(r.id || `${r.player}_${r.market}_${r.line}`)) return false;
+                if (f.hiddenIds.has(r.id || `${r.player}_${r.market}_${r.line}`)) { filterReasons.hidden++; return false; }
                 
+                filterReasons.passed++;
                 return true;
             });
+            
+            // V50 DEBUG: Log filter reasons
+            console.log(`💎 Filter debug: ${results.length} input → ${filtered.length} output | Reasons:`, JSON.stringify(filterReasons));
+            console.log(`   Modes: viewMode=${viewMode}, scanMode=${scanMode}, liveFilter=${liveFilter}`);
+            console.log(`   Filters: showD=${f.showDiamonds}, showL=${f.showLocks}, showH=${f.showHigh}, showS=${f.showStreak}, showM=${f.showMonitor}, showA=${f.showArbs}, minEdge=${f.minEdge}, bookFilter=${f.bookFilter}`);
+            if (results.length > 0) {
+                const tiers = {};
+                results.forEach(r => { tiers[r.estimatedTier || 'undefined'] = (tiers[r.estimatedTier || 'undefined'] || 0) + 1; });
+                console.log(`   Tier breakdown:`, JSON.stringify(tiers));
+            }
             
             // Apply sort
             const sortBy = scannerState.sortBy || 'edge-desc';
