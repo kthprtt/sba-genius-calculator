@@ -12339,8 +12339,10 @@ Return ONLY valid JSON:
             gates.push({ name: 'G5: Stats Pattern Normal', pass: g5, detail: g5Detail, critical: false });
             
             // G6: Data Validated (have real stats source)
-            const g6 = !!(playerData || projection?.seasonAvg > 0);
-            gates.push({ name: 'G6: Data Validated', pass: g6, detail: g6 ? (playerData?.source || 'BDL') : 'No player data', critical: false });
+            // V49.1: Team/game markets don't have playerData — bypass G6 for spreads, totals, moneyline
+            const isTeamMkt = ['Spread', 'Game Total', 'Team Total', 'Moneyline', 'Match Total', 'Alt Spread', 'Alt Total'].some(t => market.includes(t));
+            const g6 = isTeamMkt ? true : !!(playerData || projection?.seasonAvg > 0);
+            gates.push({ name: 'G6: Data Validated', pass: g6, detail: g6 ? (isTeamMkt ? 'Team market (V49.1)' : playerData?.source || 'BDL') : 'No player data', critical: false });
             
             // G7: Stats Sanity Check — AI direction shouldn't contradict ALL stats by 3+ points
             let g7 = true;
@@ -25440,8 +25442,21 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
             try {
                 console.log(`🤖 Calling ${engineId} via AI Proxy...`);
                 
-                // V47: Use prompt format that proxy expects (matches ULTIMATE V5.5.1)
-                const prompt = `Sports betting PLAYER PROP analysis:
+                // V49.1: Route to team-market or player-prop prompt based on market type
+                const isTeam = context?.isTeamMarket || ['Spread', 'Game Total', 'Team Total', 'Moneyline', 'Match Total'].includes(market);
+                const ti = context?.teamIntelligence;
+                const prompt = isTeam
+                ? `Sports betting TEAM/GAME market analysis:
+Matchup: ${ti?.awayTeam || player} @ ${ti?.homeTeam || 'opponent'}
+Market: ${market} ${line > 0 ? 'OVER/UNDER' : ''} ${line}
+Team Stats: Season margin=${context?.seasonAvg || 'N/A'}, L5 margin=${context?.l5Avg || 'N/A'}, L10 margin=${context?.l10Avg || 'N/A'}
+Home PPG: ${ti?.home?.ppg?.toFixed(1) || 'N/A'}, Away PPG: ${ti?.away?.ppg?.toFixed(1) || 'N/A'}
+Proj Total: ${ti?.projectedTotal?.toFixed(1) || 'N/A'}, Proj Margin: ${ti?.projectedMargin?.toFixed(1) || 'N/A'}
+H2H: ${context?.h2h?.avg || 'N/A'} margin (${context?.h2h?.games || 0}g)
+Key Injuries: ${context?.injuries?.summary || 'N/A'}${context?.blowoutWarning ? `\n⚠️ ${context.blowoutWarning}` : ''}
+Analyze this TEAM market (not a player prop). Should bettor take OVER or UNDER?
+Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueProb":0.55,"reasoning":"explanation"}`
+                : `Sports betting PLAYER PROP analysis:
 Player: ${player}
 Market: ${market} OVER/UNDER ${line}
 Context: Season=${context?.seasonAvg || 'N/A'}, L5=${context?.l5Avg || 'N/A'}, L10=${context?.l10Avg || 'N/A'}
@@ -25501,7 +25516,23 @@ Analyze this prop. Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueP
                     { id: 'deepseek', name: 'DeepSeek', weight: 0.08 }
                 ];
                 
-                const prompt = `Sports betting PLAYER PROP analysis:
+                // V49.1: Route to team-market or player-prop prompt based on market type
+                const isTeam = context.isTeamMarket || ['Spread', 'Game Total', 'Team Total', 'Moneyline', 'Match Total'].includes(market);
+                const ti2 = context.teamIntelligence;
+                const prompt = isTeam
+                ? `Sports betting TEAM/GAME market analysis:
+Matchup: ${ti2?.awayTeam || player} @ ${ti2?.homeTeam || 'opponent'}
+Market: ${market} ${line > 0 ? 'OVER/UNDER' : ''} ${line}
+Team Stats: Season margin=${context.seasonAvg || 'N/A'}, L5 margin=${context.l5Avg || 'N/A'}, L10 margin=${context.l10Avg || 'N/A'}
+Home PPG: ${ti2?.home?.ppg?.toFixed(1) || 'N/A'}, Away PPG: ${ti2?.away?.ppg?.toFixed(1) || 'N/A'}
+Proj Total: ${ti2?.projectedTotal?.toFixed(1) || 'N/A'}, Proj Margin: ${ti2?.projectedMargin?.toFixed(1) || 'N/A'}
+H2H: ${context.h2h?.avg || 'N/A'} margin (${context.h2h?.games || 0}g)
+Rest: ${context.restDays || 'N/A'} days
+Key Injuries: ${context.injuries?.summary || 'N/A'}
+Defense: ${context.defenseRank || 'N/A'}${context.blowoutWarning ? `\n⚠️ ${context.blowoutWarning}` : ''}
+Analyze this TEAM market (not a player prop). Should bettor take OVER or UNDER?
+Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueProb":0.55,"reasoning":"explanation"}`
+                : `Sports betting PLAYER PROP analysis:
 Player: ${player}
 Market: ${market} OVER/UNDER ${line}
 Context: Season=${context.seasonAvg || 'N/A'}, L5=${context.l5Avg || 'N/A'}, L10=${context.l10Avg || 'N/A'}
@@ -25509,8 +25540,7 @@ H2H vs opponent: ${context.h2h?.avg || 'N/A'} (${context.h2h?.games || 0}g)
 Home/Away: ${context.isHome ? 'HOME' : 'AWAY'}, Rest: ${context.restDays || 'N/A'} days
 Injuries: ${context.injuries?.summary || 'N/A'}
 Defense: ${context.defenseRank || 'N/A'}
-Team Intel: ${context.teamIntel ? `ProjTotal=${context.teamIntel.projectedTotal}, HomePPG=${context.teamIntel.homePPG}, AwayPPG=${context.teamIntel.awayPPG}` : 'N/A'}${context.blowoutWarning ? `\n⚠️ ${context.blowoutWarning}` : ''}
-
+Team Intel: ${context.teamIntelligence ? `ProjTotal=${context.teamIntelligence.projectedTotal?.toFixed(1)}, HomePPG=${context.teamIntelligence.home?.ppg?.toFixed(1)}, AwayPPG=${context.teamIntelligence.away?.ppg?.toFixed(1)}` : 'N/A'}${context.blowoutWarning ? `\n⚠️ ${context.blowoutWarning}` : ''}
 Analyze this prop. Should bettor take OVER or UNDER?
 Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueProb":0.55,"reasoning":"explanation"}`;
                 
@@ -25643,17 +25673,29 @@ Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueProb":0.55,"reasonin
                 }
                 if (blindContext.h2h) console.log(`   H2H: ${blindContext.h2h}`);
                 
-                const response = await fetch(`${CONFIG.aiProxy}/api/ai/claude`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        prompt: `Sports betting analysis: Project a number for ${player} ${market} today.
+                const isTeamBlind = blindContext.isTeamMarket || ['Spread', 'Game Total', 'Team Total', 'Moneyline', 'Match Total'].includes(market);
+                const blindPrompt = isTeamBlind
+                ? `Sports betting analysis: Project a number for ${market} in ${player} game today.
+Matchup: ${blindContext.teamIntelligence?.awayTeam || player} @ ${blindContext.teamIntelligence?.homeTeam || 'opponent'}
+Team Stats: Season margin=${blindContext.seasonAvg}, L5 margin=${blindContext.l5Avg}, L10 margin=${blindContext.l10Avg}
+Home PPG: ${blindContext.teamIntelligence?.home?.ppg?.toFixed(1) || 'N/A'}, Away PPG: ${blindContext.teamIntelligence?.away?.ppg?.toFixed(1) || 'N/A'}
+H2H: ${blindContext.h2h || 'N/A'}
+Key Injuries: ${blindContext.injuries?.summary || 'N/A'}
+DO NOT use any sportsbook line. Project your own number for this TEAM market.
+Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanation"}`
+                : `Sports betting analysis: Project a number for ${player} ${market} today.
 Stats: Season=${blindContext.seasonAvg}, L5=${blindContext.l5Avg}, L10=${blindContext.l10Avg}
 Home/Away: ${blindContext.isHome ? 'HOME' : 'AWAY'}, Rest: ${blindContext.restDays || 'N/A'} days
 H2H: ${blindContext.h2h || 'N/A'}
 Injuries: ${blindContext.injuries?.summary || 'N/A'}
 DO NOT use any sportsbook line. Project your own number.
-Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanation"}`,
+Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanation"}`;
+                
+                const response = await fetch(`${CONFIG.aiProxy}/api/ai/claude`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        prompt: blindPrompt,
                         maxTokens: 400
                     })
                 });
