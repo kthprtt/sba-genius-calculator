@@ -22424,8 +22424,11 @@ Return ONLY valid JSON:
             
             // V49.3: PLAYER PROP FALLBACK for NCAAB and non-NBA sports
             // When player has BDL season stats but no game logs, populate pipeline from season averages
-            console.log(`📊 V49.3 CHECK: isTeamGameMarket=${isTeamGameMarket}, seasonAvg=${intelData.seasonAvg}, playerName=${playerName}, playerData?.pts=${playerData?.pts}, playerData?.name=${playerData?.name}, playerData?.statSource=${playerData?.statSource}`);
-            if (!isTeamGameMarket && (intelData.seasonAvg == null || intelData.seasonAvg === 0)) {
+            // Check pipeline completeness - if fewer than 8/17 sources loaded, we need to fill gaps
+            const pipelineSources = ['seasonAvg','l3Avg','l5Avg','l10Avg','recentForm','advancedStats','matchupHistory','homeAwaySplit','paceData','defensiveMatchup','shootingRange','clutchStats','opponentProfile','v2Advanced','halfBreakdown','situationalSpots','styleMatchup'];
+            const loadedPipelineCount = pipelineSources.filter(k => intelData[k] != null && intelData[k] !== 0).length;
+            console.log(`📊 V49.3 CHECK: isTeamGameMarket=${isTeamGameMarket}, seasonAvg=${intelData.seasonAvg}, pipeline=${loadedPipelineCount}/17, playerName=${playerName}, playerData?.pts=${playerData?.pts}, playerData?.name=${playerData?.name}`);
+            if (!isTeamGameMarket && loadedPipelineCount < 8 && (playerData?.pts || playerData?.reb || playerData?.ast || playerData?.statSource === 'BDL')) {
                 const statKey = mktCtx.statKey || 'pts';
                 
                 // playerData has BDL stats spread in: pts, reb, ast, stl, blk, to, fg3m, min
@@ -22444,10 +22447,10 @@ Return ONLY valid JSON:
                 
                 if (statVal > 0) {
                     console.log(`📊 V49.3 Player Prop Fallback: ${playerData?.name || playerName} ${statKey}=${statVal} from BDL season stats`);
-                    intelData.seasonAvg = statVal;
-                    intelData.l3Avg = statVal;
-                    intelData.l5Avg = statVal;
-                    intelData.l10Avg = statVal;
+                    if (!intelData.seasonAvg) intelData.seasonAvg = statVal;
+                    if (!intelData.l3Avg) intelData.l3Avg = statVal;
+                    if (!intelData.l5Avg) intelData.l5Avg = statVal;
+                    if (!intelData.l10Avg) intelData.l10Avg = statVal;
                     
                     // Team context for player props
                     if (state._teamStatsPromise) {
