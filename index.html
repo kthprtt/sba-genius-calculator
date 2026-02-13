@@ -30482,7 +30482,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             
             if (!teamId) {
                 // Try dynamic ESPN team directory
-                teamId = await getESPNTeamId(teamName, sport);
+                teamId = await resolveESPNTeamId(teamName, sport);
             }
             
             if (!teamId) return null;
