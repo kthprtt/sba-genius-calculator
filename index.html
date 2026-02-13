@@ -12851,8 +12851,9 @@ Return ONLY valid JSON:
                 if (projection.projectedMinutes > 0) dataQualityScore += 5;
             }
             // V49.5: Bonus for real ESPN gamelog data (not synthetic)
-            if (intelData.recentForm?.source === 'ESPN_GAMELOG') dataQualityScore += 5;
-            if (intelData.advancedStats?.source === 'ESPN_GAMELOG') dataQualityScore += 3;
+            const _intelGate = state.lastIntelData || {};
+            if (_intelGate.recentForm?.source === 'ESPN_GAMELOG') dataQualityScore += 5;
+            if (_intelGate.advancedStats?.source === 'ESPN_GAMELOG') dataQualityScore += 3;
             if (state.liveOdds && Object.keys(state.liveOdds.lines || {}).length > 0) dataQualityScore += 10;
             if (state.betburgerSharp?.signalCount > 0) dataQualityScore += 5;
             if (state.gameLines?.spread) dataQualityScore += 3;
@@ -13329,21 +13330,27 @@ Return ONLY valid JSON:
                 const statKey = getStatKeyForMarket(market);
                 const statLabel = getStatLabel(market);
                 
-                // Sort players by the relevant stat (highest first)
+                // Sort players by the relevant stat (highest first), then alphabetically
                 Object.keys(byTeam).forEach(team => {
-                    byTeam[team].sort((a, b) => (b[statKey] || b.pts || 0) - (a[statKey] || a.pts || 0));
+                    byTeam[team].sort((a, b) => {
+                        const aVal = a[statKey] || a.pts || 0;
+                        const bVal = b[statKey] || b.pts || 0;
+                        if (bVal !== aVal) return bVal - aVal;
+                        return (a.name || '').localeCompare(b.name || '');
+                    });
                 });
                 
                 // Count players with live stats
-                const liveCount = players.filter(p => p.hasLiveStats || p.isLiveStats).length;
-                const sourceInfo = liveCount > 0 ? ` [${dataSourceBadge} ${liveCount} with stats]` : ` [${dataSourceBadge}]`;
+                const liveCount = players.filter(p => p.hasLiveStats || p.isLiveStats || (p[statKey] || p.pts) > 0).length;
+                const sourceInfo = liveCount > 0 ? ` [🟡 ESPN ${liveCount} with stats]` : ` [🟡 ESPN]`;
                 
                 let html = `<option value="">Select player...${sourceInfo}</option>`;
                 Object.keys(byTeam).forEach(team => {
                     html += `<optgroup label="${team} (${byTeam[team].length} players)">`;
                     byTeam[team].forEach(p => {
                         const statValue = p[statKey] || p.pts || 0;
-                        const liveIcon = p.hasLiveStats || p.isLiveStats ? '📊 ' : '';
+                        const hasBDL = p.statSource === 'BDL' || p.bdlId;
+                        const liveIcon = hasBDL ? '📊 ' : '';
                         const statDisplay = statValue > 0 ? ` (${Number(statValue).toFixed(1)} ${statLabel})` : '';
                         html += `<option value="${p.name}" data-player='${JSON.stringify(p)}'>${liveIcon}${p.name}${statDisplay}</option>`;
                     });
@@ -17590,7 +17597,9 @@ Return ONLY valid JSON:
                         String(targetDate.getDate()).padStart(2, '0');
                     
                     try {
-                        const url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${dateStr}`;
+                        // V49.6: Add groups=50&limit=200 for NCAAB to get ALL D1 games
+                        const ncaabParams = ['ncaab', 'basketball_ncaab'].includes(sport) ? '&groups=50&limit=200' : '';
+                        const url = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${dateStr}${ncaabParams}`;
                         console.log(`📅 Fetching ${sport.toUpperCase()} games for ${dateStr}...`);
                         
                         const res = await fetch(url);
@@ -22690,12 +22699,10 @@ Return ONLY valid JSON:
                 const espnIdForGamelog = playerData?.espnId || playerData?.id || null;
                 const gamelog = await fetchESPNPlayerGamelog(espnIdForGamelog, state.sport, playerName);
                 if (gamelog && gamelog.gamesPlayed >= 3) {
-                    const statKey = mktCtx.statKey || 'pts';
-                    // Map market statKey to gamelog key
-                    const glKey = statKey === 'points' ? 'pts' : statKey === 'rebounds' ? 'reb' : statKey === 'assists' ? 'ast' :
-                                  statKey === 'steals' ? 'stl' : statKey === 'blocks' ? 'blk' : statKey === 'turnovers' ? 'to' :
-                                  statKey === 'threes' ? 'fg3m' : statKey === 'pra' ? 'pra' : statKey === 'pr' ? 'pr' :
-                                  statKey === 'pa' ? 'pa' : statKey === 'ra' ? 'ra' : statKey;
+                    // V49.6 FIX: Use the pipeline's statKey (from getStatKeyForMarket), NOT mktCtx.statKey which doesn't exist
+                    // statKey is already in scope from line ~21487: const statKey = getStatKeyForMarket(lockedMarket)
+                    // It returns 'pts', 'reb', 'ast', 'stl', 'blk', 'to', 'fg3m' etc.
+                    const glKey = statKey; // statKey already matches gamelog keys
                     
                     const seasonVal = gamelog.season[glKey] || 0;
                     const l3Val = gamelog.l3[glKey] || seasonVal;
@@ -22889,7 +22896,9 @@ Return ONLY valid JSON:
             }
             
             if (!isTeamGameMarket && loadedPipelineCount < 8 && !espnGamelogUsed && (playerData?.pts || playerData?.reb || playerData?.ast || playerData?.statSource === 'BDL')) {
-                const statKey = mktCtx.statKey || 'pts';
+                // V49.6 FIX: Use the pipeline's statKey from outer scope (NOT mktCtx.statKey which doesn't exist)
+                // V49.6 FIX: Use the pipeline's statKey from outer scope (NOT mktCtx.statKey which doesn't exist)
+                // statKey is already in scope from getStatKeyForMarket(lockedMarket) → returns 'pts', 'ast', 'reb' etc.
                 
                 // playerData has BDL stats spread in: pts, reb, ast, stl, blk, to, fg3m, min
                 const statVal = statKey === 'pts' ? playerData?.pts :
@@ -23046,6 +23055,7 @@ Return ONLY valid JSON:
             
             // V11: Store projection in state for use by BOTH SIDES analysis
             state.lastProjection = projection;
+            state.lastIntelData = intelData; // V49.6: Store for confidence gates access
             
             // V24: Store intel data on state for Coach K narrative + AI context
             state.gameLog = intelData.recentForm || null;
