@@ -38515,8 +38515,10 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                     const quickScore = quickEvaluateProp(prop);
                     
                     // Filter based on scan mode
-                    if (mode === 'diamond' && quickScore.estimatedTier !== 'diamond') continue;
-                    if (mode === 'lock' && !['diamond', 'lock'].includes(quickScore.estimatedTier)) continue;
+                    // V50 FIX: Scanner uses tiers 'high', 'streak', 'none' — never 'diamond' or 'lock'
+                    // Map user mode to scanner tiers: 'diamond' → only score>=82, 'lock' → all 'high'
+                    if (mode === 'diamond' && !(quickScore.estimatedTier === 'high' && quickScore.score >= 82)) continue;
+                    if (mode === 'lock' && quickScore.estimatedTier !== 'high') continue;
                     
                     // Only add if it has some potential
                     // V40 PHASE 4: Lower threshold to 40 so game markets with normal juice show up
