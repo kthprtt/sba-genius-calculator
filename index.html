@@ -2280,7 +2280,8 @@
                             <option value="24">⏰ 24 hrs</option>
                             <option value="48">⏰ 48 hrs</option>
                             <option value="72">⏰ 72 hrs</option>
-                            <option value="120" selected>⏰ 5 days</option>
+                            <option value="120">⏰ 5 days</option>
+                            <option value="192" selected>⏰ 8 days</option>
                             <option value="0">⏰ No limit</option>
                         </select>
                         <select class="scanner-filter" id="scanner-live-filter" title="Filter by game status" onchange="rerenderFilteredResults()" style="background: #1a1a2e; color: #e0e0e0; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 4px 6px; font-size: 11px; max-width: 100px;">
@@ -17041,8 +17042,8 @@ Return ONLY valid JSON:
                 const allEvents = [];
                 const now = new Date();
                 
-                // Fetch today + next 5 days (120+ hours)
-                for (let dayOffset = 0; dayOffset <= 5; dayOffset++) {
+                // Fetch today + next 8 days (to cover All-Star break + resumption)
+                for (let dayOffset = 0; dayOffset <= 8; dayOffset++) {
                     const targetDate = new Date(now);
                     targetDate.setDate(targetDate.getDate() + dayOffset);
                     // V31 FIX: Use LOCAL date, not UTC — toISOString() would shift days after 7pm ET
@@ -17117,7 +17118,7 @@ Return ONLY valid JSON:
                         return a.date - b.date;
                     });
                 
-                console.log(`📊 Total: ${upcomingEvents.length} games (today + next 5 days)`);
+                console.log(`📊 Total: ${upcomingEvents.length} games (today + next 8 days)`);
                 return upcomingEvents;
                 
             } catch (e) {
