@@ -22424,6 +22424,7 @@ Return ONLY valid JSON:
             
             // V49.3: PLAYER PROP FALLBACK for NCAAB and non-NBA sports
             // When player has BDL season stats but no game logs, populate pipeline from season averages
+            console.log(`📊 V49.3 CHECK: isTeamGameMarket=${isTeamGameMarket}, seasonAvg=${intelData.seasonAvg}, playerName=${playerName}, playerData?.pts=${playerData?.pts}, playerData?.name=${playerData?.name}, playerData?.statSource=${playerData?.statSource}`);
             if (!isTeamGameMarket && (intelData.seasonAvg == null || intelData.seasonAvg === 0)) {
                 const statKey = mktCtx.statKey || 'pts';
                 
