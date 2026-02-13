@@ -14294,6 +14294,9 @@ Return ONLY valid JSON:
                 // V21 FIX: Event-level endpoint returns a single object, bulk returns an array
                 const homeTeam = (state.event?.homeTeam?.shortDisplayName || state.event?.homeTeam?.displayName || '').toLowerCase();
                 const awayTeam = (state.event?.awayTeam?.shortDisplayName || state.event?.awayTeam?.displayName || '').toLowerCase();
+                // V49.6: Full display names for better NCAAB matching
+                const homeFullName = (state.event?.homeTeam?.displayName || '').toLowerCase();
+                const awayFullName = (state.event?.awayTeam?.displayName || '').toLowerCase();
                 
                 let matchingGame;
                 if (Array.isArray(data)) {
@@ -14307,10 +14310,13 @@ Return ONLY valid JSON:
                         const gHome = (game.home_team || '').toLowerCase();
                         const gAway = (game.away_team || '').toLowerCase();
                         // V31: More robust matching — check last word (team nickname) OR any word >3 chars
+                        // V49.6: Also check displayName for NCAAB abbreviated team names
                         const homeMatch = gHome.includes(homeTeam) || homeTeam.includes(gHome.split(' ').pop()) ||
-                                         homeTeam.split(' ').some(w => w.length > 3 && gHome.includes(w));
+                                         homeTeam.split(' ').some(w => w.length > 3 && gHome.includes(w)) ||
+                                         (homeFullName && (gHome.includes(homeFullName) || homeFullName.includes(gHome)));
                         const awayMatch = gAway.includes(awayTeam) || awayTeam.includes(gAway.split(' ').pop()) ||
-                                         awayTeam.split(' ').some(w => w.length > 3 && gAway.includes(w));
+                                         awayTeam.split(' ').some(w => w.length > 3 && gAway.includes(w)) ||
+                                         (awayFullName && (gAway.includes(awayFullName) || awayFullName.includes(gAway)));
                         return homeMatch && awayMatch;
                     });
                 } else if (data && data.bookmakers) {
@@ -19321,6 +19327,21 @@ Return ONLY valid JSON:
             
             // V49.6: For NCAAB (and other sports without BDL team IDs), use ESPN team stats
             if (!homeId && !awayId) {
+                // Trigger team stats load if not started yet
+                if (!state._teamStatsPromise && !state.teamStats && event) {
+                    console.log(`🔄 V26: Triggering team stats load for ${awayTeam} @ ${homeTeam}...`);
+                    const fetchTeamStatsLocal = typeof fetchTeamStats === 'function' ? fetchTeamStats : null;
+                    if (fetchTeamStatsLocal) {
+                        state._teamStatsPromise = (async () => {
+                            const [homeStats, awayStats] = await Promise.all([
+                                fetchTeamStatsLocal(homeTeam),
+                                fetchTeamStatsLocal(awayTeam)
+                            ]);
+                            state.teamStats = { home: homeStats, away: awayStats };
+                            return state.teamStats;
+                        })();
+                    }
+                }
                 // Await team stats if loading
                 if (state._teamStatsPromise && !state.teamStats) {
                     try { await state._teamStatsPromise; } catch(e) {}
@@ -29674,6 +29695,19 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 // V49.6: For NCAAB and other non-NBA sports, estimate pace from team PPG
                 const isNCAA = ['ncaab', 'basketball_ncaab'].includes(state.sport);
                 if (isNCAA) {
+                    // Trigger team stats load if not started yet
+                    if (!state._teamStatsPromise && !state.teamStats && state.event) {
+                        console.log(`🔄 V7 Pace: Triggering team stats load for NCAAB...`);
+                        const hTeam = state.event.homeTeam?.shortDisplayName || state.event.homeTeam?.displayName || '';
+                        const aTeam = state.event.awayTeam?.shortDisplayName || state.event.awayTeam?.displayName || '';
+                        if (typeof fetchTeamStats === 'function') {
+                            state._teamStatsPromise = (async () => {
+                                const [hs, as] = await Promise.all([fetchTeamStats(hTeam), fetchTeamStats(aTeam)]);
+                                state.teamStats = { home: hs, away: as };
+                                return state.teamStats;
+                            })();
+                        }
+                    }
                     // Await team stats if they're loading
                     if (state._teamStatsPromise && !state.teamStats) {
                         try { await state._teamStatsPromise; } catch(e) {}
