@@ -17865,7 +17865,9 @@ Return ONLY valid JSON:
         // Sport-specific ESPN paths
         const ESPN_SPORT_PATHS = {
             nba: 'basketball/nba',
+            basketball_nba: 'basketball/nba',
             ncaab: 'basketball/mens-college-basketball',
+            basketball_ncaab: 'basketball/mens-college-basketball',
             wnba: 'basketball/wnba',
             nfl: 'football/nfl',
             ncaaf: 'football/college-football',
@@ -22635,8 +22637,9 @@ Return ONLY valid JSON:
                                             const teamESPNId = isHome 
                                                 ? (state.teamStats?.home?.espnId || selectedEvent.homeTeam?.id)
                                                 : (state.teamStats?.away?.espnId || selectedEvent.awayTeam?.id);
-                                            const sportPath = ESPN_SPORT_PATHS[state.sport];
+                                            const sportPath = ESPN_SPORT_PATHS[state.sport] || ESPN_SPORT_PATHS[state.sport?.replace('basketball_', '')] || (state.sport?.includes('ncaab') ? 'basketball/mens-college-basketball' : null);
                                             
+                                            console.log(`📅 V49.7 recentForm: sport=${state.sport}, sportPath=${sportPath}, teamESPNId=${teamESPNId}, isHome=${isHome}, playerName=${playerName}`);
                                             if (teamESPNId && sportPath) {
                                                 const espnYear = new Date().getMonth() >= 9 ? new Date().getFullYear() + 1 : new Date().getFullYear();
                                                 const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${teamESPNId}/schedule?season=${espnYear}`;
@@ -22713,7 +22716,7 @@ Return ONLY valid JSON:
                                     try {
                                         const homeESPNId = state.teamStats?.home?.espnId || await resolveESPNTeamId(selectedEvent.homeTeam?.shortDisplayName || '', state.sport);
                                         const awayESPNId = state.teamStats?.away?.espnId || await resolveESPNTeamId(selectedEvent.awayTeam?.shortDisplayName || '', state.sport);
-                                        const sportPath = ESPN_SPORT_PATHS[state.sport];
+                                        const sportPath = ESPN_SPORT_PATHS[state.sport] || ESPN_SPORT_PATHS[state.sport?.replace('basketball_', '')] || (state.sport?.includes('ncaab') ? 'basketball/mens-college-basketball' : null);
                                         
                                         if (homeESPNId && sportPath) {
                                             const espnSeasonYear = new Date().getMonth() >= 9 ? new Date().getFullYear() + 1 : new Date().getFullYear();
@@ -22912,7 +22915,7 @@ Return ONLY valid JSON:
                                 try {
                                     const homeESPNId = state.teamStats?.home?.espnId || await resolveESPNTeamId(selectedEvent.homeTeam?.shortDisplayName || '', state.sport);
                                     const awayESPNId = state.teamStats?.away?.espnId || await resolveESPNTeamId(selectedEvent.awayTeam?.shortDisplayName || '', state.sport);
-                                    const sportPath = ESPN_SPORT_PATHS[state.sport];
+                                    const sportPath = ESPN_SPORT_PATHS[state.sport] || ESPN_SPORT_PATHS[state.sport?.replace('basketball_', '')] || (state.sport?.includes('ncaab') ? 'basketball/mens-college-basketball' : null);
                                     
                                     if (homeESPNId && sportPath) {
                                         const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${homeESPNId}/schedule?season=${new Date().getMonth() >= 9 ? new Date().getFullYear() + 1 : new Date().getFullYear()}`;
@@ -23238,7 +23241,7 @@ Return ONLY valid JSON:
                                 try {
                                     const homeESPNId = state.teamStats?.home?.espnId || await resolveESPNTeamId(selectedEvent.homeTeam?.shortDisplayName || '', state.sport);
                                     const awayESPNId = state.teamStats?.away?.espnId || await resolveESPNTeamId(selectedEvent.awayTeam?.shortDisplayName || '', state.sport);
-                                    const sportPathH2H = ESPN_SPORT_PATHS[state.sport];
+                                    const sportPathH2H = ESPN_SPORT_PATHS[state.sport] || ESPN_SPORT_PATHS[state.sport?.replace('basketball_', '')] || (state.sport?.includes('ncaab') ? 'basketball/mens-college-basketball' : null);
                                     if (homeESPNId && sportPathH2H) {
                                         const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPathH2H}/teams/${homeESPNId}/schedule?season=${new Date().getMonth() >= 9 ? new Date().getFullYear() + 1 : new Date().getFullYear()}`;
                                         const schedRes = await fetch(schedUrl);
@@ -23337,7 +23340,7 @@ Return ONLY valid JSON:
                             try {
                                 const homeESPNId = state.teamStats?.home?.espnId || await resolveESPNTeamId(selectedEvent.homeTeam?.shortDisplayName || '', state.sport);
                                 const awayESPNId = state.teamStats?.away?.espnId || await resolveESPNTeamId(selectedEvent.awayTeam?.shortDisplayName || '', state.sport);
-                                const sportPath = ESPN_SPORT_PATHS[state.sport];
+                                const sportPath = ESPN_SPORT_PATHS[state.sport] || ESPN_SPORT_PATHS[state.sport?.replace('basketball_', '')] || (state.sport?.includes('ncaab') ? 'basketball/mens-college-basketball' : null);
                                 if (homeESPNId && sportPath) {
                                     const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${homeESPNId}/schedule?season=${new Date().getMonth() >= 9 ? new Date().getFullYear() + 1 : new Date().getFullYear()}`;
                                     console.log(`🔍 V49.4 Player H2H: Checking ESPN schedule for team context...`);
