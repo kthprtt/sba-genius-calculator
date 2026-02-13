@@ -22612,32 +22612,88 @@ Return ONLY valid JSON:
                                 if (!intelData.l5Avg) intelData.l5Avg = intelData.seasonAvg;
                                 if (!intelData.l10Avg) intelData.l10Avg = intelData.seasonAvg;
                                 
-                                // recentForm: Build from V26 ESPN home game logs if available
+                                // recentForm: Fetch directly from ESPN schedule (V26 ATS may not have populated game logs)
                                 if (!intelData.recentForm) {
+                                    let recentGames = [];
+                                    // First try V26 game logs
                                     const homeLogs = teamIntel?.home?.games || [];
-                                    const recentGames = homeLogs.slice(-15).map(g => ({
-                                        date: g.date || '', gameId: '',
-                                        value: g.margin || 0,
-                                        teamPtsFor: g.teamScore || 0, teamPtsAgainst: g.oppScore || 0,
-                                        gameTotal: g.total || 0, margin: g.margin || 0,
-                                        wasHome: true, opponent: '', won: (g.margin || 0) > 0
-                                    }));
+                                    if (homeLogs.length > 0) {
+                                        recentGames = homeLogs.slice(-15).map(g => ({
+                                            date: g.date || '', gameId: '',
+                                            value: g.margin || 0,
+                                            teamPtsFor: g.teamScore || 0, teamPtsAgainst: g.oppScore || 0,
+                                            gameTotal: g.total || 0, margin: g.margin || 0,
+                                            wasHome: true, opponent: '', won: (g.margin || 0) > 0
+                                        }));
+                                    }
+                                    
+                                    // If V26 didn't have game logs, fetch ESPN schedule directly
+                                    if (recentGames.length === 0 && selectedEvent) {
+                                        try {
+                                            // Determine which team we're analyzing (home or away selection)
+                                            const isHome = playerName === selectedEvent.homeTeam?.shortDisplayName;
+                                            const teamESPNId = isHome 
+                                                ? (state.teamStats?.home?.espnId || selectedEvent.homeTeam?.id)
+                                                : (state.teamStats?.away?.espnId || selectedEvent.awayTeam?.id);
+                                            const sportPath = ESPN_SPORT_PATHS[state.sport];
+                                            
+                                            if (teamESPNId && sportPath) {
+                                                const espnYear = new Date().getMonth() >= 9 ? new Date().getFullYear() + 1 : new Date().getFullYear();
+                                                const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${teamESPNId}/schedule?season=${espnYear}`;
+                                                console.log(`📅 V49.7: Fetching schedule for recentForm (team ${teamESPNId})...`);
+                                                const schedRes = await fetch(schedUrl);
+                                                if (schedRes.ok) {
+                                                    const schedData = await schedRes.json();
+                                                    const completed = (schedData.events || []).filter(e => e.competitions?.[0]?.status?.type?.completed);
+                                                    recentGames = completed.slice(-15).map(e => {
+                                                        const comp = e.competitions?.[0];
+                                                        const hc = comp?.competitors?.find(c => c.homeAway === 'home');
+                                                        const ac = comp?.competitors?.find(c => c.homeAway === 'away');
+                                                        const parseScore = (c) => {
+                                                            if (!c) return 0;
+                                                            const s = c.score;
+                                                            if (s == null) return 0;
+                                                            if (typeof s === 'number') return s;
+                                                            if (typeof s === 'string') return parseInt(s) || 0;
+                                                            if (typeof s === 'object' && s.value != null) return parseInt(s.value) || 0;
+                                                            return 0;
+                                                        };
+                                                        const hScore = parseScore(hc);
+                                                        const aScore = parseScore(ac);
+                                                        const isTeamHome = String(hc?.team?.id) === String(teamESPNId);
+                                                        const teamScore = isTeamHome ? hScore : aScore;
+                                                        const oppScore = isTeamHome ? aScore : hScore;
+                                                        const oppTeam = isTeamHome ? (ac?.team?.abbreviation || '') : (hc?.team?.abbreviation || '');
+                                                        return {
+                                                            date: comp?.date || '', gameId: e.id || '',
+                                                            value: teamScore - oppScore,
+                                                            teamPtsFor: teamScore, teamPtsAgainst: oppScore,
+                                                            gameTotal: hScore + aScore, margin: teamScore - oppScore,
+                                                            wasHome: isTeamHome, opponent: oppTeam,
+                                                            won: teamScore > oppScore
+                                                        };
+                                                    }).filter(g => g.gameTotal > 0);
+                                                    console.log(`📅 V49.7: Got ${recentGames.length} completed games for recentForm`);
+                                                }
+                                            }
+                                        } catch(e) { console.log(`⚠️ V49.7 recentForm fetch error: ${e.message}`); }
+                                    }
+                                    
                                     intelData.recentForm = {
                                         recentGames,
                                         l5: null, l10: null,
                                         gamesAvailable: recentGames.length,
-                                        source: recentGames.length > 0 ? 'V26_ESPN_GAMES' : 'ESPN_PROXY'
+                                        source: recentGames.length > 0 ? 'ESPN_SCHEDULE' : 'ESPN_PROXY'
                                     };
-                                    // Compute L5/L10 from game logs if available
-                                    if (recentGames.length >= 5) {
-                                        const l5Games = recentGames.slice(-5);
-                                        const l5Margin = l5Games.reduce((s, g) => s + g.margin, 0) / 5;
-                                        intelData.l5Avg = l5Margin;
+                                    // Compute L3/L5/L10 from game logs if available
+                                    if (recentGames.length >= 3) {
                                         intelData.l3Avg = recentGames.slice(-3).reduce((s, g) => s + g.margin, 0) / 3;
                                     }
+                                    if (recentGames.length >= 5) {
+                                        intelData.l5Avg = recentGames.slice(-5).reduce((s, g) => s + g.margin, 0) / 5;
+                                    }
                                     if (recentGames.length >= 10) {
-                                        const l10Games = recentGames.slice(-10);
-                                        intelData.l10Avg = l10Games.reduce((s, g) => s + g.margin, 0) / 10;
+                                        intelData.l10Avg = recentGames.slice(-10).reduce((s, g) => s + g.margin, 0) / 10;
                                     }
                                 }
                                 
