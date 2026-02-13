@@ -18085,7 +18085,8 @@ Return ONLY valid JSON:
                 const nameMatch = (playerName || '').toLowerCase().trim();
                 const pidMatch = String(espnPlayerId || '');
                 
-                console.log(`📊 V49.5: Fetching ${gamesToFetch.length} box scores for ${playerName || espnPlayerId}...`);
+                console.log(`📊 V49.5: Fetching ${gamesToFetch.length} box scores for ${playerName || espnPlayerId} (pid=${pidMatch}, name=${nameMatch})...`);
+                console.log(`   🔍 Game IDs: ${gamesToFetch.slice(0,5).map(g => g.id).join(', ')}`);
                 
                 for (let i = 0; i < gamesToFetch.length; i += 3) {
                     const batch = gamesToFetch.slice(i, i + 3);
@@ -18093,10 +18094,34 @@ Return ONLY valid JSON:
                         try {
                             const summaryUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/summary?event=${game.id}`;
                             const res = await fetch(summaryUrl);
-                            if (!res.ok) return null;
+                            if (!res.ok) {
+                                console.log(`⚠️ V49.5 Game ${game.id}: HTTP ${res.status}`);
+                                return null;
+                            }
                             const data = await res.json();
                             const boxScore = data.boxscore;
-                            if (!boxScore?.players) return null;
+                            if (!boxScore?.players) {
+                                console.log(`⚠️ V49.5 Game ${game.id}: No boxscore.players — keys: ${Object.keys(data).join(',')}`);
+                                // Try alternate paths
+                                if (data.rosters) console.log(`   Alternate: data.rosters found`);
+                                if (data.plays) console.log(`   Alternate: data.plays found (${data.plays.length})`);
+                                return null;
+                            }
+                            
+                            // Debug: log first athlete from each team to verify structure
+                            if (i === 0 && game === batch[0]) {
+                                for (const teamBox of boxScore.players) {
+                                    const tName = teamBox.team?.displayName || teamBox.team?.shortDisplayName || 'Unknown';
+                                    const tId = teamBox.team?.id || '?';
+                                    const firstStat = teamBox.statistics?.[0];
+                                    const firstAthlete = firstStat?.athletes?.[0];
+                                    console.log(`🔍 V49.5 Debug: Team "${tName}" (${tId}), ${firstStat?.athletes?.length || 0} athletes`);
+                                    if (firstAthlete) {
+                                        console.log(`   First athlete: "${firstAthlete.athlete?.displayName}" (id=${firstAthlete.athlete?.id})`);
+                                    }
+                                    console.log(`   Labels: ${(firstStat?.labels || []).slice(0, 5).join(', ')}`);
+                                }
+                            }
                             
                             for (const teamBox of boxScore.players) {
                                 for (const statGroup of (teamBox.statistics || [])) {
@@ -18151,8 +18176,22 @@ Return ONLY valid JSON:
                                     }
                                 }
                             }
+                            // Player not found in this game's box score
+                            if (i === 0 && game === batch[0]) {
+                                console.log(`⚠️ V49.5 Debug: Player "${nameMatch}" (pid=${pidMatch}) NOT found in game ${game.id} box score`);
+                                // List all athlete names for debugging
+                                const allNames = [];
+                                for (const tb of boxScore.players) {
+                                    for (const sg of (tb.statistics || [])) {
+                                        for (const a of (sg.athletes || [])) {
+                                            allNames.push(`${a.athlete?.displayName} (${a.athlete?.id})`);
+                                        }
+                                    }
+                                }
+                                console.log(`   Available: ${allNames.slice(0, 15).join(', ')}`);
+                            }
                             return null;
-                        } catch (e) { return null; }
+                        } catch (e) { console.log(`⚠️ V49.5 Game error: ${e.message}`); return null; }
                     }));
                     for (const g of batchResults) { if (g && (g.pts > 0 || g.reb > 0 || g.min > 0)) games.push(g); }
                     if (i + 3 < gamesToFetch.length) await new Promise(r => setTimeout(r, 100));
