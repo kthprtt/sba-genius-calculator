@@ -23418,10 +23418,10 @@ Return ONLY valid JSON:
             
             // V31: Data pipeline audit — log what populated and what's missing
             const pipelineCheck = {
-                seasonAvg: intelData.seasonAvg != null && intelData.seasonAvg !== 0,
-                l3Avg: intelData.l3Avg != null && intelData.l3Avg !== 0,
-                l5Avg: intelData.l5Avg != null && intelData.l5Avg !== 0,
-                l10Avg: intelData.l10Avg != null && intelData.l10Avg !== 0,
+                seasonAvg: intelData.seasonAvg != null && (typeof intelData.seasonAvg === 'number' || intelData.seasonAvg !== 0),
+                l3Avg: intelData.l3Avg != null,
+                l5Avg: intelData.l5Avg != null,
+                l10Avg: intelData.l10Avg != null,
                 recentForm: !!(intelData.recentForm?.recentGames?.length > 0),
                 advancedStats: !!intelData.advancedStats,
                 matchupHistory: !!(intelData.matchupHistory && (intelData.matchupHistory.games > 0 || (intelData.matchupHistory.avg > 0 && intelData.matchupHistory.source?.includes('PROXY')))),
