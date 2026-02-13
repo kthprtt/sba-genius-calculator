@@ -22145,9 +22145,15 @@ Return ONLY valid JSON:
                 
                 // V49: FALLBACK for non-NBA sports (NCAAB, etc.) where BDL team intel isn't available
                 // Use ESPN team stats from state.teamStats to populate the data pipeline
-                if (!state.teamIntelligence && state.teamStats && isTeamGameMarket) {
-                    const ht = state.teamStats.home;
-                    const at = state.teamStats.away;
+                // Fires when: matchup is null, OR pipeline still has no seasonAvg data
+                const pipelineEmpty = intelData.seasonAvg == null || intelData.seasonAvg === 0;
+                if (pipelineEmpty && isTeamGameMarket) {
+                    // Await team stats if still loading
+                    if (state._teamStatsPromise) {
+                        try { await state._teamStatsPromise; } catch(e) {}
+                    }
+                    const ht = state.teamStats?.home;
+                    const at = state.teamStats?.away;
                     if (ht || at) {
                         console.log(`📊 V49 ESPN Fallback: Populating pipeline from ESPN team stats`);
                         const hPPG = ht?.ppg || 0;
@@ -30659,17 +30665,19 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             
             console.log(`🔄 Loading team stats for ${awayTeamName} @ ${homeTeamName}...`);
             
-            // Fetch stats for both teams
-            const [homeStats, awayStats] = await Promise.all([
-                fetchTeamStats(homeTeamName),
-                fetchTeamStats(awayTeamName)
-            ]);
+            // Create a promise others can await
+            state._teamStatsPromise = (async () => {
+                // Fetch stats for both teams
+                const [homeStats, awayStats] = await Promise.all([
+                    fetchTeamStats(homeTeamName),
+                    fetchTeamStats(awayTeamName)
+                ]);
+                state.teamStats = { home: homeStats, away: awayStats };
+                console.log(`✅ Team stats loaded: Home=${homeStats?.ppg || 'N/A'} PPG, Away=${awayStats?.ppg || 'N/A'} PPG (source: ${homeStats?.source || 'none'}/${awayStats?.source || 'none'})`);
+                return state.teamStats;
+            })();
             
-            // Store for later use
-            state.teamStats = {
-                home: homeStats,
-                away: awayStats
-            };
+            await state._teamStatsPromise;
             
             // Update player select to show team options instead
             const select = document.getElementById('player-select');
