@@ -30581,8 +30581,8 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 
                 // V50: For moneyline, seasonAvg comes from projection (margin), not playerData
                 const isMoneylineBothOuter = (market || '').toLowerCase() === 'moneyline';
-                if (isMoneylineBothOuter && state.lastProjection?.seasonAvg != null) {
-                    seasonAvg = state.lastProjection.seasonAvg;
+                if (isMoneylineBothOuter && state.lastProjection?.engines?.seasonAvg != null) {
+                    seasonAvg = state.lastProjection.engines.seasonAvg;
                 }
                 
                 // V39 FIX: Double-check seasonAvg isn't PPG contamination for non-points markets
@@ -34699,8 +34699,19 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             const isMLPanel = mCtxCheck.analysisType === 'moneyline';
             if (!sbaModel || (!bookLine && !isMLPanel)) { panel.style.display = 'none'; return; }
             
-            const gap = sbaModel - bookLine;
-            const absGap = Math.abs(gap);
+            // V50: For moneyline, convert to probability-based comparison
+            let gap, absGap;
+            if (isMLPanel) {
+                // sbaModel is already win probability (e.g. 49.7%)
+                // bookLine is 0 (margin threshold) — get book implied prob from odds instead
+                const selectedOdds = state.liveOdds?.selectedOutcome;
+                const bookImpliedProb = selectedOdds ? (selectedOdds < 0 ? Math.abs(selectedOdds) / (Math.abs(selectedOdds) + 100) * 100 : 100 / (selectedOdds + 100) * 100) : 50;
+                gap = sbaModel - bookImpliedProb;
+                absGap = Math.abs(gap);
+            } else {
+                gap = sbaModel - bookLine;
+                absGap = Math.abs(gap);
+            }
             const mCtx = getMarketContext(state.analysisMarket || state.currentMarket || 'Points', state.currentPlayer || '');
             const sideA = mCtx.sideA; // OVER
             const sideB = mCtx.sideB; // UNDER
@@ -34710,14 +34721,20 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             // Use the SAME stdev function as computePass2Edge — single source of truth
             const currentMarket = state.analysisMarket || state.currentMarket || 'Points';
             const currentSport = state.sport?.toUpperCase() || 'NBA';
-            const stdevInfo = getMarketStdev(currentMarket, currentSport, bookLine);
-            const stdDev = stdevInfo.stdev;
+            let overProb, underProb;
             
-            const zScore = gap / stdDev;
-            
-            // Use shared normalCDF (no local duplicate)
-            const overProb = normalCDF(zScore) * 100;
-            const underProb = 100 - overProb;
+            if (isMLPanel) {
+                // V50: For moneyline, sbaModel IS already a win probability
+                overProb = sbaModel; // e.g. 49.7% = win probability for selected team
+                underProb = 100 - sbaModel;
+            } else {
+                const stdevInfo = getMarketStdev(currentMarket, currentSport, bookLine);
+                const stdDev = stdevInfo.stdev;
+                const zScore = gap / stdDev;
+                // Use shared normalCDF (no local duplicate)
+                overProb = normalCDF(zScore) * 100;
+                underProb = 100 - overProb;
+            }
             
             // V28b: Get empirical hit rate and blend
             const hitRateData = state._cachedHitRate || getActualHitRate(currentMarket, bookLine);
@@ -35090,14 +35107,17 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             
             // ─── Populate Panel ───
             panel.style.display = 'block';
-            document.getElementById('sba-model-number').textContent = sbaModel.toFixed(1);
+            // V50: For moneyline, show win probability with % suffix
+            document.getElementById('sba-model-number').textContent = isMLPanel ? `${sbaModel.toFixed(1)}%` : sbaModel.toFixed(1);
             document.getElementById('sba-model-number').style.color = modelSide === sideA ? '#00ff88' : modelSide === sideB ? '#ff6b6b' : '#f4c430';
             document.getElementById('sba-model-label').textContent = modelSide !== 'TOSS-UP' ? `Favors ${modelSide}` : 'TOSS-UP';
-            document.getElementById('sba-book-line').textContent = bookLine.toFixed(1);
+            document.getElementById('sba-book-line').textContent = isMLPanel ? bookDisplay : bookLine.toFixed(1);
             
             const gapSign = gap > 0 ? '+' : '';
-            document.getElementById('sba-vs-gap').textContent = `${gapSign}${gap.toFixed(1)}`;
-            document.getElementById('sba-vs-gap').style.color = absGap >= 3 ? '#00ff88' : absGap >= 1 ? '#f4c430' : '#888';
+            document.getElementById('sba-vs-gap').textContent = isMLPanel ? `${gapSign}${gap.toFixed(1)}%` : `${gapSign}${gap.toFixed(1)}`;
+            const gapColorThreshHigh = isMLPanel ? 5 : 3;
+            const gapColorThreshMed = isMLPanel ? 2 : 1;
+            document.getElementById('sba-vs-gap').style.color = absGap >= gapColorThreshHigh ? '#00ff88' : absGap >= gapColorThreshMed ? '#f4c430' : '#888';
             
             document.getElementById('sba-model-prob').textContent = `${modelProbStr}% ${modelSide}`;
             document.getElementById('sba-model-prob').style.color = modelProb >= 60 ? '#00ff88' : modelProb >= 55 ? '#f4c430' : '#aaa';
@@ -35114,11 +35134,17 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             
             // Verdict
             const verdictEl = document.getElementById('sba-vs-verdict');
-            if (conviction >= 65 && absGap >= 2) {
-                verdictEl.textContent = `✅ ACTIONABLE: ${modelSide} (SBA Model ${sbaModel.toFixed(1)} vs Book ${bookLine.toFixed(1)})`;
+            // V50: For moneyline, use probability-based thresholds (in % points)
+            const gapThresholdAction = isMLPanel ? 5 : 2;
+            const gapThresholdLean = isMLPanel ? 2 : 1.5;
+            const bookDisplay = isMLPanel ? `${(100 - sbaModel + gap).toFixed(1)}% implied` : bookLine.toFixed(1);
+            const modelDisplay = isMLPanel ? `${sbaModel.toFixed(1)}% win` : sbaModel.toFixed(1);
+            
+            if (conviction >= 65 && absGap >= gapThresholdAction) {
+                verdictEl.textContent = `✅ ACTIONABLE: ${modelSide} (SBA ${modelDisplay} vs Book ${bookDisplay})`;
                 verdictEl.style.background = 'rgba(0,255,136,0.1)';
                 verdictEl.style.color = '#00ff88';
-            } else if (conviction >= 50 || absGap >= 1.5) {
+            } else if (conviction >= 50 || absGap >= gapThresholdLean) {
                 verdictEl.textContent = `📊 LEAN ${modelSide}: Edge exists but conviction moderate`;
                 verdictEl.style.background = 'rgba(244,196,48,0.1)';
                 verdictEl.style.color = '#f4c430';
@@ -35128,7 +35154,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 verdictEl.style.color = '#888';
             }
             
-            console.log(`🧠 V28 SBA vs Books: Model=${sbaModel.toFixed(1)}, Book=${bookLine.toFixed(1)}, Gap=${gap.toFixed(1)}, ModelProb=${modelProbStr}%, Edge=${trueEdge.toFixed(1)}%, Conviction=${conviction.toFixed(0)}% ${convictionLabel}`);
+            console.log(`🧠 V28 SBA vs Books: Model=${modelDisplay}, Book=${bookDisplay}, Gap=${gap.toFixed(1)}, ModelProb=${modelProbStr}%, Edge=${trueEdge.toFixed(1)}%, Conviction=${conviction.toFixed(0)}% ${convictionLabel}`);
         }
         
         // ═══════════════════════════════════════════════════════════════════════════
