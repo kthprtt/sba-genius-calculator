@@ -18469,9 +18469,33 @@ Return ONLY valid JSON:
                             });
                             if (fallbackRes.ok) {
                                 const fallbackData = await fallbackRes.json();
-                                const fallbackMatch = fallbackData.data?.find(p => 
-                                    p.last_name.toLowerCase() === lastName.toLowerCase()
-                                );
+                                // V49.6 FIX: Require BOTH first AND last name match in fallback
+                                // Also verify team when available to prevent cross-team false matches
+                                const fallbackMatch = fallbackData.data?.find(p => {
+                                    const lastMatch = p.last_name.toLowerCase() === lastName.toLowerCase();
+                                    if (!lastMatch) return false;
+                                    
+                                    // Check first name matches (with variants)
+                                    const pFirst = p.first_name.toLowerCase();
+                                    const firstMatch = firstNameVariants.some(v => {
+                                        const vLower = v.toLowerCase();
+                                        return pFirst === vLower || pFirst.startsWith(vLower) || vLower.startsWith(pFirst);
+                                    });
+                                    if (!firstMatch) return false;
+                                    
+                                    // If we know the team, verify it matches (prevents Oral Roberts player matching UNLV roster)
+                                    const pTeam = (p.team?.full_name || p.team?.name || '').toLowerCase();
+                                    if (pTeam && state.event) {
+                                        const homeTeam = (state.event.homeTeam?.displayName || state.event.homeTeam?.shortDisplayName || '').toLowerCase();
+                                        const awayTeam = (state.event.awayTeam?.displayName || state.event.awayTeam?.shortDisplayName || '').toLowerCase();
+                                        if (homeTeam && awayTeam && !pTeam.includes(homeTeam.split(' ').pop()) && !pTeam.includes(awayTeam.split(' ').pop())) {
+                                            console.log(`⚠️ BDL: Rejecting ${p.first_name} ${p.last_name} — team "${pTeam}" doesn't match game teams`);
+                                            return false;
+                                        }
+                                    }
+                                    
+                                    return true;
+                                });
                                 if (fallbackMatch) {
                                     searchData.data = [fallbackMatch];
                                     console.log(`✅ BDL: Found via fallback search for ${playerName}`);
@@ -18491,6 +18515,20 @@ Return ONLY valid JSON:
                 if (searchData?.data?.length > 0) {
                     const player = searchData.data[0];
                     const playerId = player.id;
+                    
+                    // V49.6: Verify matched player's team is in the current game
+                    const pTeamName = (player.team?.full_name || player.team?.name || '').toLowerCase();
+                    if (pTeamName && state.event) {
+                        const hTeam = (state.event.homeTeam?.displayName || state.event.homeTeam?.shortDisplayName || '').toLowerCase();
+                        const aTeam = (state.event.awayTeam?.displayName || state.event.awayTeam?.shortDisplayName || '').toLowerCase();
+                        const hLast = hTeam.split(' ').pop();
+                        const aLast = aTeam.split(' ').pop();
+                        if (hLast && aLast && !pTeamName.includes(hLast) && !pTeamName.includes(aLast)) {
+                            console.log(`⚠️ BDL: Player not found: ${playerName} (matched ${player.first_name} ${player.last_name} on "${pTeamName}" but game is ${hTeam} vs ${aTeam})`);
+                            return null;
+                        }
+                    }
+                    
                     console.log(`🏀 BDL: Found ${player.first_name} ${player.last_name} (ID: ${playerId}, Team: ${player.team?.full_name || player.team?.name || 'Unknown'})`);
                     
                     // Get season averages using the CORRECT stats path (/nba/v1/ for NBA)
@@ -19263,6 +19301,107 @@ Return ONLY valid JSON:
             const awayTeam = event.awayTeam?.shortDisplayName || event.awayTeam?.displayName || '';
             const homeId = resolveBDLTeamId(homeTeam);
             const awayId = resolveBDLTeamId(awayTeam);
+            
+            // V49.6: For NCAAB (and other sports without BDL team IDs), use ESPN team stats
+            if (!homeId && !awayId && state.teamStats) {
+                console.log(`🏀 V26: Using ESPN team stats for ${awayTeam} @ ${homeTeam} (BDL team IDs unavailable)`);
+                const ht = state.teamStats.home;
+                const at = state.teamStats.away;
+                if (!ht && !at) { console.warn(`⚠️ V26: No ESPN team stats available`); return null; }
+                
+                const hPPG = ht?.ppg || 0, hOppPPG = ht?.oppPpg || 0;
+                const aPPG = at?.ppg || 0, aOppPPG = at?.oppPpg || 0;
+                const hWins = ht?.wins || 0, hLosses = ht?.losses || 0;
+                const aWins = at?.wins || 0, aLosses = at?.losses || 0;
+                
+                // Estimate pace from combined PPG (NCAAB avg ~68 possessions, NBA ~100)
+                const isNCAA = ['ncaab', 'basketball_ncaab'].includes(state.sport);
+                const leagueAvgPace = isNCAA ? 68 : 100;
+                const leagueAvgPPG = isNCAA ? 72 : 112;
+                const homePaceEst = leagueAvgPace * (hPPG / leagueAvgPPG);
+                const awayPaceEst = leagueAvgPace * (aPPG / leagueAvgPPG);
+                const gamePace = (homePaceEst + awayPaceEst) / 2;
+                
+                // Compute matchup projection
+                const homeExpPts = (hPPG + aOppPPG) / 2;
+                const awayExpPts = (aPPG + hOppPPG) / 2;
+                const projTotal = homeExpPts + awayExpPts;
+                const margin = homeExpPts - awayExpPts;
+                
+                console.log(`✅ V26 ESPN: ${homeTeam} ${hPPG.toFixed(1)} PPG (${hWins}-${hLosses}) vs ${awayTeam} ${aPPG.toFixed(1)} PPG (${aWins}-${aLosses})`);
+                console.log(`   📊 Pace: ${gamePace.toFixed(1)} | Proj Total: ${projTotal.toFixed(1)} | Margin: ${margin > 0 ? '+' : ''}${margin.toFixed(1)} ${homeTeam}`);
+                
+                const matchup = {
+                    // V49.6: Match BDL V26 structure for downstream compatibility
+                    teamA: { 
+                        ppg: hPPG, oppPpg: hOppPPG, margin: hPPG - hOppPPG, 
+                        offRtg: hPPG, defRtg: hOppPPG, netRtg: hPPG - hOppPPG,
+                        pace: homePaceEst, wPct: hWins / Math.max(hWins + hLosses, 1),
+                        wins: hWins, losses: hLosses, record: `${hWins}-${hLosses}`,
+                        rolling: null, efg: null
+                    },
+                    teamB: { 
+                        ppg: aPPG, oppPpg: aOppPPG, margin: aPPG - aOppPPG,
+                        offRtg: aPPG, defRtg: aOppPPG, netRtg: aPPG - aOppPPG,
+                        pace: awayPaceEst, wPct: aWins / Math.max(aWins + aLosses, 1),
+                        wins: aWins, losses: aLosses, record: `${aWins}-${aLosses}`,
+                        rolling: null, efg: null
+                    },
+                    // Standard matchup fields
+                    teamAExpPts: homeExpPts, teamBExpPts: awayExpPts,
+                    expectedTotal: projTotal, expectedMargin: margin,
+                    expectedPace: gamePace,
+                    home: { ppg: hPPG, oppPpg: hOppPPG, margin: hPPG - hOppPPG, record: `${hWins}-${hLosses}` },
+                    away: { ppg: aPPG, oppPpg: aOppPPG, margin: aPPG - aOppPPG, record: `${aWins}-${aLosses}` },
+                    homeExpPts, awayExpPts, projTotal, margin,
+                    pace: gamePace,
+                    spreadStrength: Math.abs(margin),
+                    source: 'ESPN'
+                };
+                
+                const result = {
+                    matchup,
+                    home: { computed: { ppg_for: hPPG, ppg_against: hOppPPG, margin_season: hPPG - hOppPPG }, games: [] },
+                    away: { computed: { ppg_for: aPPG, ppg_against: aOppPPG, margin_season: aPPG - aOppPPG }, games: [] },
+                    homeTeamName: homeTeam,
+                    awayTeamName: awayTeam,
+                    source: 'ESPN'
+                };
+                
+                // V50 ATS: Try to get ATS from BDL using the team data we have
+                try {
+                    const homeESPNId = ht?.espnId || event.homeTeam?.id;
+                    const awayESPNId = at?.espnId || event.awayTeam?.id;
+                    
+                    // Fetch team schedules for ATS computation
+                    const espnSeasonYear = new Date().getMonth() >= 9 ? new Date().getFullYear() + 1 : new Date().getFullYear();
+                    const sportPath = isNCAA ? 'basketball/mens-college-basketball' : 'basketball/nba';
+                    
+                    if (homeESPNId) {
+                        const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${homeESPNId}/schedule?season=${espnSeasonYear}`;
+                        const schedRes = await fetch(schedUrl);
+                        if (schedRes.ok) {
+                            const schedData = await schedRes.json();
+                            const completed = (schedData.events || []).filter(e => e.competitions?.[0]?.status?.type?.completed);
+                            result.home.games = completed.slice(-10).map(e => {
+                                const comp = e.competitions?.[0];
+                                const hc = comp?.competitors?.find(c => c.homeAway === 'home');
+                                const ac = comp?.competitors?.find(c => c.homeAway === 'away');
+                                const hScore = parseInt(hc?.score) || 0;
+                                const aScore = parseInt(ac?.score) || 0;
+                                const isHomeTeam = String(hc?.team?.id) === String(homeESPNId);
+                                const teamScore = isHomeTeam ? hScore : aScore;
+                                const oppScore = isHomeTeam ? aScore : hScore;
+                                return { total: hScore + aScore, margin: teamScore - oppScore, teamScore, oppScore };
+                            });
+                        }
+                    }
+                } catch(e) { /* ATS is optional */ }
+                
+                console.log(`✅ V26 Team Intel complete (ESPN): ${awayTeam} @ ${homeTeam}`);
+                return result;
+            }
+            
             if (!homeId && !awayId) { console.warn(`⚠️ V26: Could not resolve teams: ${homeTeam} vs ${awayTeam}`); return null; }
             console.log(`🏀 V26: Building team intelligence — ${awayTeam} @ ${homeTeam} (BDL: ${awayId} @ ${homeId})...`);
             
@@ -22270,20 +22409,27 @@ Return ONLY valid JSON:
                             
                             // paceData: from matchup tempo projection
                             if (!intelData.paceData) {
+                                const isNCAA_p = ['ncaab', 'basketball_ncaab'].includes(state.sport);
+                                const defPace = isNCAA_p ? 68 : 100;
                                 intelData.paceData = {
-                                    gamePace: m.expectedPace || m.expectedTempo || 100,
-                                    homePace: m.teamA?.pace || m.teamA?.tempo || 100,
-                                    awayPace: m.teamB?.pace || m.teamB?.tempo || 100,
-                                    leagueAvg: 100,
-                                    source: 'V49_TEAM_INTEL'
+                                    gamePace: m.expectedPace || m.expectedTempo || defPace,
+                                    homePace: m.teamA?.pace || m.teamA?.tempo || defPace,
+                                    awayPace: m.teamB?.pace || m.teamB?.tempo || defPace,
+                                    leagueAvg: defPace,
+                                    source: m.source === 'ESPN' ? 'ESPN_TEAM' : 'V49_TEAM_INTEL'
                                 };
                             }
                             
                             // defensiveMatchup: derive from opponent defensive ratings
                             if (!intelData.defensiveMatchup) {
-                                const oppDefRtg = m.teamB?.defRtg || 112;
-                                const leagueAvgDef = 112;
+                                // V49.6: Use sport-appropriate league averages
+                                const isNCAA = ['ncaab', 'basketball_ncaab'].includes(state.sport);
+                                const leagueAvgDef = isNCAA ? 72 : 112;
+                                const oppDefRtg = m.teamB?.defRtg || m.teamB?.oppPpg || leagueAvgDef;
                                 const defDiff = oppDefRtg - leagueAvgDef;
+                                // V49.6: For NCAAB, OppPPG IS the defensive rating (lower = better defense)
+                                // A team allowing 65 PPG vs league avg 72 → defDiff = -7 → great defense (grade A)
+                                // A team allowing 80 PPG vs league avg 72 → defDiff = +8 → bad defense (grade F)
                                 let grade = 'C';
                                 if (defDiff <= -4) grade = 'A';
                                 else if (defDiff <= -2) grade = 'B';
@@ -22293,8 +22439,9 @@ Return ONLY valid JSON:
                                 intelData.defensiveMatchup = {
                                     grade, rating: oppDefRtg, multiplier: 1 + (defDiff * 0.01),
                                     oppDefRtg, leagueAvg: leagueAvgDef,
-                                    source: 'V49_TEAM_INTEL'
+                                    source: isNCAA ? 'ESPN_OppPPG' : 'V49_TEAM_INTEL'
                                 };
+                                if (isNCAA) console.log(`🛡️ V49.6 Defense: Opp allows ${oppDefRtg.toFixed?.(1) || oppDefRtg} PPG (avg: ${leagueAvgDef}) → Grade ${grade}, mult=${(1 + defDiff * 0.01).toFixed(2)}`);
                             }
                             
                             // shootingRange: from team 3PT and EFG data
@@ -22370,16 +22517,19 @@ Return ONLY valid JSON:
                             
                             // styleMatchup: compute from team offensive/defensive profiles
                             if (!intelData.styleMatchup) {
-                                const homeOff = m.teamA?.offRtg || 112;
-                                const awayDef = m.teamB?.defRtg || 112;
-                                const awayOff = m.teamB?.offRtg || 112;
-                                const homeDef = m.teamA?.defRtg || 112;
+                                const isNCAA_s = ['ncaab', 'basketball_ncaab'].includes(state.sport);
+                                const defaultRtg = isNCAA_s ? 72 : 112;
+                                const defaultPace = isNCAA_s ? 68 : 100;
+                                const homeOff = m.teamA?.offRtg || m.teamA?.ppg || defaultRtg;
+                                const awayDef = m.teamB?.defRtg || m.teamB?.oppPpg || defaultRtg;
+                                const awayOff = m.teamB?.offRtg || m.teamB?.ppg || defaultRtg;
+                                const homeDef = m.teamA?.defRtg || m.teamA?.oppPpg || defaultRtg;
                                 intelData.styleMatchup = {
                                     homeOffVsAwayDef: homeOff - awayDef,
                                     awayOffVsHomeDef: awayOff - homeDef,
-                                    paceMatch: Math.abs((m.teamA?.pace || 100) - (m.teamB?.pace || 100)),
-                                    tempoFactor: (m.expectedTempo || 100) / 100,
-                                    source: 'V49_TEAM_INTEL'
+                                    paceMatch: Math.abs((m.teamA?.pace || defaultPace) - (m.teamB?.pace || defaultPace)),
+                                    tempoFactor: (m.expectedPace || m.expectedTempo || defaultPace) / defaultPace,
+                                    source: m.source === 'ESPN' ? 'ESPN_TEAM' : 'V49_TEAM_INTEL'
                                 };
                             }
                             
@@ -29499,6 +29649,34 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
         // V7: Fetch team pace data from ESPN or calculate from BDL
         async function fetchTeamPaceData(homeTeamId, awayTeamId) {
             try {
+                // V49.6: For NCAAB and other non-NBA sports, estimate pace from team PPG
+                const isNCAA = ['ncaab', 'basketball_ncaab'].includes(state.sport);
+                if (isNCAA && state.teamStats) {
+                    const hPPG = state.teamStats.home?.ppg || 0;
+                    const aPPG = state.teamStats.away?.ppg || 0;
+                    const hOppPPG = state.teamStats.home?.oppPpg || 0;
+                    const aOppPPG = state.teamStats.away?.oppPpg || 0;
+                    
+                    // NCAAB avg ~68 possessions per game, avg ~72 PPG
+                    // Pace estimate: if a team scores 80 PPG vs league avg 72, they play at 80/72 = 1.11x pace
+                    const leagueAvgPace = 68;
+                    const leagueAvgPPG = 72;
+                    const homePace = hPPG > 0 ? leagueAvgPace * (hPPG / leagueAvgPPG) : leagueAvgPace;
+                    const awayPace = aPPG > 0 ? leagueAvgPace * (aPPG / leagueAvgPPG) : leagueAvgPace;
+                    const gamePace = (homePace + awayPace) / 2;
+                    
+                    console.log(`📊 V7 Pace (NCAAB ESPN): Home=${homePace.toFixed(1)} (${hPPG} PPG), Away=${awayPace.toFixed(1)} (${aPPG} PPG), Game=${gamePace.toFixed(1)}`);
+                    
+                    return {
+                        homePace: Math.round(homePace * 10) / 10,
+                        awayPace: Math.round(awayPace * 10) / 10,
+                        gamePace: Math.round(gamePace * 10) / 10,
+                        leagueAvg: leagueAvgPace,
+                        paceMultiplier: gamePace / leagueAvgPace,
+                        source: 'ESPN-PPG'
+                    };
+                }
+                
                 // NBA Team pace ratings (2024 season averages - updated periodically)
                 // Pace = possessions per 48 minutes, league avg ~100
                 // V11 ELITE: Updated 2024-25 NBA Pace Ratings (possessions per 48 min)
@@ -29783,7 +29961,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             // Fast teams = more possessions = more stats
             // ═══════════════════════════════════════════════════════════════════════
             let adjustment6_pace = 0;
-            const leagueAvgPace = 100.0; // League average pace (possessions per 48)
+            const leagueAvgPace = intelData.paceData?.leagueAvg || (['ncaab', 'basketball_ncaab'].includes(state.sport) ? 68 : 100); // V49.6: Sport-specific pace baseline
             if (intelData.paceData) {
                 const gamePace = intelData.paceData.gamePace || leagueAvgPace;
                 const paceMultiplier = gamePace / leagueAvgPace;
