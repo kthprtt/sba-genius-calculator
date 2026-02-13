@@ -21785,7 +21785,7 @@ Return ONLY valid JSON:
             const mktCtx = getMarketContext(lockedMarket, playerName);
             const isTeamGameMarket = ['game_total', 'team_total', 'spread', 'moneyline'].includes(mktCtx.analysisType);
             
-            if (selectedEvent && state.sport === 'nba') {
+            if (selectedEvent && ['nba', 'ncaab', 'wnba', 'nhl', 'nfl', 'mlb'].includes(state.sport)) {
                 try {
                     const currentMonth = new Date().getMonth() + 1;
                     const currentYear = new Date().getFullYear();
@@ -22141,6 +22141,62 @@ Return ONLY valid JSON:
                     }
                 } catch (e) {
                     console.warn('⚠️ V26 team intel error (non-fatal):', e.message);
+                }
+                
+                // V49: FALLBACK for non-NBA sports (NCAAB, etc.) where BDL team intel isn't available
+                // Use ESPN team stats from state.teamStats to populate the data pipeline
+                if (!state.teamIntelligence && state.teamStats && isTeamGameMarket) {
+                    const ht = state.teamStats.home;
+                    const at = state.teamStats.away;
+                    if (ht || at) {
+                        console.log(`📊 V49 ESPN Fallback: Populating pipeline from ESPN team stats`);
+                        const hPPG = ht?.ppg || 0;
+                        const aPPG = at?.ppg || 0;
+                        const hOppPPG = ht?.oppPpg || 0;
+                        const aOppPPG = at?.oppPpg || 0;
+                        
+                        if (mktCtx.analysisType === 'game_total') {
+                            intelData.seasonAvg = (hPPG + aPPG) || null;
+                            intelData.l5Avg = intelData.seasonAvg;
+                            intelData.l10Avg = intelData.seasonAvg;
+                        } else if (mktCtx.analysisType === 'team_total') {
+                            const selTeam = (playerName === selectedEvent?.homeTeam?.shortDisplayName) ? ht : at;
+                            intelData.seasonAvg = selTeam?.ppg || null;
+                            intelData.l5Avg = intelData.seasonAvg;
+                            intelData.l10Avg = intelData.seasonAvg;
+                        } else if (mktCtx.analysisType === 'spread') {
+                            const margin = hPPG - aPPG;
+                            intelData.seasonAvg = margin;
+                            intelData.l5Avg = margin;
+                            intelData.l10Avg = margin;
+                        } else if (mktCtx.analysisType === 'moneyline') {
+                            const margin = hPPG - aPPG;
+                            const isHome = playerName === selectedEvent?.homeTeam?.shortDisplayName;
+                            intelData.seasonAvg = isHome ? margin : -margin;
+                            intelData.l5Avg = intelData.seasonAvg;
+                            intelData.l10Avg = intelData.seasonAvg;
+                            intelData._projectedMargin = margin;
+                        }
+                        
+                        // Populate additional pipeline sources
+                        if (ht?.pace || at?.pace) intelData.paceData = { pace: ht?.pace || at?.pace || 70 };
+                        intelData.opponentProfile = { 
+                            oppPpg: mktCtx.analysisType === 'moneyline' ? (hOppPPG || aOppPPG) : null,
+                            offRtg: ht?.offRtg || at?.offRtg || 0,
+                            defRtg: ht?.defRtg || at?.defRtg || 0
+                        };
+                        intelData.advancedStats = {
+                            fgPct: ht?.fgPct || at?.fgPct || 0,
+                            threePct: ht?.threePct || at?.threePct || 0,
+                            ftPct: ht?.ftPct || at?.ftPct || 0,
+                            source: 'ESPN'
+                        };
+                        intelData.l3Avg = intelData.l5Avg;
+                        intelData.defensiveMatchup = { oppDefRtg: (hOppPPG + aOppPPG) / 2 || 0 };
+                        intelData.homeAwaySplit = { home: hPPG, away: aPPG };
+                        
+                        console.log(`✅ V49 ESPN Fallback: seasonAvg=${intelData.seasonAvg?.toFixed?.(1)}, pace=${intelData.paceData?.pace}, offRtg=${intelData.opponentProfile?.offRtg}`);
+                    }
                 }
             }
             
@@ -30508,7 +30564,58 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 
                 const response = await fetch(url);
                 if (!response.ok) {
-                    console.log(`⚠️ Team stats ${response.status} for ${teamName}`);
+                    console.log(`⚠️ Team stats ${response.status} for ${teamName} — trying team page fallback`);
+                    
+                    // V49: NCAAB fallback — fetch team page which includes record
+                    const teamUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${teamId}`;
+                    try {
+                        const teamRes = await fetch(teamUrl);
+                        if (teamRes.ok) {
+                            const teamData = await teamRes.json();
+                            const team = teamData.team || teamData;
+                            const record = team.record?.items?.[0]?.stats || [];
+                            const statMap = {};
+                            record.forEach(s => { statMap[s.name] = s.value; });
+                            
+                            const gp = statMap.gamesPlayed || (statMap.wins || 0) + (statMap.losses || 0) || 1;
+                            const ppg = statMap.pointsFor ? statMap.pointsFor / gp : 0;
+                            const oppPpg = statMap.pointsAgainst ? statMap.pointsAgainst / gp : 0;
+                            
+                            if (ppg > 0) {
+                                console.log(`✅ ESPN team page stats for ${teamName}: ${ppg.toFixed(1)} PPG, ${oppPpg.toFixed(1)} OppPPG (${gp} games)`);
+                                return {
+                                    teamName, ppg: Math.round(ppg * 10) / 10, oppPpg: Math.round(oppPpg * 10) / 10,
+                                    pace: 0, offRtg: 0, defRtg: 0, rebPerGame: 0, astPerGame: 0,
+                                    fgPct: 0, threePct: 0, ftPct: 0,
+                                    wins: statMap.wins || 0, losses: statMap.losses || 0,
+                                    source: 'ESPN-TeamPage'
+                                };
+                            }
+                        }
+                    } catch(e2) { console.warn(`⚠️ Team page fallback failed for ${teamName}:`, e2.message); }
+                    
+                    // V49: Final fallback — aggregate from loaded player stats
+                    const players = state.cachedPlayers || [];
+                    const teamPlayers = players.filter(p => {
+                        const pTeam = (p.teamName || p.team || p.teamAbbrev || '').toLowerCase();
+                        const tn = teamName.toLowerCase();
+                        return pTeam.includes(tn) || tn.includes(pTeam.split(' ').pop() || '---');
+                    });
+                    if (teamPlayers.length > 0) {
+                        const ppg = teamPlayers.reduce((sum, p) => sum + (p.pts || 0), 0);
+                        const rpg = teamPlayers.reduce((sum, p) => sum + (p.reb || 0), 0);
+                        const apg = teamPlayers.reduce((sum, p) => sum + (p.ast || 0), 0);
+                        if (ppg > 0) {
+                            console.log(`✅ Player-aggregated stats for ${teamName}: ${ppg.toFixed(1)} PPG (${teamPlayers.length} players with stats)`);
+                            return {
+                                teamName, ppg: Math.round(ppg * 10) / 10, oppPpg: 0, pace: 0,
+                                offRtg: 0, defRtg: 0, rebPerGame: Math.round(rpg * 10) / 10,
+                                astPerGame: Math.round(apg * 10) / 10,
+                                fgPct: 0, threePct: 0, ftPct: 0, source: 'BDL-Aggregated'
+                            };
+                        }
+                    }
+                    
                     return null;
                 }
                 const data = await response.json();
