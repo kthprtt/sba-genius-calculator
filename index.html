@@ -28249,7 +28249,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 market = state.analysisMarket;
             }
             
-            const seasonAvg = intelData.seasonAvg || 22;
+            const seasonAvg = (intelData.seasonAvg != null && intelData.seasonAvg !== '') ? intelData.seasonAvg : 22;
             const l5Avg = (intelData.l5Avg != null && intelData.l5Avg !== 0) ? intelData.l5Avg : seasonAvg;
             const l10Avg = (intelData.l10Avg != null && intelData.l10Avg !== 0) ? intelData.l10Avg : seasonAvg;
             const l3Avg = (intelData.l3Avg != null && intelData.l3Avg !== 0) ? intelData.l3Avg : l5Avg;
@@ -29572,9 +29572,11 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     const independentValue = projection.independentProjection || projection.rawProjection || projValue;
                     
                     if (prelMktCtx.analysisType === 'moneyline' || prelMktCtx.analysisType === 'yes_no') {
-                        // For ML/yes-no: edge = model probability vs 50% (or implied odds)
-                        prelGap = Math.abs(independentValue - 50);
-                        prelDir = independentValue > 50 ? prelMktCtx.sideA || 'YES' : prelMktCtx.sideB || 'NO';
+                        // V50: For moneyline, independentValue is raw margin. Use projValue (win probability) for gap.
+                        // projValue already has the margin→winProb conversion applied.
+                        const mlProb = prelMktCtx.analysisType === 'moneyline' ? projValue : independentValue;
+                        prelGap = Math.abs(mlProb - 50);
+                        prelDir = mlProb > 50 ? prelMktCtx.sideA || 'YES' : prelMktCtx.sideB || 'NO';
                         prelStrength = prelGap >= 20 ? 'STRONG' : prelGap >= 10 ? 'MODERATE' : prelGap >= 5 ? 'LEAN' : 'TOSS-UP';
                     } else {
                         // For props/totals/spreads: edge = independent projected value vs book line
@@ -29583,12 +29585,14 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                         prelStrength = prelGap >= 5 ? 'STRONG' : prelGap >= 3 ? 'MODERATE' : prelGap >= 1 ? 'LEAN' : 'TOSS-UP';
                     }
                     
+                    // V50: For moneyline, store win probability (not raw margin) in sbaModel
+                    const sbaLineValue = (prelMktCtx.analysisType === 'moneyline') ? projValue : independentValue;
                     state.sbaModel = {
-                        line: independentValue,
+                        line: sbaLineValue,
                         edge: { gap: prelGap, direction: prelDir, strength: prelStrength, probability: confidence },
                         preliminary: true
                     };
-                    console.log(`📊 V32 SBA Gap FIX [${prelMktCtx.analysisType}]: Independent=${independentValue.toFixed(1)} vs Line=${vegasLine} → ${prelDir} ${prelGap.toFixed(1)} edge (${prelStrength})`);
+                    console.log(`📊 V32 SBA Gap FIX [${prelMktCtx.analysisType}]: ${prelMktCtx.analysisType === 'moneyline' ? `WinProb=${projValue.toFixed(1)}%` : `Independent=${independentValue.toFixed(1)}`} vs ${prelMktCtx.analysisType === 'moneyline' ? '50%' : `Line=${vegasLine}`} → ${prelDir} ${prelGap.toFixed(1)} edge (${prelStrength})`);
                 }
                 
                 // V31: Data completeness audit — log what's available for streak checks
@@ -30575,8 +30579,14 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 const mkVal = playerData[statKey];
                 seasonAvg = (mkVal != null && mkVal > 0) ? mkVal : ((market === 'Points') ? (playerData.pts || line) : line);
                 
+                // V50: For moneyline, seasonAvg comes from projection (margin), not playerData
+                const isMoneylineBothOuter = (market || '').toLowerCase() === 'moneyline';
+                if (isMoneylineBothOuter && state.lastProjection?.seasonAvg != null) {
+                    seasonAvg = state.lastProjection.seasonAvg;
+                }
+                
                 // V39 FIX: Double-check seasonAvg isn't PPG contamination for non-points markets
-                if (market && market !== 'Points') {
+                if (market && market !== 'Points' && !isMoneylineBothOuter) {
                     const v39SanityMax = {
                         'Assists': 16, 'Rebounds': 22, '3-Pointers': 7, 'Steals': 4,
                         'Blocks': 5, 'Turnovers': 7, 'PRA': 80, 'Pts+Reb': 65,
@@ -30588,10 +30598,11 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     }
                 }
                 // V31 FIX: Use proper null check — || drops valid 0/low values
+                // V50: Use !== 0 instead of > 0 so negative margins work for team markets
                 const projL10 = state.lastProjection?.l10Avg;
                 const projL5 = state.lastProjection?.l5Avg;
-                l10Avg = (projL10 != null && projL10 > 0) ? projL10 : (playerData.l10?.[statKey] || seasonAvg);
-                l5Avg = (projL5 != null && projL5 > 0) ? projL5 : (playerData.l5?.[statKey] || seasonAvg);
+                l10Avg = (projL10 != null && projL10 !== 0) ? projL10 : (playerData.l10?.[statKey] || seasonAvg);
+                l5Avg = (projL5 != null && projL5 !== 0) ? projL5 : (playerData.l5?.[statKey] || seasonAvg);
                 usagePct = playerData.usage || 20;
                 
                 // Calculate real hit rate — prefer projection engine's calculation
@@ -30775,12 +30786,13 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     // V39: Tell proxy which market this seasonAvg represents
                     seasonAvgMarket: market || 'Points',
                     seasonAvgLabel: getStatLabel(market || 'Points'),
+                    // V50: Use !== 0 instead of > 0 so negative margins (moneyline/spread) aren't dropped
                     l10Avg: (projData.blowoutGamesInL5 > 0 && projData.engines?.l10AvgClean) 
                         ? projData.engines.l10AvgClean 
-                        : ((projData.l10Avg != null && projData.l10Avg > 0) ? projData.l10Avg : l10Avg),
+                        : ((projData.l10Avg != null && projData.l10Avg !== 0) ? projData.l10Avg : l10Avg),
                     l5Avg: (projData.blowoutGamesInL5 > 0 && projData.engines?.recentFormClean) 
                         ? projData.engines.recentFormClean 
-                        : ((projData.l5Avg != null && projData.l5Avg > 0) ? projData.l5Avg : l5Avg),
+                        : ((projData.l5Avg != null && projData.l5Avg !== 0) ? projData.l5Avg : l5Avg),
                     // V48: Blowout context for AI engines
                     blowoutWarning: (projData.blowoutGamesInL5 > 0) ? 
                         `WARNING: ${projData.blowoutGamesInL5} of last 5 games are blowout/DNP with <78% minutes. Raw L5 was ${projData.l5Avg?.toFixed(1)}, cleaned to ${projData.engines?.recentFormClean?.toFixed(1)}. Weight season avg and clean L5 heavily.` : null,
@@ -31585,7 +31597,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             // Get L5/L3 avg from projection or player data
             // V48: Use blowout-cleaned L5 when available
             const projL5 = state.lastProjection?.smartL5 || state.lastProjection?.l5Avg;
-            const l5Avg = (projL5 != null && projL5 > 0) ? projL5 : (playerData?.l5?.pts || null);
+            const l5Avg = (projL5 != null && projL5 !== 0) ? projL5 : (playerData?.l5?.pts || null);
             const l3Avg = state.lastProjection?.l3Avg || null;
             console.log('🔍 Factors debug:', {l5Avg, l3Avg, variance: state.lastProjection?.playerConsistency, blowoutCleaned: !!state.lastProjection?.smartL5});
             
@@ -34681,7 +34693,11 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             // Priority: Pass 1 line-blind result > independentProjection > rawProjection
             const sbaModel = state.sbaModel?.line || proj.independentProjection || proj.rawProjection || proj.value;
             const bookLine = proj.vegasLine || parseFloat(document.getElementById('line-input')?.value) || 0;
-            if (!sbaModel || !bookLine) { panel.style.display = 'none'; return; }
+            
+            // V50: For moneyline, bookLine=0 is valid. Skip the !bookLine check for moneyline.
+            const mCtxCheck = getMarketContext(state.analysisMarket || state.currentMarket || 'Points', state.currentPlayer || '');
+            const isMLPanel = mCtxCheck.analysisType === 'moneyline';
+            if (!sbaModel || (!bookLine && !isMLPanel)) { panel.style.display = 'none'; return; }
             
             const gap = sbaModel - bookLine;
             const absGap = Math.abs(gap);
