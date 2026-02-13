@@ -22615,7 +22615,7 @@ Return ONLY valid JSON:
                                 if (!intelData.l10Avg) intelData.l10Avg = intelData.seasonAvg;
                                 
                                 // recentForm: Fetch directly from ESPN schedule (V26 ATS may not have populated game logs)
-                                if (!intelData.recentForm) {
+                                if (!intelData.recentForm || intelData.recentForm.gamesAvailable === 0) {
                                     let recentGames = [];
                                     // First try V26 game logs
                                     const homeLogs = teamIntel?.home?.games || [];
