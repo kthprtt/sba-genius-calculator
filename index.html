@@ -21293,7 +21293,7 @@ Return ONLY valid JSON:
                 opponentProfile: !!intelData.opponentProfile,
                 v2Advanced: !!intelData.v2Advanced,
                 halfBreakdown: !!intelData.halfBreakdown,
-                situational: !!(intelData.situationalSpots?.length > 0),
+                situational: !!intelData.situationalSpots,
                 styleMatchup: !!intelData.styleMatchup
             };
             const pipelineReady = Object.values(pipelineCheck).filter(Boolean).length;
@@ -25925,17 +25925,18 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
         
         // Helper: map market name to stat key for game log extraction
         function getStatKeyForMarket(marketUpper) {
-            if (marketUpper.includes('PRA')) return 'pra';
-            if (marketUpper.includes('PR') && !marketUpper.includes('PRA')) return 'pr';
-            if (marketUpper.includes('PA')) return 'pa';
-            if (marketUpper.includes('RA')) return 'ra';
-            if (marketUpper.includes('POINT') || marketUpper.includes('PTS')) return 'pts';
-            if (marketUpper.includes('REBOUND') || marketUpper.includes('REB')) return 'reb';
-            if (marketUpper.includes('ASSIST') || marketUpper.includes('AST')) return 'ast';
-            if (marketUpper.includes('THREE') || marketUpper.includes('3PT')) return 'fg3m';
-            if (marketUpper.includes('STEAL')) return 'stl';
-            if (marketUpper.includes('BLOCK')) return 'blk';
-            if (marketUpper.includes('TURNOVER') || marketUpper.includes('TO')) return 'turnover';
+            const m = (marketUpper || '').toUpperCase();
+            if (m.includes('PRA')) return 'pra';
+            if (m.includes('PR') && !m.includes('PRA')) return 'pr';
+            if (m.includes('PA')) return 'pa';
+            if (m.includes('RA')) return 'ra';
+            if (m.includes('POINT') || m.includes('PTS')) return 'pts';
+            if (m.includes('REBOUND') || m.includes('REB')) return 'reb';
+            if (m.includes('ASSIST') || m.includes('AST')) return 'ast';
+            if (m.includes('THREE') || m.includes('3PT')) return 'fg3m';
+            if (m.includes('STEAL')) return 'stl';
+            if (m.includes('BLOCK')) return 'blk';
+            if (m.includes('TURNOVER') || m.includes('TO')) return 'turnover';
             return 'pts'; // default
         }
         
