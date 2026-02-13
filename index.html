@@ -15143,6 +15143,12 @@ Return ONLY valid JSON:
                     
                     console.log(`🔍 V9 Odds API: Looking for "${awayTeam}" @ "${homeTeam}"...`);
                     
+                    // V49.6: Build expanded name variants for matching
+                    const homeDisplayName = (state.event?.homeTeam?.displayName || '').toLowerCase().trim();
+                    const awayDisplayName = (state.event?.awayTeam?.displayName || '').toLowerCase().trim();
+                    const homeAbbr = (state.event?.homeTeam?.abbreviation || '').toLowerCase().trim();
+                    const awayAbbr = (state.event?.awayTeam?.abbreviation || '').toLowerCase().trim();
+                    
                     targetEvent = events.find(e => {
                         const eHome = (e.home_team || '').toLowerCase().trim();
                         const eAway = (e.away_team || '').toLowerCase().trim();
@@ -15151,10 +15157,16 @@ Return ONLY valid JSON:
                         // Check if either contains the other, or if any word >3 chars matches
                         const homeMatch = eHome.includes(homeTeam) || homeTeam.includes(eHome) ||
                                          eHome.split(' ').some(w => w.length > 3 && homeTeam.includes(w)) ||
-                                         homeTeam.split(' ').some(w => w.length > 3 && eHome.includes(w));
+                                         homeTeam.split(' ').some(w => w.length > 3 && eHome.includes(w)) ||
+                                         // V49.6: Also match displayName and abbreviation
+                                         (homeDisplayName && (eHome.includes(homeDisplayName) || homeDisplayName.includes(eHome))) ||
+                                         (homeAbbr && eHome.split(' ').some(w => w.toLowerCase().startsWith(homeAbbr)));
                         const awayMatch = eAway.includes(awayTeam) || awayTeam.includes(eAway) ||
                                          eAway.split(' ').some(w => w.length > 3 && awayTeam.includes(w)) ||
-                                         awayTeam.split(' ').some(w => w.length > 3 && eAway.includes(w));
+                                         awayTeam.split(' ').some(w => w.length > 3 && eAway.includes(w)) ||
+                                         // V49.6: Also match displayName and abbreviation
+                                         (awayDisplayName && (eAway.includes(awayDisplayName) || awayDisplayName.includes(eAway))) ||
+                                         (awayAbbr && eAway.split(' ').some(w => w.toLowerCase().startsWith(awayAbbr)));
                         
                         // Debug each comparison
                         if (homeMatch || awayMatch) {
@@ -18704,6 +18716,11 @@ Return ONLY valid JSON:
         // V26: Resolve any team name variant to BDL team ID
         function resolveBDLTeamId(teamName) {
             if (!teamName) return null;
+            // V49.6: BDL_TEAM_ID_MAP only has NBA teams (IDs 1-30)
+            // For NCAAB and other non-NBA sports, always return null to trigger ESPN fallback
+            if (state.sport && !['nba', 'basketball_nba'].includes(state.sport)) {
+                return null;
+            }
             const direct = BDL_TEAM_ID_MAP[teamName];
             if (direct) return direct;
             const lower = teamName.toLowerCase().trim();
@@ -19303,7 +19320,12 @@ Return ONLY valid JSON:
             const awayId = resolveBDLTeamId(awayTeam);
             
             // V49.6: For NCAAB (and other sports without BDL team IDs), use ESPN team stats
-            if (!homeId && !awayId && state.teamStats) {
+            if (!homeId && !awayId) {
+                // Await team stats if loading
+                if (state._teamStatsPromise && !state.teamStats) {
+                    try { await state._teamStatsPromise; } catch(e) {}
+                }
+                if (!state.teamStats) { console.warn(`⚠️ V26: No BDL team IDs and no ESPN team stats for ${homeTeam} vs ${awayTeam}`); return null; }
                 console.log(`🏀 V26: Using ESPN team stats for ${awayTeam} @ ${homeTeam} (BDL team IDs unavailable)`);
                 const ht = state.teamStats.home;
                 const at = state.teamStats.away;
@@ -29651,7 +29673,12 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             try {
                 // V49.6: For NCAAB and other non-NBA sports, estimate pace from team PPG
                 const isNCAA = ['ncaab', 'basketball_ncaab'].includes(state.sport);
-                if (isNCAA && state.teamStats) {
+                if (isNCAA) {
+                    // Await team stats if they're loading
+                    if (state._teamStatsPromise && !state.teamStats) {
+                        try { await state._teamStatsPromise; } catch(e) {}
+                    }
+                    if (state.teamStats) {
                     const hPPG = state.teamStats.home?.ppg || 0;
                     const aPPG = state.teamStats.away?.ppg || 0;
                     const hOppPPG = state.teamStats.home?.oppPpg || 0;
@@ -29675,6 +29702,11 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                         paceMultiplier: gamePace / leagueAvgPace,
                         source: 'ESPN-PPG'
                     };
+                    } else {
+                        // teamStats not available yet, return NCAAB default pace
+                        console.log(`📊 V7 Pace (NCAAB default): No team stats yet, using league avg 68`);
+                        return { homePace: 68, awayPace: 68, gamePace: 68, leagueAvg: 68, paceMultiplier: 1.0, source: 'NCAAB_DEFAULT' };
+                    }
                 }
                 
                 // NBA Team pace ratings (2024 season averages - updated periodically)
