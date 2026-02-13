@@ -30568,9 +30568,15 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 const url = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${teamId}/statistics`;
                 console.log(`📡 Fetching team stats for ${teamName} (${sport}, ID: ${teamId})...`);
                 
-                const response = await fetch(url);
+                let response;
+                try {
+                    response = await fetch(url);
+                } catch(fetchErr) {
+                    console.log(`⚠️ Team stats fetch failed for ${teamName} (CORS/network): ${fetchErr.message} — trying team page`);
+                    response = { ok: false, status: 0 };
+                }
                 if (!response.ok) {
-                    console.log(`⚠️ Team stats ${response.status} for ${teamName} — trying team page fallback`);
+                    console.log(`⚠️ Team stats ${response.status || 'ERR'} for ${teamName} — trying team page fallback`);
                     
                     // V49: NCAAB fallback — fetch team page which includes record
                     const teamUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${teamId}`;
@@ -30579,13 +30585,37 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                         if (teamRes.ok) {
                             const teamData = await teamRes.json();
                             const team = teamData.team || teamData;
-                            const record = team.record?.items?.[0]?.stats || [];
+                            console.log(`📊 ESPN team page keys for ${teamName}:`, Object.keys(team).join(', '));
+                            
+                            // Try multiple paths for record data
+                            const recordItems = team.record?.items || [];
+                            console.log(`📊 Record items count: ${recordItems.length}`);
+                            
+                            // Log the structure of the first record item
+                            if (recordItems.length > 0) {
+                                const firstItem = recordItems[0];
+                                console.log(`📊 First record item keys:`, Object.keys(firstItem).join(', '));
+                                if (firstItem.stats) {
+                                    console.log(`📊 Record stats (${firstItem.stats.length}):`, firstItem.stats.slice(0, 5).map(s => `${s.name}=${s.value}`).join(', '));
+                                }
+                            }
+                            
+                            const record = recordItems[0]?.stats || [];
                             const statMap = {};
                             record.forEach(s => { statMap[s.name] = s.value; });
+                            console.log(`📊 StatMap keys:`, Object.keys(statMap).join(', '));
                             
-                            const gp = statMap.gamesPlayed || (statMap.wins || 0) + (statMap.losses || 0) || 1;
-                            const ppg = statMap.pointsFor ? statMap.pointsFor / gp : 0;
-                            const oppPpg = statMap.pointsAgainst ? statMap.pointsAgainst / gp : 0;
+                            // Try different field name patterns
+                            const gp = statMap.gamesPlayed || statMap.GP || (statMap.wins || 0) + (statMap.losses || 0) || 1;
+                            const ppg = statMap.pointsFor ? statMap.pointsFor / gp 
+                                      : statMap.avgPointsFor || statMap.pointsPerGame || statMap.ppg || 0;
+                            const oppPpg = statMap.pointsAgainst ? statMap.pointsAgainst / gp 
+                                         : statMap.avgPointsAgainst || statMap.oppPointsPerGame || 0;
+                            
+                            // Also check team.nextEvent for schedule context
+                            const overallRecord = team.record?.items?.find(i => i.type === 'total' || i.description === 'Overall')?.summary || 
+                                                  recordItems[0]?.summary || '';
+                            console.log(`📊 Overall record: ${overallRecord}, Computed PPG: ${ppg}, OppPPG: ${oppPpg}`);
                             
                             if (ppg > 0) {
                                 console.log(`✅ ESPN team page stats for ${teamName}: ${ppg.toFixed(1)} PPG, ${oppPpg.toFixed(1)} OppPPG (${gp} games)`);
@@ -30685,6 +30715,8 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             
             // Get relevant stat for the market
             const teamStatKey = getTeamStatKey(market);
+            const homeStats = state.teamStats?.home;
+            const awayStats = state.teamStats?.away;
             
             let html = '<option value="">Select team...</option>';
             
