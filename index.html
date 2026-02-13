@@ -13285,6 +13285,25 @@ Return ONLY valid JSON:
                     updateInjuryPanel(selectedEvent);
                     // Show intel panels
                     document.getElementById('intel-panels').style.display = 'grid';
+                    
+                    // V49.7: Eagerly start team stats loading for non-NBA sports
+                    // This ensures pace data is ready before the first analysis pipeline runs
+                    if (!state._teamStatsPromise && !state.teamStats) {
+                        const isNonNBA = state.sport && !['nba', 'basketball_nba'].includes(state.sport);
+                        if (isNonNBA) {
+                            const homeName = selectedEvent.homeTeam?.shortDisplayName || selectedEvent.homeTeam?.displayName || '';
+                            const awayName = selectedEvent.awayTeam?.shortDisplayName || selectedEvent.awayTeam?.displayName || '';
+                            console.log(`🔄 V49.7: Pre-loading team stats for ${awayName} @ ${homeName}...`);
+                            state._teamStatsPromise = (async () => {
+                                const [homeStats, awayStats] = await Promise.all([
+                                    fetchTeamStats(homeName),
+                                    fetchTeamStats(awayName)
+                                ]);
+                                state.teamStats = { home: homeStats, away: awayStats };
+                                return state.teamStats;
+                            })();
+                        }
+                    }
                 }
                 
                 loadPlayers(option.value);
@@ -14313,10 +14332,16 @@ Return ONLY valid JSON:
                         // V49.6: Also check displayName for NCAAB abbreviated team names
                         const homeMatch = gHome.includes(homeTeam) || homeTeam.includes(gHome.split(' ').pop()) ||
                                          homeTeam.split(' ').some(w => w.length > 3 && gHome.includes(w)) ||
-                                         (homeFullName && (gHome.includes(homeFullName) || homeFullName.includes(gHome)));
+                                         (homeFullName && (gHome.includes(homeFullName) || homeFullName.includes(gHome))) ||
+                                         // V49.7: Also match using displayName words (>5 chars for uniqueness)
+                                         (homeFullName && homeFullName.split(' ').some(w => w.length > 5 && gHome.includes(w))) ||
+                                         (homeFullName && gHome.split(' ').some(w => w.length > 5 && homeFullName.includes(w)));
                         const awayMatch = gAway.includes(awayTeam) || awayTeam.includes(gAway.split(' ').pop()) ||
                                          awayTeam.split(' ').some(w => w.length > 3 && gAway.includes(w)) ||
-                                         (awayFullName && (gAway.includes(awayFullName) || awayFullName.includes(gAway)));
+                                         (awayFullName && (gAway.includes(awayFullName) || awayFullName.includes(gAway))) ||
+                                         // V49.7: Also match using displayName words (>5 chars for uniqueness)
+                                         (awayFullName && awayFullName.split(' ').some(w => w.length > 5 && gAway.includes(w))) ||
+                                         (awayFullName && gAway.split(' ').some(w => w.length > 5 && awayFullName.includes(w)));
                         return homeMatch && awayMatch;
                     });
                 } else if (data && data.bookmakers) {
@@ -22577,6 +22602,124 @@ Return ONLY valid JSON:
                             }
                             
                             console.log(`✅ V49: Team pipeline enriched — all sources populated from V26 Team Intel`);
+                            
+                            // V49.7: For ESPN-source V26 data, populate remaining missing sources
+                            // The V26 enrichment path above handles most pipeline sources, but 
+                            // L3/L5/L10, recentForm, matchupHistory, and halfBreakdown need extra handling
+                            if (m.source === 'ESPN') {
+                                // L3/L5/L10: For team markets, use season margin as proxy
+                                if (!intelData.l3Avg) intelData.l3Avg = intelData.seasonAvg;
+                                if (!intelData.l5Avg) intelData.l5Avg = intelData.seasonAvg;
+                                if (!intelData.l10Avg) intelData.l10Avg = intelData.seasonAvg;
+                                
+                                // recentForm: Build from V26 ESPN home game logs if available
+                                if (!intelData.recentForm) {
+                                    const homeLogs = teamIntel?.home?.games || [];
+                                    const recentGames = homeLogs.slice(-15).map(g => ({
+                                        date: g.date || '', gameId: '',
+                                        value: g.margin || 0,
+                                        teamPtsFor: g.teamScore || 0, teamPtsAgainst: g.oppScore || 0,
+                                        gameTotal: g.total || 0, margin: g.margin || 0,
+                                        wasHome: true, opponent: '', won: (g.margin || 0) > 0
+                                    }));
+                                    intelData.recentForm = {
+                                        recentGames,
+                                        l5: null, l10: null,
+                                        gamesAvailable: recentGames.length,
+                                        source: recentGames.length > 0 ? 'V26_ESPN_GAMES' : 'ESPN_PROXY'
+                                    };
+                                    // Compute L5/L10 from game logs if available
+                                    if (recentGames.length >= 5) {
+                                        const l5Games = recentGames.slice(-5);
+                                        const l5Margin = l5Games.reduce((s, g) => s + g.margin, 0) / 5;
+                                        intelData.l5Avg = l5Margin;
+                                        intelData.l3Avg = recentGames.slice(-3).reduce((s, g) => s + g.margin, 0) / 3;
+                                    }
+                                    if (recentGames.length >= 10) {
+                                        const l10Games = recentGames.slice(-10);
+                                        intelData.l10Avg = l10Games.reduce((s, g) => s + g.margin, 0) / 10;
+                                    }
+                                }
+                                
+                                // halfBreakdown: force populate if conditional above didn't fire
+                                if (!intelData.halfBreakdown) {
+                                    const avgPts = m.teamA?.ppg || m.teamB?.ppg || 75;
+                                    intelData.halfBreakdown = {
+                                        firstHalf: avgPts * 0.50, secondHalf: avgPts * 0.50,
+                                        q1: avgPts * 0.25, q2: avgPts * 0.25,
+                                        q3: avgPts * 0.25, q4: avgPts * 0.25,
+                                        source: 'ESPN_ESTIMATED'
+                                    };
+                                }
+                                
+                                // matchupHistory: ESPN H2H lookup
+                                if (!intelData.matchupHistory && selectedEvent) {
+                                    try {
+                                        const homeESPNId = state.teamStats?.home?.espnId || await resolveESPNTeamId(selectedEvent.homeTeam?.shortDisplayName || '', state.sport);
+                                        const awayESPNId = state.teamStats?.away?.espnId || await resolveESPNTeamId(selectedEvent.awayTeam?.shortDisplayName || '', state.sport);
+                                        const sportPath = ESPN_SPORT_PATHS[state.sport];
+                                        
+                                        if (homeESPNId && sportPath) {
+                                            const espnSeasonYear = new Date().getMonth() >= 9 ? new Date().getFullYear() + 1 : new Date().getFullYear();
+                                            const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${homeESPNId}/schedule?season=${espnSeasonYear}`;
+                                            console.log(`🔍 V49.7 H2H: Checking ESPN schedule for ${selectedEvent.homeTeam?.shortDisplayName} (ID: ${homeESPNId})...`);
+                                            const schedRes = await fetch(schedUrl);
+                                            if (schedRes.ok) {
+                                                const schedData = await schedRes.json();
+                                                const events = schedData.events || [];
+                                                const h2hGames = events.filter(e => {
+                                                    const completed = e.competitions?.[0]?.status?.type?.completed;
+                                                    if (!completed) return false;
+                                                    const competitors = e.competitions?.[0]?.competitors || [];
+                                                    return competitors.some(c => 
+                                                        String(c.id) === String(awayESPNId) || 
+                                                        (c.team?.abbreviation || '').toLowerCase() === (selectedEvent.awayTeam?.abbreviation || '').toLowerCase()
+                                                    );
+                                                });
+                                                if (h2hGames.length > 0) {
+                                                    const h2hStats = h2hGames.map(e => {
+                                                        const comps = e.competitions?.[0]?.competitors || [];
+                                                        const home = comps.find(c => c.homeAway === 'home');
+                                                        const away = comps.find(c => c.homeAway === 'away');
+                                                        const parseScore = (comp) => {
+                                                            if (!comp) return 0;
+                                                            const s = comp.score;
+                                                            if (s == null) return 0;
+                                                            if (typeof s === 'number') return s;
+                                                            if (typeof s === 'string') return parseInt(s) || 0;
+                                                            if (typeof s === 'object' && s.value != null) return parseInt(s.value) || 0;
+                                                            return 0;
+                                                        };
+                                                        const hScore = parseScore(home);
+                                                        const aScore = parseScore(away);
+                                                        console.log(`   📊 H2H game: ${home?.team?.abbreviation || '?'} ${hScore} - ${away?.team?.abbreviation || '?'} ${aScore}`);
+                                                        return { total: hScore + aScore, margin: hScore - aScore, homeScore: hScore, awayScore: aScore };
+                                                    }).filter(g => g.total > 0);
+                                                    if (h2hStats.length > 0) {
+                                                        const avgTotal = h2hStats.reduce((s, g) => s + g.total, 0) / h2hStats.length;
+                                                        const avgMargin = h2hStats.reduce((s, g) => s + g.margin, 0) / h2hStats.length;
+                                                        intelData.matchupHistory = {
+                                                            avg: mktCtx.analysisType === 'game_total' ? avgTotal : avgMargin,
+                                                            games: h2hStats.length,
+                                                            statKey: mktCtx.analysisType === 'game_total' ? 'gameTotal' : 'margin',
+                                                            source: 'ESPN_SCHEDULE_H2H'
+                                                        };
+                                                        console.log(`✅ V49.7 H2H: Found ${h2hStats.length} prior meetings (avg total: ${avgTotal.toFixed(1)}, avg margin: ${avgMargin.toFixed(1)})`);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } catch(e) { console.log(`⚠️ V49.7 H2H error: ${e.message}`); }
+                                    
+                                    // Fallback: use combined PPG proxy if no H2H found
+                                    if (!intelData.matchupHistory) {
+                                        const proxyTotal = (m.teamA?.ppg || 0) + (m.teamB?.ppg || 0);
+                                        intelData.matchupHistory = { avg: proxyTotal > 0 ? proxyTotal : 0, games: 0, statKey: 'total', source: 'TEAM_PPG_PROXY' };
+                                    }
+                                }
+                                
+                                console.log(`✅ V49.7 ESPN enrichment complete: L5=${intelData.l5Avg?.toFixed?.(1)}, H2H=${intelData.matchupHistory?.games}g, recentForm=${intelData.recentForm?.gamesAvailable}g`);
+                            }
                         }
                         
                         // For player props: also store team context for richer AI prompts
