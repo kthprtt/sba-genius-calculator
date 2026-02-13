@@ -21341,31 +21341,44 @@ Return ONLY valid JSON:
                                 console.log(`📊 V26 Spread (${isHomeSpread ? 'HOME' : 'AWAY'}): ProjMargin=${m.expectedMargin.toFixed(1)}, L5Margin=${intelData.l5Avg?.toFixed(1)}`);
                                 
                             } else if (mktCtx.analysisType === 'moneyline') {
-                                // Moneyline: use win probability proxy from margin
-                                intelData.seasonAvg = m.expectedMargin > 0 ? 55 + m.expectedMargin * 2 : 45 + m.expectedMargin * 2;
-                                intelData.seasonAvg = Math.max(20, Math.min(80, intelData.seasonAvg));
-                                // V49.1: Populate rolling stats for moneyline (use margin data like spread)
+                                // V50 FIX: Moneyline uses RAW MARGINS throughout pipeline, 
+                                // then converts to win probability at the final output stage.
+                                // Previously: converted to win-proxy % here, causing AI engines 
+                                // to misinterpret "margin=57.8" as a 57.8-point margin.
                                 const selNameML = playerName?.toLowerCase() || '';
                                 const homeNameML = (selectedEvent.homeTeam?.shortDisplayName || '').toLowerCase();
                                 const isHomeML = selNameML.includes(homeNameML) || homeNameML.includes(selNameML);
                                 const mlTeam = isHomeML ? m.teamA : m.teamB;
+                                const mlOpponent = isHomeML ? m.teamB : m.teamA;
+                                
+                                // Season margin from the selected team's perspective
+                                intelData.seasonAvg = mlTeam?.margin || m.expectedMargin * (isHomeML ? 1 : -1);
+                                
+                                // Rolling margins (L5, L10) — raw point margins
                                 if (mlTeam?.rolling?.margins?.l5) {
-                                    // Convert margin to win proxy scale for consistency
-                                    intelData.l5Avg = mlTeam.rolling.margins.l5.mean > 0 ? 55 + mlTeam.rolling.margins.l5.mean * 2 : 45 + mlTeam.rolling.margins.l5.mean * 2;
-                                    intelData.l5Avg = Math.max(20, Math.min(80, intelData.l5Avg));
+                                    intelData.l5Avg = mlTeam.rolling.margins.l5.mean;
                                     const l10margin = mlTeam.rolling.margins.l10?.mean || mlTeam.rolling.margins.l5.mean;
-                                    intelData.l10Avg = l10margin > 0 ? 55 + l10margin * 2 : 45 + l10margin * 2;
-                                    intelData.l10Avg = Math.max(20, Math.min(80, intelData.l10Avg));
+                                    intelData.l10Avg = l10margin;
                                     intelData.rollingStats = {
                                         l5: mlTeam.rolling.margins.l5,
                                         l10: mlTeam.rolling.margins.l10 || mlTeam.rolling.margins.l5,
                                         full: mlTeam.rolling.margins.l10 || mlTeam.rolling.margins.l5
                                     };
                                 }
+                                
+                                // H2H stays as raw margin
                                 if (m.h2h) {
                                     intelData.matchupHistory = { avg: m.h2h.avgMargin, games: m.h2h.games, statKey: 'margin' };
                                 }
-                                console.log(`📊 V26 Moneyline (${isHomeML ? 'HOME' : 'AWAY'}): ProjMargin=${m.expectedMargin.toFixed(1)}, WinProxy=${intelData.seasonAvg.toFixed(1)}%, L5=${intelData.l5Avg?.toFixed(1)}`);
+                                
+                                // Store the projected margin and win prob for downstream use
+                                intelData._isMoneyline = true;
+                                intelData._projectedMargin = m.expectedMargin * (isHomeML ? 1 : -1);
+                                intelData._isHomeSelection = isHomeML;
+                                intelData._teamPPG = mlTeam?.ppg || 0;
+                                intelData._oppPPG = mlOpponent?.ppg || 0;
+                                
+                                console.log(`📊 V50 Moneyline (${isHomeML ? 'HOME' : 'AWAY'}): Margin=${intelData.seasonAvg.toFixed(1)}, L5=${intelData.l5Avg?.toFixed(1)}, L10=${intelData.l10Avg?.toFixed(1)}, ProjMargin=${intelData._projectedMargin.toFixed(1)}`);
                             }
                             
                             // Enrich contextData with team intelligence
@@ -25785,16 +25798,17 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                 // V49.1: Route to team-market or player-prop prompt based on market type
                 const isTeam = context?.isTeamMarket || ['Spread', 'Game Total', 'Team Total', 'Moneyline', 'Match Total'].includes(market);
                 const ti = context?.teamIntelligence;
+                const isML = (market || '').toLowerCase() === 'moneyline';
                 const prompt = isTeam
                 ? `Sports betting TEAM/GAME market analysis:
 Matchup: ${ti?.awayTeam || player} @ ${ti?.homeTeam || 'opponent'}
-Market: ${market} ${line > 0 ? 'OVER/UNDER' : ''} ${line}
-Team Stats: Season margin=${context?.seasonAvg || 'N/A'}, L5 margin=${context?.l5Avg || 'N/A'}, L10 margin=${context?.l10Avg || 'N/A'}
+Market: ${market}${isML ? '' : ` ${line > 0 ? 'OVER/UNDER' : ''} ${line}`}
+${isML ? `Team Season Margin: ${context?.seasonAvg?.toFixed?.(1) || context?.seasonAvg || 'N/A'} pts, L5 Margin: ${context?.l5Avg?.toFixed?.(1) || context?.l5Avg || 'N/A'} pts, L10 Margin: ${context?.l10Avg?.toFixed?.(1) || context?.l10Avg || 'N/A'} pts` : `Team Stats: Season margin=${context?.seasonAvg || 'N/A'}, L5 margin=${context?.l5Avg || 'N/A'}, L10 margin=${context?.l10Avg || 'N/A'}`}
 Home PPG: ${ti?.home?.ppg?.toFixed(1) || 'N/A'}, Away PPG: ${ti?.away?.ppg?.toFixed(1) || 'N/A'}
 Proj Total: ${ti?.projectedTotal?.toFixed(1) || 'N/A'}, Proj Margin: ${ti?.projectedMargin?.toFixed(1) || 'N/A'}
 H2H: ${context?.h2h?.avg || 'N/A'} margin (${context?.h2h?.games || 0}g)
 Key Injuries: ${context?.injuries?.summary || 'N/A'}${context?.blowoutWarning ? `\n⚠️ ${context.blowoutWarning}` : ''}
-Analyze this TEAM market (not a player prop). Should bettor take OVER or UNDER?
+${isML ? `Analyze: Will ${player} WIN this game? A positive margin means they win. OVER=WIN, UNDER=LOSE.` : 'Analyze this TEAM market (not a player prop). Should bettor take OVER or UNDER?'}
 Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueProb":0.55,"reasoning":"explanation"}`
                 : `Sports betting PLAYER PROP analysis:
 Player: ${player}
@@ -25859,18 +25873,19 @@ Analyze this prop. Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueP
                 // V49.1: Route to team-market or player-prop prompt based on market type
                 const isTeam = context.isTeamMarket || ['Spread', 'Game Total', 'Team Total', 'Moneyline', 'Match Total'].includes(market);
                 const ti2 = context.teamIntelligence;
+                const isML2 = (market || '').toLowerCase() === 'moneyline';
                 const prompt = isTeam
                 ? `Sports betting TEAM/GAME market analysis:
 Matchup: ${ti2?.awayTeam || player} @ ${ti2?.homeTeam || 'opponent'}
-Market: ${market} ${line > 0 ? 'OVER/UNDER' : ''} ${line}
-Team Stats: Season margin=${context.seasonAvg || 'N/A'}, L5 margin=${context.l5Avg || 'N/A'}, L10 margin=${context.l10Avg || 'N/A'}
+Market: ${market}${isML2 ? '' : ` ${line > 0 ? 'OVER/UNDER' : ''} ${line}`}
+${isML2 ? `Team Season Margin: ${context.seasonAvg?.toFixed?.(1) || context.seasonAvg || 'N/A'} pts, L5 Margin: ${context.l5Avg?.toFixed?.(1) || context.l5Avg || 'N/A'} pts, L10 Margin: ${context.l10Avg?.toFixed?.(1) || context.l10Avg || 'N/A'} pts` : `Team Stats: Season margin=${context.seasonAvg || 'N/A'}, L5 margin=${context.l5Avg || 'N/A'}, L10 margin=${context.l10Avg || 'N/A'}`}
 Home PPG: ${ti2?.home?.ppg?.toFixed(1) || 'N/A'}, Away PPG: ${ti2?.away?.ppg?.toFixed(1) || 'N/A'}
 Proj Total: ${ti2?.projectedTotal?.toFixed(1) || 'N/A'}, Proj Margin: ${ti2?.projectedMargin?.toFixed(1) || 'N/A'}
 H2H: ${context.h2h?.avg || 'N/A'} margin (${context.h2h?.games || 0}g)
 Rest: ${context.restDays || 'N/A'} days
 Key Injuries: ${context.injuries?.summary || 'N/A'}
-Defense: ${context.defenseRank || 'N/A'}${context.blowoutWarning ? `\n⚠️ ${context.blowoutWarning}` : ''}
-Analyze this TEAM market (not a player prop). Should bettor take OVER or UNDER?
+Defense: ${context.defenseRank || 'N/A'}${context.atsIntel ? `\nATS/Covers Data: ${context.atsIntel}` : ''}${context.blowoutWarning ? `\n⚠️ ${context.blowoutWarning}` : ''}
+${isML2 ? `Analyze: Will ${player} WIN this game? Positive margin = win. OVER=WIN, UNDER=LOSE.` : 'Analyze this TEAM market (not a player prop). Should bettor take OVER or UNDER?'}
 Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueProb":0.55,"reasoning":"explanation"}`
                 : `Sports betting PLAYER PROP analysis:
 Player: ${player}
@@ -26015,15 +26030,25 @@ Respond with ONLY JSON: {"pick":"OVER","confidence":75,"trueProb":0.55,"reasonin
                 
                 const isTeamBlind = blindContext.isTeamMarket || ['Spread', 'Game Total', 'Team Total', 'Moneyline', 'Match Total'].includes(market);
                 const atsCtx = state.teamIntelligence?.atsIntel?.aiContext || '';
+                const isMLBlind = (market || '').toLowerCase() === 'moneyline';
                 const blindPrompt = isTeamBlind
-                ? `Sports betting analysis: Project a number for ${market} in ${player} game today.
+                ? (isMLBlind
+                ? `Sports betting analysis: Will ${player} WIN their game today?
+Matchup: ${blindContext.teamIntelligence?.awayTeam || player} @ ${blindContext.teamIntelligence?.homeTeam || 'opponent'}
+Team Season Margin: ${blindContext.seasonAvg} pts, L5 Margin: ${blindContext.l5Avg} pts, L10 Margin: ${blindContext.l10Avg} pts
+Home PPG: ${blindContext.teamIntelligence?.home?.ppg?.toFixed(1) || 'N/A'}, Away PPG: ${blindContext.teamIntelligence?.away?.ppg?.toFixed(1) || 'N/A'}
+H2H margin: ${blindContext.h2h || 'N/A'}
+Key Injuries: ${blindContext.injuries?.summary || 'N/A'}${atsCtx ? `\nATS/Covers Data:\n${atsCtx}` : ''}
+Project the team's expected point margin (positive = win, negative = loss).
+Respond with ONLY JSON: {"projection":3.5,"confidence":75,"reasoning":"explanation"}`
+                : `Sports betting analysis: Project a number for ${market} in ${player} game today.
 Matchup: ${blindContext.teamIntelligence?.awayTeam || player} @ ${blindContext.teamIntelligence?.homeTeam || 'opponent'}
 Team Stats: Season margin=${blindContext.seasonAvg}, L5 margin=${blindContext.l5Avg}, L10 margin=${blindContext.l10Avg}
 Home PPG: ${blindContext.teamIntelligence?.home?.ppg?.toFixed(1) || 'N/A'}, Away PPG: ${blindContext.teamIntelligence?.away?.ppg?.toFixed(1) || 'N/A'}
 H2H: ${blindContext.h2h || 'N/A'}
 Key Injuries: ${blindContext.injuries?.summary || 'N/A'}${atsCtx ? `\nATS/Covers Data:\n${atsCtx}` : ''}
 DO NOT use any sportsbook line. Project your own number for this TEAM market.
-Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanation"}`
+Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanation"}`)
                 : `Sports betting analysis: Project a number for ${player} ${market} today.
 Stats: Season=${blindContext.seasonAvg}, L5=${blindContext.l5Avg}, L10=${blindContext.l10Avg}
 Home/Away: ${blindContext.isHome ? 'HOME' : 'AWAY'}, Rest: ${blindContext.restDays || 'N/A'} days
@@ -28228,7 +28253,9 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             const l5Avg = (intelData.l5Avg != null && intelData.l5Avg !== 0) ? intelData.l5Avg : seasonAvg;
             const l10Avg = (intelData.l10Avg != null && intelData.l10Avg !== 0) ? intelData.l10Avg : seasonAvg;
             const l3Avg = (intelData.l3Avg != null && intelData.l3Avg !== 0) ? intelData.l3Avg : l5Avg;
-            const vegasLine = line || seasonAvg;
+            // V50: For moneyline, line=0 is valid (win/lose threshold). Don't fallback to seasonAvg.
+            const isMoneyline = intelData._isMoneyline || (market || '').toLowerCase() === 'moneyline';
+            const vegasLine = isMoneyline ? 0 : (line || seasonAvg);
             
             // V34: Log market + sanity check on seasonAvg vs line
             const propDefCheck = getPropDef(market);
@@ -29028,11 +29055,23 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             const maxDeviation = vegasLine * maxDeviationPct;
             let finalProjection = rawProjection;
             
-            if (Math.abs(rawProjection - vegasLine) > maxDeviation) {
+            // V50: Skip Vegas anchor for moneyline — there's no meaningful line to anchor to
+            // For moneyline, vegasLine would be 0 or the seasonAvg margin, neither is a book line
+            const isMoneylineMarket = intelData._isMoneyline || (market || '').toLowerCase() === 'moneyline';
+            
+            if (!isMoneylineMarket && Math.abs(rawProjection - vegasLine) > maxDeviation) {
                 finalProjection = rawProjection > vegasLine 
                     ? vegasLine + maxDeviation 
                     : vegasLine - maxDeviation;
                 console.log(`📊 Vegas Anchor: ${rawProjection.toFixed(1)} → ${finalProjection.toFixed(1)} (max ${(maxDeviationPct * 100).toFixed(0)}% dev at ${dataQuality}% confidence)`);
+            } else if (isMoneylineMarket) {
+                // For moneyline: projection is a margin (e.g., +3.2 points)
+                // Convert to win probability for display: margin → win%
+                // Formula: winProb = 50 + margin * 2.5 (clamped 15-85%)
+                const marginProj = finalProjection;
+                const winProb = Math.max(15, Math.min(85, 50 + marginProj * 2.5));
+                console.log(`📊 V50 Moneyline: Margin projection ${marginProj.toFixed(1)} → Win probability ${winProb.toFixed(1)}%`);
+                finalProjection = winProb;
             }
             
             // ═══════════════════════════════════════════════════════════════════════
@@ -29110,8 +29149,9 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 vegasLine,
                 isHome: contextData.isHome ?? false,
                 // V12 WORLD CLASS: Expose real L5/L10/momentum for AI proxy context
-                l5Avg: (intelData.l5Avg != null && intelData.l5Avg > 0) ? intelData.l5Avg : l5Avg,
-                l10Avg: (intelData.l10Avg != null && intelData.l10Avg > 0) ? intelData.l10Avg : l10Avg,
+                // V50: Use != null check instead of > 0 so negative margins (team markets) aren't dropped
+                l5Avg: (intelData.l5Avg != null && intelData.l5Avg !== 0) ? intelData.l5Avg : l5Avg,
+                l10Avg: (intelData.l10Avg != null && intelData.l10Avg !== 0) ? intelData.l10Avg : l10Avg,
                 l3Avg: l3Avg,
                 momentum: smartMomentumLabel || ((l3Avg - l5Avg) > 1 ? 'hot' : (l3Avg - l5Avg) < -1 ? 'cold' : 'neutral'),
                 momentumReason: momentumReason || '',
@@ -29265,12 +29305,14 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 const mkVal = playerData?.[sk];
                 return (mkVal != null && mkVal > 0) ? mkVal : (mk === 'Points' ? (playerData?.pts || 22) : (line || 22));
             })();
-            const l5Avg = (intelData.l5Avg != null && intelData.l5Avg > 0) ? intelData.l5Avg : seasonAvg;
-            const l10Avg = (intelData.l10Avg != null && intelData.l10Avg > 0) ? intelData.l10Avg : seasonAvg;
-            const l3Avg = (intelData.l3Avg != null && intelData.l3Avg > 0) ? intelData.l3Avg : l5Avg;
+            const l5Avg = (intelData.l5Avg != null && intelData.l5Avg !== 0) ? intelData.l5Avg : seasonAvg;
+            const l10Avg = (intelData.l10Avg != null && intelData.l10Avg !== 0) ? intelData.l10Avg : seasonAvg;
+            const l3Avg = (intelData.l3Avg != null && intelData.l3Avg !== 0) ? intelData.l3Avg : l5Avg;
             
             // Use the LINE that was passed in (from input field)
-            const vegasLine = line || seasonAvg;
+            // V50: For moneyline, line=0 is valid (win/lose threshold)
+            const isMoneylineBoth = intelData._isMoneyline || (currentMarket || '').toLowerCase() === 'moneyline';
+            const vegasLine = isMoneylineBoth ? 0 : (line || seasonAvg);
             
             // Update projection value
             // V21: Market-aware projection label
@@ -29555,8 +29597,8 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     sbaModel: !!(state.sbaModel?.edge),
                     h2hData: !!(state.h2hData?.games > 0),
                     situational: !!(state.situationalH2H?.filters?.length > 0 || state.lastProjection?.situationalSpots),
-                    l5: !!(state.lastProjection?.l5Avg > 0),
-                    l10: !!(state.lastProjection?.l10Avg > 0),
+                    l5: !!(state.lastProjection?.l5Avg != null && state.lastProjection?.l5Avg !== 0),
+                    l10: !!(state.lastProjection?.l10Avg != null && state.lastProjection?.l10Avg !== 0),
                     variance: !!(state.lastProjection?.dataQuality?.varianceCV),
                     momentum: !!(state.lastProjection?.momentum),
                     consistency: !!(state.lastProjection?.playerConsistency)
