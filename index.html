@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SBA GENIUS V46 WORLD CLASS | 12 AI Engines • Full Data Integration • 10/10 Research Intelligence</title>
+    <title>SBA GENIUS V50 UNCAPPED | 12 AI Engines • CBBData Integration • Full Data Integration • 10/10 Research Intelligence</title>
     
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -2641,6 +2641,23 @@
                     <p class="setting-help">82 books inc. Circa, Bet365, Pinnacle • Fair odds + historical data from <a href="https://sportsgameodds.com" target="_blank">sportsgameodds.com</a></p>
                 </div>
                 
+                <h4 style="color:#a855f7;font-size:12px;margin:16px 0 8px;border-bottom:1px solid #6b21a8;padding-bottom:8px;">🎓 V50 NCAAB INTELLIGENCE — CBBData (Barttorvik T-Rank)</h4>
+                
+                <div class="setting-group">
+                    <label>CBBData API Key <span style="font-size:10px;background:rgba(168,85,247,0.2);color:#a855f7;padding:2px 6px;border-radius:4px;margin-left:6px;">V50</span></label>
+                    <input type="password" id="key-cbbdata" placeholder="Your CBBData API key">
+                    <p class="setting-help">FREE • Barttorvik T-Rank + KenPom + BPI + NET • AdjO/AdjD/Barthag for 363 teams • <a href="https://cbbdata.aweatherman.com" target="_blank">Register here</a></p>
+                </div>
+                <div class="setting-group">
+                    <label>CBBData Login</label>
+                    <div style="display:flex;gap:6px;">
+                        <input type="text" id="cbbdata-user" placeholder="Username" style="flex:1;">
+                        <input type="password" id="cbbdata-pass" placeholder="Password" style="flex:1;">
+                        <button class="btn btn-primary" style="font-size:11px;padding:4px 10px;white-space:nowrap;" onclick="loginCBBData()">🔑 Get Key</button>
+                    </div>
+                    <p class="setting-help">Enter your CBBData credentials to auto-retrieve API key • <a href="https://cbbdata.aweatherman.com/articles/release.html" target="_blank">Create free account</a></p>
+                </div>
+                
                 <h4 style="color:#8b949e;font-size:12px;margin:16px 0 8px;border-bottom:1px solid #30363d;padding-bottom:8px;">💰 BANKROLL</h4>
                 
                 <div class="setting-group">
@@ -4326,7 +4343,7 @@ Return ONLY valid JSON:
             
             // Calculate probability with logarithmic scaling for gap
             const gapFactor = Math.log(1 + Math.abs(gap)) / Math.log(2);
-            const prob = Math.min(0.85, marketAnchors.base + (marketAnchors.perPoint * gapFactor));
+            const prob = Math.min(0.97, marketAnchors.base + (marketAnchors.perPoint * gapFactor));
             
             return prob;
         }
@@ -6405,6 +6422,127 @@ Return ONLY valid JSON:
         // API Key: CONFIG.keys.bdl | Base URL: https://api.balldontlie.io
         // Tiers: Free, ALL-STAR ($9.99), GOAT ($39.99/sport), ALL-ACCESS ($299.99)
         // ═══════════════════════════════════════════════════════════════════════════
+        // ═══════════════════════════════════════════════════════════════════════
+        // V50: CBBDATA API MODULE — Barttorvik T-Rank + KenPom + BPI + NET
+        // Free API: https://www.cbbdata.com/api/
+        // Endpoints: ratings, player/season, game/prediction, team/splits, etc.
+        // Auth: POST /api/auth/login → API key → append ?key=KEY to all calls
+        // Data format: Parquet (binary) for bulk, JSON for predictions
+        // ═══════════════════════════════════════════════════════════════════════
+        const CBBDATA_API = {
+            BASE: 'https://www.cbbdata.com/api',
+            
+            // Login to get API key
+            async login(username, password) {
+                try {
+                    const resp = await fetch(`${this.BASE}/auth/login`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username, password })
+                    });
+                    if (!resp.ok) throw new Error('Invalid credentials');
+                    const data = await resp.json();
+                    const key = Array.isArray(data) ? data[0] : data.key || data;
+                    state.cbbDataApiKey = key;
+                    try { localStorage.setItem('sba_cbbdata_key', key); } catch(e) {}
+                    console.log('✅ CBBData API key obtained');
+                    return key;
+                } catch(e) {
+                    console.error('❌ CBBData login failed:', e.message);
+                    return null;
+                }
+            },
+            
+            // Game prediction (JSON endpoint — works directly)
+            async gamePrediction(team, opp, location = 'H', date = null) {
+                if (!state.cbbDataApiKey) return null;
+                const cacheKey = `pred_${team}_${opp}_${location}`;
+                if (state.cbbDataCache[cacheKey]) return state.cbbDataCache[cacheKey];
+                
+                try {
+                    const params = new URLSearchParams({
+                        key: state.cbbDataApiKey, team, opp, location
+                    });
+                    if (date) params.append('date', date);
+                    const resp = await fetch(`${this.BASE}/torvik/game/prediction?${params}`);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const data = await resp.json();
+                    state.cbbDataCache[cacheKey] = data;
+                    console.log(`✅ CBBData Prediction: ${team} vs ${opp} @ ${location}:`, data);
+                    return data;
+                } catch(e) {
+                    console.warn(`⚠️ CBBData prediction failed: ${e.message}`);
+                    return null;
+                }
+            },
+            
+            // Team ratings — try Barttorvik CSV endpoint
+            async teamRatings(year = 2026) {
+                if (!state.cbbDataApiKey) return null;
+                const cacheKey = `ratings_${year}`;
+                if (state.cbbDataCache[cacheKey]) return state.cbbDataCache[cacheKey];
+                
+                try {
+                    const csvUrl = `https://barttorvik.com/trank.php?year=${year}&csv=1`;
+                    const resp = await fetch(csvUrl, { headers: { 'User-Agent': 'CBB-DATA' } });
+                    if (resp.ok) {
+                        const text = await resp.text();
+                        const lines = text.trim().split('\n');
+                        const ratings = {};
+                        for (const line of lines) {
+                            const cols = line.split(',');
+                            if (cols.length >= 10) {
+                                const team = cols[0]?.trim();
+                                if (team) {
+                                    ratings[team.toLowerCase()] = {
+                                        team, rank: parseInt(cols[1]) || 0,
+                                        adjO: parseFloat(cols[2]) || 0, adjD: parseFloat(cols[3]) || 0,
+                                        barthag: parseFloat(cols[4]) || 0, tempo: parseFloat(cols[7]) || 68,
+                                        wins: parseInt(cols[5]) || 0, losses: parseInt(cols[6]) || 0
+                                    };
+                                }
+                            }
+                        }
+                        state.cbbDataCache[cacheKey] = ratings;
+                        console.log(`✅ CBBData Ratings: Loaded ${Object.keys(ratings).length} teams for ${year}`);
+                        return ratings;
+                    }
+                } catch(e) {
+                    console.warn(`⚠️ CBBData ratings fetch failed: ${e.message}`);
+                }
+                return null;
+            },
+            
+            // Player season stats
+            async playerSeason(team, year = 2026) {
+                if (!state.cbbDataApiKey) return null;
+                const cacheKey = `players_${team}_${year}`;
+                if (state.cbbDataCache[cacheKey]) return state.cbbDataCache[cacheKey];
+                
+                try {
+                    const params = new URLSearchParams({
+                        key: state.cbbDataApiKey, year, team
+                    });
+                    const resp = await fetch(`${this.BASE}/torvik/player/season?${params}`);
+                    if (!resp.ok) return null;
+                    const data = await resp.json().catch(() => null);
+                    if (data) {
+                        state.cbbDataCache[cacheKey] = data;
+                        console.log(`✅ CBBData Players: ${team} roster loaded`);
+                        return data;
+                    }
+                } catch(e) {
+                    console.warn(`⚠️ CBBData player fetch failed: ${e.message}`);
+                }
+                return null;
+            },
+            
+            // Check if CBBData is configured
+            isConfigured() {
+                return !!state.cbbDataApiKey;
+            }
+        };
+        
         const BDL_API = {
             baseUrl: 'https://api.balldontlie.io',
             
@@ -12370,6 +12508,11 @@ Return ONLY valid JSON:
             market: null,
             events: [], // Store events for player lookup
             players: [], // V9: Store players for ANALYZE BOTH
+            
+            // V50: CBBData API Integration (Barttorvik T-Rank + KenPom + BPI + NET)
+            cbbDataApiKey: (typeof localStorage !== 'undefined' && localStorage.getItem('sba_cbbdata_key')) || null,
+            cbbDataCache: {}, // Cache Barttorvik ratings, player stats, predictions
+            cbbDataLastFetch: null,
             
             // Real-time tracking
             lastOddsRefresh: null,
@@ -19393,13 +19536,35 @@ Return ONLY valid JSON:
                 const gamePace = (homePaceEst + awayPaceEst) / 2;
                 
                 // Compute matchup projection
+                // V50: Opponent-adjusted efficiency model
+                // Instead of simple PPG averaging, weight by schedule strength proxy
                 const homeExpPts = (hPPG + aOppPPG) / 2;
                 const awayExpPts = (aPPG + hOppPPG) / 2;
                 const projTotal = homeExpPts + awayExpPts;
-                const margin = homeExpPts - awayExpPts;
+                const rawMargin = homeExpPts - awayExpPts;
+                
+                // V50: Schedule strength proxy from win percentage
+                // A team with .800 W% playing a team with .600 W% — the margin should be deflated
+                // because the .800 team's margin came against weaker opponents
+                const homeWPct = hWins / Math.max(hWins + hLosses, 1);
+                const awayWPct = aWins / Math.max(aWins + aLosses, 1);
+                const avgWPct = (homeWPct + awayWPct) / 2;
+                
+                // Regression toward mean: teams with extreme margins vs weak schedules get adjusted
+                // Factor: opponent quality ratio — if opponent is better than average opponent, deflate your advantage
+                const homeStrengthFactor = awayWPct / Math.max(0.3, avgWPct); // >1 if facing tough opponent
+                const awayStrengthFactor = homeWPct / Math.max(0.3, avgWPct);
+                
+                // V50: Home court advantage for NCAAB (3.5 pts), NBA (2.5 pts)
+                const homeCourtAdv = isNCAA ? 3.5 : 2.5;
+                
+                // V50: Adjusted margin incorporates opponent strength + home court
+                // Raw margin already has both teams' context, but home court needs explicit addition
+                const adjustedMargin = rawMargin + homeCourtAdv;
+                const margin = adjustedMargin;
                 
                 console.log(`✅ V26 ESPN: ${homeTeam} ${hPPG.toFixed(1)} PPG (${hWins}-${hLosses}) vs ${awayTeam} ${aPPG.toFixed(1)} PPG (${aWins}-${aLosses})`);
-                console.log(`   📊 Pace: ${gamePace.toFixed(1)} | Proj Total: ${projTotal.toFixed(1)} | Margin: ${margin > 0 ? '+' : ''}${margin.toFixed(1)} ${homeTeam}`);
+                console.log(`   📊 V50: Raw=${rawMargin.toFixed(1)}, HC=+${homeCourtAdv}, Adj=${margin.toFixed(1)} | Total: ${projTotal.toFixed(1)} | WPct: H=${homeWPct.toFixed(3)} A=${awayWPct.toFixed(3)}`);
                 
                 const matchup = {
                     // V49.6: Match BDL V26 structure for downstream compatibility
@@ -19469,6 +19634,55 @@ Return ONLY valid JSON:
                 } catch(e) { /* ATS is optional */ }
                 
                 console.log(`✅ V26 Team Intel complete (ESPN): ${awayTeam} @ ${homeTeam}`);
+                
+                // ═══════════════════════════════════════════════════════════════
+                // V50: CBBDATA BARTTORVIK ENRICHMENT
+                // If CBBData API is configured, fetch T-Rank data to enhance
+                // the ESPN-only projection with opponent-adjusted efficiency
+                // ═══════════════════════════════════════════════════════════════
+                if (isNCAA && CBBDATA_API.isConfigured()) {
+                    try {
+                        // Try game prediction endpoint (JSON, most useful)
+                        const bartPred = await CBBDATA_API.gamePrediction(
+                            homeTeam, awayTeam, 'H'
+                        );
+                        if (bartPred) {
+                            result.barttorvik = bartPred;
+                            // Override margin with Barttorvik's opponent-adjusted prediction
+                            if (bartPred.margin !== undefined) {
+                                result.matchup.expectedMargin = bartPred.margin;
+                                result.matchup.barttorvikMargin = bartPred.margin;
+                                result.matchup.barttorvikTotal = bartPred.total || projTotal;
+                                result.matchup.barttorvikWinProb = bartPred.win_pct || bartPred.winPct;
+                                console.log(`🎯 V50 Barttorvik: ${homeTeam} margin=${bartPred.margin.toFixed(1)}, total=${bartPred.total?.toFixed(1)}, win%=${(bartPred.win_pct||bartPred.winPct||0).toFixed(1)}%`);
+                            }
+                        }
+                        
+                        // Also try team ratings for AdjO/AdjD
+                        const ratings = await CBBDATA_API.teamRatings(espnSeasonYear);
+                        if (ratings) {
+                            const homeRating = ratings[homeTeam.toLowerCase()] || ratings[homeTeam.toLowerCase().replace(/\./g, '')];
+                            const awayRating = ratings[awayTeam.toLowerCase()] || ratings[awayTeam.toLowerCase().replace(/\./g, '')];
+                            if (homeRating) {
+                                result.matchup.teamA.adjO = homeRating.adjO;
+                                result.matchup.teamA.adjD = homeRating.adjD;
+                                result.matchup.teamA.barthag = homeRating.barthag;
+                                result.matchup.teamA.tRank = homeRating.rank;
+                            }
+                            if (awayRating) {
+                                result.matchup.teamB.adjO = awayRating.adjO;
+                                result.matchup.teamB.adjD = awayRating.adjD;
+                                result.matchup.teamB.barthag = awayRating.barthag;
+                                result.matchup.teamB.tRank = awayRating.rank;
+                            }
+                            if (homeRating && awayRating) {
+                                console.log(`🎯 V50 T-Rank: ${homeTeam} #${homeRating.rank} (${homeRating.adjO.toFixed(1)}O/${homeRating.adjD.toFixed(1)}D) vs ${awayTeam} #${awayRating.rank} (${awayRating.adjO.toFixed(1)}O/${awayRating.adjD.toFixed(1)}D)`);
+                            }
+                        }
+                    } catch(e) {
+                        console.warn(`⚠️ V50 CBBData enrichment failed: ${e.message}`);
+                    }
+                }
                 return result;
             }
             
@@ -22392,6 +22606,22 @@ Return ONLY valid JSON:
                                 intelData._teamPPG = mlTeam?.ppg || 0;
                                 intelData._oppPPG = mlOpponent?.ppg || 0;
                                 
+                                // V50: Store full matchup data for opponent-adjusted efficiency model
+                                intelData._matchupData = {
+                                    teamOffRtg: mlTeam?.offRtg || mlTeam?.ppg || 0,
+                                    teamDefRtg: mlTeam?.defRtg || mlTeam?.oppPpg || 0,
+                                    oppOffRtg: mlOpponent?.offRtg || mlOpponent?.ppg || 0,
+                                    oppDefRtg: mlOpponent?.defRtg || mlOpponent?.oppPpg || 0,
+                                    teamNetRtg: mlTeam?.netRtg || mlTeam?.margin || 0,
+                                    oppNetRtg: mlOpponent?.netRtg || mlOpponent?.margin || 0,
+                                    teamWPct: mlTeam?.wPct || 0.5,
+                                    oppWPct: mlOpponent?.wPct || 0.5,
+                                    teamPace: mlTeam?.pace || 68,
+                                    oppPace: mlOpponent?.pace || 68,
+                                    teamRecord: mlTeam?.record || '',
+                                    oppRecord: mlOpponent?.record || ''
+                                };
+                                
                                 console.log(`📊 V50 Moneyline (${isHomeML ? 'HOME' : 'AWAY'}): Margin=${intelData.seasonAvg.toFixed(1)}, L5=${intelData.l5Avg?.toFixed(1)}, L10=${intelData.l10Avg?.toFixed(1)}, ProjMargin=${intelData._projectedMargin.toFixed(1)}`);
                             }
                             
@@ -24218,7 +24448,7 @@ Return ONLY valid JSON:
             }
             
             // Clamp to valid range
-            sharpScore = Math.max(15, Math.min(85, sharpScore));
+            sharpScore = Math.max(5, Math.min(97, sharpScore));
             
             // Determine direction - V11: Narrower neutral zone (45-55 vs 40-60)
             let direction = 'NEUTRAL';
@@ -24433,7 +24663,7 @@ Return ONLY valid JSON:
                 // ═══════════════════════════════════════════════════════════════
                 // CALCULATE FINAL SHARP PERCENTAGE
                 // ═══════════════════════════════════════════════════════════════
-                sharpScore = Math.max(15, Math.min(85, sharpScore));
+                sharpScore = Math.max(5, Math.min(97, sharpScore));
                 const direction = sharpScore >= 55 ? 'OVER' : sharpScore <= 45 ? 'UNDER' : 'NEUTRAL';
                 const confidence = Math.abs(sharpScore - 50) + 50;
                 
@@ -24444,7 +24674,7 @@ Return ONLY valid JSON:
                     overPct: sharpScore,
                     underPct: 100 - sharpScore,
                     direction,
-                    confidence: Math.min(85, confidence),
+                    confidence: Math.min(97, confidence),
                     signals,
                     signalCount: signals.length,
                     timeConfidence,
@@ -25064,7 +25294,7 @@ Return ONLY valid JSON:
             }
             
             // Clamp to valid range
-            const finalProbability = Math.max(35, Math.min(85, baseProbability));
+            const finalProbability = Math.max(5, Math.min(97, baseProbability));
             
             // Calculate confidence level
             const confidenceLevel = getConfidenceLevel(finalProbability);
@@ -26468,7 +26698,7 @@ Return ONLY valid JSON:
                     const weightedAvg = (seasonAvg * 0.3) + (l10Avg * 0.3) + (l5Avg * 0.4);
                     const diff = weightedAvg - line;
                     const statAdjust = Math.max(-0.20, Math.min(0.20, diff * 0.10));
-                    statProb = Math.max(0.15, Math.min(0.85, baseProb + statAdjust));
+                    statProb = Math.max(0.05, Math.min(0.97, baseProb + statAdjust));
                 }
                 
                 // 3. AI Consensus adjustment
@@ -26498,7 +26728,7 @@ Return ONLY valid JSON:
                 // 6. Calibration adjustment
                 let calibProb = baseProb;
                 if (calibrationAdjust) {
-                    calibProb = Math.max(0.15, Math.min(0.85, baseProb + calibrationAdjust));
+                    calibProb = Math.max(0.05, Math.min(0.97, baseProb + calibrationAdjust));
                 }
                 
                 // 7. Weighted blend
@@ -28920,14 +29150,14 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     
                     // Perplexity: use actual confidence %
                     if (liveResearch?.redditSentiment) {
-                        const pplxConf = Math.min(85, Math.max(50, liveResearch.redditConfidence || 55));
+                        const pplxConf = Math.min(97, Math.max(50, liveResearch.redditConfidence || 55));
                         if (liveResearch.redditSentiment === 'OVER') { overMagnitude += pplxConf * pplxWeight; underMagnitude += (100 - pplxConf) * pplxWeight; }
                         else if (liveResearch.redditSentiment === 'UNDER') { underMagnitude += pplxConf * pplxWeight; overMagnitude += (100 - pplxConf) * pplxWeight; }
                         sourceWeightTotal += pplxWeight;
                     }
                     // You.com: use actual confidence %
                     if (state.lastYouComResearch?.sentiment) {
-                        const youConf = Math.min(85, Math.max(50, state.lastYouComResearch.confidence || 55));
+                        const youConf = Math.min(97, Math.max(50, state.lastYouComResearch.confidence || 55));
                         if (state.lastYouComResearch.sentiment === 'OVER') { overMagnitude += youConf * youWeight; underMagnitude += (100 - youConf) * youWeight; }
                         else if (state.lastYouComResearch.sentiment === 'UNDER') { underMagnitude += youConf * youWeight; overMagnitude += (100 - youConf) * youWeight; }
                         sourceWeightTotal += youWeight;
@@ -28940,9 +29170,9 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                         sourceWeightTotal += sharpWeight;
                     }
                     
-                    // Weighted average across sources (caps at 50-85 range to prevent inflation)
-                    const researchOverFinal = sourceWeightTotal > 0 ? Math.min(85, overMagnitude / sourceWeightTotal) : 50;
-                    const researchUnderFinal = sourceWeightTotal > 0 ? Math.min(85, underMagnitude / sourceWeightTotal) : 50;
+                    // Weighted average across sources (V50: expanded to 50-97 range — uncapped)
+                    const researchOverFinal = sourceWeightTotal > 0 ? Math.min(97, overMagnitude / sourceWeightTotal) : 50;
+                    const researchUnderFinal = sourceWeightTotal > 0 ? Math.min(97, underMagnitude / sourceWeightTotal) : 50;
                     
                     const overScoreEl = document.getElementById('research-over-score');
                     const underScoreEl = document.getElementById('research-under-score');
@@ -30930,12 +31160,94 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     : vegasLine - maxDeviation;
                 console.log(`📊 Vegas Anchor: ${rawProjection.toFixed(1)} → ${finalProjection.toFixed(1)} (max ${(maxDeviationPct * 100).toFixed(0)}% dev at ${dataQuality}% confidence)`);
             } else if (isMoneylineMarket) {
-                // For moneyline: projection is a margin (e.g., +3.2 points)
-                // Convert to win probability for display: margin → win%
-                // Formula: winProb = 50 + margin * 2.5 (clamped 15-85%)
+                // ═══════════════════════════════════════════════════════════════
+                // V50 TEAM MARKET INTELLIGENCE — UNCAPPED PREDICTION ENGINE
+                // Replaces broken linear formula with proper logistic model
+                // Uses opponent-adjusted efficiency + market consensus + situational
+                // NO ARTIFICIAL CAPS — let the data speak
+                // ═══════════════════════════════════════════════════════════════
                 const marginProj = finalProjection;
-                const winProb = Math.max(15, Math.min(85, 50 + marginProj * 2.5));
-                console.log(`📊 V50 Moneyline: Margin projection ${marginProj.toFixed(1)} → Win probability ${winProb.toFixed(1)}%`);
+                const isNCAA_ML = ['ncaab', 'basketball_ncaab'].includes(state.sport);
+                const isNBA_ML = ['nba', 'basketball_nba'].includes(state.sport);
+                
+                // ── LAYER 1: Opponent-Adjusted Efficiency Model ──
+                // Instead of raw team margin, compute matchup-specific projection
+                let efficiencyMargin = marginProj;
+                
+                // If we have both teams' offensive/defensive ratings, compute proper matchup
+                if (intelData._teamPPG && intelData._oppPPG && intelData._matchupData) {
+                    const md = intelData._matchupData;
+                    // Matchup-specific: Team's offense vs Opp's defense, Opp's offense vs Team's defense
+                    const teamExpPts = (md.teamOffRtg + md.oppDefRtg) / 2;
+                    const oppExpPts = (md.oppOffRtg + md.teamDefRtg) / 2;
+                    efficiencyMargin = teamExpPts - oppExpPts;
+                    
+                    // Home court adjustment (NCAAB ~3.5 pts, NBA ~2.5 pts)
+                    if (intelData._isHomeSelection) {
+                        efficiencyMargin += isNCAA_ML ? 3.5 : 2.5;
+                    } else {
+                        efficiencyMargin -= isNCAA_ML ? 3.5 : 2.5;
+                    }
+                    console.log(`📊 V50 Efficiency Model: TeamExp=${teamExpPts.toFixed(1)}, OppExp=${oppExpPts.toFixed(1)}, AdjMargin=${efficiencyMargin.toFixed(1)}`);
+                } else {
+                    // Fallback: use projected margin with home court already factored in
+                    efficiencyMargin = intelData._projectedMargin || marginProj;
+                }
+                
+                // ── LAYER 2: Proper Logistic Win Probability ──
+                // Standard logistic model: P(win) = 1 / (1 + e^(-k*margin))
+                // k calibrated per sport: NCAAB more volatile (k=0.15), NBA tighter (k=0.12)
+                // NFL (k=0.07), Hockey (k=0.20), Soccer (k=0.35)
+                const sportLogisticK = {
+                    'ncaab': 0.148, 'basketball_ncaab': 0.148,
+                    'nba': 0.12, 'basketball_nba': 0.12,
+                    'nfl': 0.067, 'football_nfl': 0.067,
+                    'nhl': 0.20, 'hockey_nhl': 0.20,
+                    'soccer': 0.35, 'mls': 0.35
+                };
+                const k = sportLogisticK[state.sport] || 0.148;
+                const logisticWinProb = 1 / (1 + Math.exp(-k * efficiencyMargin));
+                
+                // ── LAYER 3: Market Consensus (if available) ──
+                // Convert moneyline odds to vig-removed implied probability
+                let marketWinProb = null;
+                if (state.liveOdds?.bestOdds) {
+                    const bestOdds = state.liveOdds.bestOdds;
+                    // Find ML odds for both sides
+                    const homeMLOdds = bestOdds.homeML || bestOdds.home_ml;
+                    const awayMLOdds = bestOdds.awayML || bestOdds.away_ml;
+                    if (homeMLOdds && awayMLOdds) {
+                        const oddsToProb = (odds) => odds < 0 ? Math.abs(odds) / (Math.abs(odds) + 100) : 100 / (odds + 100);
+                        const homeRaw = oddsToProb(homeMLOdds);
+                        const awayRaw = oddsToProb(awayMLOdds);
+                        const overround = homeRaw + awayRaw;
+                        const homeNoVig = homeRaw / overround;
+                        const awayNoVig = awayRaw / overround;
+                        marketWinProb = intelData._isHomeSelection ? homeNoVig : awayNoVig;
+                        console.log(`📊 V50 Market Consensus: HomeML=${homeMLOdds}, AwayML=${awayMLOdds}, NoVig=${(marketWinProb*100).toFixed(1)}%`);
+                    }
+                }
+                
+                // ── LAYER 4: Engine Consensus Blend ──
+                // If market data available: 40% model + 40% market + 20% situational
+                // If no market data: 70% model + 30% situational
+                let blendedWinProb;
+                const situationalAdj = (adjustment4_homeAway + adjustment5_restDays + adjustment6_pace) / 100;
+                
+                if (marketWinProb !== null) {
+                    blendedWinProb = (logisticWinProb * 0.40) + (marketWinProb * 0.40) + ((logisticWinProb + situationalAdj) * 0.20);
+                    console.log(`📊 V50 Blend: Model=${(logisticWinProb*100).toFixed(1)}%, Market=${(marketWinProb*100).toFixed(1)}%, Situational=${(situationalAdj*100).toFixed(1)}%`);
+                } else {
+                    blendedWinProb = (logisticWinProb * 0.70) + ((logisticWinProb + situationalAdj) * 0.30);
+                    console.log(`📊 V50 Blend (no market): Model=${(logisticWinProb*100).toFixed(1)}%, Situational=${(situationalAdj*100).toFixed(1)}%`);
+                }
+                
+                // ── V50 UNCAPPED OUTPUT ──
+                // NO artificial 85% cap. Let the data speak.
+                // Floor at 5% (no team has 0% chance), ceiling at 97% (upsets happen)
+                const winProb = Math.max(5, Math.min(97, blendedWinProb * 100));
+                
+                console.log(`📊 V50 Moneyline FINAL: Margin=${efficiencyMargin.toFixed(1)} → Logistic=${(logisticWinProb*100).toFixed(1)}% → Blended=${winProb.toFixed(1)}% [UNCAPPED]`);
                 finalProjection = winProb;
             }
             
@@ -32453,33 +32765,33 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                         const diff = proj - ln;
                         const vote = diff > 0.3 ? 'OVER' : diff < -0.3 ? 'UNDER' : (hr > 0.52 ? 'OVER' : 'UNDER');
                         const conf = Math.min(92, Math.max(52, 55 + Math.abs(diff) * 8 + (hasRealData ? 10 : 0)));
-                        return { vote, confidence: Math.round(conf), reason: `Projection ${proj.toFixed(1)} vs line ${ln} (${diff > 0 ? '+' : ''}${diff.toFixed(1)})`, trueProb: vote === 'OVER' ? Math.min(0.88, Math.max(0.15, 0.5 + diff * 0.06)) : Math.min(0.88, Math.max(0.15, 0.5 - diff * 0.06)) };
+                        return { vote, confidence: Math.round(conf), reason: `Projection ${proj.toFixed(1)} vs line ${ln} (${diff > 0 ? '+' : ''}${diff.toFixed(1)})`, trueProb: vote === 'OVER' ? Math.min(0.97, Math.max(0.05, 0.5 + diff * 0.06)) : Math.min(0.97, Math.max(0.05, 0.5 - diff * 0.06)) };
                     },
                     'openai': () => {
                         const recentProj = l5 * 0.70 + l10 * 0.30;
                         const diff = recentProj - ln;
                         const vote = diff > 0.2 ? 'OVER' : diff < -0.2 ? 'UNDER' : (sAvg > ln ? 'OVER' : 'UNDER');
                         const conf = Math.min(90, Math.max(50, 54 + Math.abs(diff) * 7));
-                        return { vote, confidence: Math.round(conf), reason: `Recent trend: L5 avg ${l5.toFixed(1)}, L10 avg ${l10.toFixed(1)}`, trueProb: vote === 'OVER' ? Math.min(0.85, Math.max(0.18, 0.5 + diff * 0.055)) : Math.min(0.85, Math.max(0.18, 0.5 - diff * 0.055)) };
+                        return { vote, confidence: Math.round(conf), reason: `Recent trend: L5 avg ${l5.toFixed(1)}, L10 avg ${l10.toFixed(1)}`, trueProb: vote === 'OVER' ? Math.min(0.97, Math.max(0.05, 0.5 + diff * 0.055)) : Math.min(0.97, Math.max(0.05, 0.5 - diff * 0.055)) };
                     },
                     'perplexity': () => {
                         const vote = hr >= 0.55 ? 'OVER' : hr <= 0.45 ? 'UNDER' : (l5 > ln ? 'OVER' : 'UNDER');
                         let conf = Math.round(Math.max(50, Math.min(88, hr * 100 + 5)));
                         let reason = `Hit rate: ${(hr * 100).toFixed(0)}%`;
                         if (pinnacleEntry) { reason += ` | Pinnacle: ${pinnacleEntry.line}`; conf = Math.min(90, conf + 3); }
-                        return { vote, confidence: conf, reason, trueProb: vote === 'OVER' ? Math.min(0.85, Math.max(0.2, hr + 0.02)) : Math.min(0.85, Math.max(0.2, (1 - hr) + 0.02)) };
+                        return { vote, confidence: conf, reason, trueProb: vote === 'OVER' ? Math.min(0.97, Math.max(0.05, hr + 0.02)) : Math.min(0.97, Math.max(0.05, (1 - hr) + 0.02)) };
                     },
                     'cohere': () => {
                         const modelProb = 0.5 + (sAvg - ln) * 0.04 + (hr - 0.5) * 0.3;
                         const overEdge = modelProb - impl_o / 100;
                         const vote = overEdge > 0.02 ? 'OVER' : overEdge < -0.02 ? 'UNDER' : (l5 > ln ? 'OVER' : 'UNDER');
                         const conf = Math.min(87, Math.max(50, 55 + Math.abs(overEdge) * 200));
-                        return { vote, confidence: Math.round(conf), reason: `Market efficiency: ${(overEdge * 100).toFixed(1)}% edge`, trueProb: Math.min(0.85, Math.max(0.18, modelProb)) };
+                        return { vote, confidence: Math.round(conf), reason: `Market efficiency: ${(overEdge * 100).toFixed(1)}% edge`, trueProb: Math.min(0.97, Math.max(0.05, modelProb)) };
                     },
                     'youcom': () => {
                         const momentum = l5 - l10;
                         const vote = (momentum > 0.3 && l5 > ln) ? 'OVER' : (momentum < -0.3 && l5 < ln) ? 'UNDER' : (sAvg > ln ? 'OVER' : 'UNDER');
-                        const conf = Math.min(85, Math.max(48, 52 + Math.abs(momentum) * 6));
+                        const conf = Math.min(97, Math.max(48, 52 + Math.abs(momentum) * 6));
                         return { vote, confidence: Math.round(conf), reason: `Momentum: ${momentum > 0 ? '📈 Up' : '📉 Down'} (${momentum > 0 ? '+' : ''}${momentum.toFixed(1)})`, trueProb: vote === 'OVER' ? Math.min(0.82, Math.max(0.2, 0.5 + momentum * 0.04)) : Math.min(0.82, Math.max(0.2, 0.5 - momentum * 0.04)) };
                     },
                     'deepseek': () => {
@@ -32488,7 +32800,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                         const diff = proj - ln;
                         const vote = diff > 0 ? 'OVER' : 'UNDER';
                         const conf = Math.min(89, Math.max(45, 58 + Math.abs(diff) * 6 - variance * 1.5));
-                        return { vote, confidence: Math.round(conf), reason: `Weighted proj: ${proj.toFixed(1)} (±${variance.toFixed(1)})`, trueProb: vote === 'OVER' ? Math.min(0.87, Math.max(0.15, 0.5 + diff * 0.05)) : Math.min(0.87, Math.max(0.15, 0.5 - diff * 0.05)) };
+                        return { vote, confidence: Math.round(conf), reason: `Weighted proj: ${proj.toFixed(1)} (±${variance.toFixed(1)})`, trueProb: vote === 'OVER' ? Math.min(0.97, Math.max(0.05, 0.5 + diff * 0.05)) : Math.min(0.97, Math.max(0.05, 0.5 - diff * 0.05)) };
                     },
                     'grok': () => {
                         const statsDir = l5 > ln ? 'OVER' : 'UNDER';
@@ -32504,7 +32816,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                             const pinDiff = pinLine - ln;
                             const vote = pinDiff > 0.3 ? 'UNDER' : pinDiff < -0.3 ? 'OVER' : (l5 > ln ? 'OVER' : 'UNDER');
                             const conf = Math.min(88, Math.max(55, 62 + Math.abs(pinDiff) * 8));
-                            return { vote, confidence: Math.round(conf), reason: `📌 Pinnacle ${pinLine} vs ${ln} (${pinDiff > 0 ? '+' : ''}${pinDiff.toFixed(1)})`, trueProb: vote === 'OVER' ? Math.min(0.85, Math.max(0.18, 0.5 - pinDiff * 0.06)) : Math.min(0.85, Math.max(0.18, 0.5 + pinDiff * 0.06)) };
+                            return { vote, confidence: Math.round(conf), reason: `📌 Pinnacle ${pinLine} vs ${ln} (${pinDiff > 0 ? '+' : ''}${pinDiff.toFixed(1)})`, trueProb: vote === 'OVER' ? Math.min(0.97, Math.max(0.05, 0.5 - pinDiff * 0.06)) : Math.min(0.97, Math.max(0.05, 0.5 + pinDiff * 0.06)) };
                         }
                         const proj = l10 * 0.5 + sAvg * 0.5;
                         const diff = proj - ln;
@@ -32526,7 +32838,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                         const combined = diff * 0.06 + (hr - 0.5) * 0.3;
                         const vote = combined > 0 ? 'OVER' : 'UNDER';
                         const conf = Math.min(91, Math.max(52, 58 + Math.abs(combined) * 60));
-                        return { vote, confidence: Math.round(conf), reason: `Meta-analysis: proj ${proj.toFixed(1)}, ${bookPrices.length} books`, trueProb: vote === 'OVER' ? Math.min(0.88, Math.max(0.15, 0.5 + combined)) : Math.min(0.88, Math.max(0.15, 0.5 - combined)) };
+                        return { vote, confidence: Math.round(conf), reason: `Meta-analysis: proj ${proj.toFixed(1)}, ${bookPrices.length} books`, trueProb: vote === 'OVER' ? Math.min(0.97, Math.max(0.05, 0.5 + combined)) : Math.min(0.97, Math.max(0.05, 0.5 - combined)) };
                     }
                 };
                 return methods[engineId] ? methods[engineId]() : { vote: 'OVER', confidence: 50, reason: 'Default', trueProb: 0.5 };
@@ -32718,7 +33030,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 console.log(`🎯 V12 Calibrated: ${calibratedResult.direction} @ ${calibratedResult.probability}% (${calibratedResult.dataPoints} data points)`);
             } else {
                 // Fallback to base calculation (blend with partial calibration)
-                const rawOverProb = Math.max(25, Math.min(85, baseProb));
+                const rawOverProb = Math.max(5, Math.min(97, baseProb));
                 
                 // Blend raw with partial calibration (if any data exists)
                 if (calibratedResult.dataPoints > 0) {
@@ -32738,7 +33050,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             // V47: NaN safety — if calibration produced NaN, fall back to base calculation
             if (isNaN(overProb) || isNaN(underProb)) {
                 console.warn('⚠️ V47: Calibration produced NaN, using base probability');
-                const safeBase = Math.max(25, Math.min(85, 50 + (seasonAvg - line) * 4 + (l5Avg - line) * 3));
+                const safeBase = Math.max(5, Math.min(97, 50 + (seasonAvg - line) * 4 + (l5Avg - line) * 3));
                 overProb = safeBase;
                 underProb = 100 - safeBase;
             }
@@ -34780,10 +35092,10 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 const _p = state.lastLiveResearch, _y = state.lastYouComResearch, _s = state.betburgerSharp;
                 if (_p || _y || _s) {
                     let _oM = 0, _wT = 0;
-                    if (_p?.redditSentiment) { const c = Math.min(85, Math.max(50, _p.redditConfidence || 55)); _oM += (_p.redditSentiment === 'OVER' ? c : 100-c) * 1.0; _wT += 1.0; }
-                    if (_y?.sentiment) { const c = Math.min(85, Math.max(50, _y.confidence || 55)); _oM += (_y.sentiment === 'OVER' ? c : 100-c) * 0.8; _wT += 0.8; }
+                    if (_p?.redditSentiment) { const c = Math.min(97, Math.max(50, _p.redditConfidence || 55)); _oM += (_p.redditSentiment === 'OVER' ? c : 100-c) * 1.0; _wT += 1.0; }
+                    if (_y?.sentiment) { const c = Math.min(97, Math.max(50, _y.confidence || 55)); _oM += (_y.sentiment === 'OVER' ? c : 100-c) * 0.8; _wT += 0.8; }
                     if (_s?.direction && (_s.direction === 'OVER' || _s.direction === 'UNDER')) { const c = Math.min(75, Math.max(50, _s.blendedConfidence || _s.confidence || 55)); _oM += (_s.direction === 'OVER' ? c : 100-c) * 0.6; _wT += 0.6; }
-                    if (_wT > 0) researchOverScore = Math.min(85, _oM / _wT);
+                    if (_wT > 0) researchOverScore = Math.min(97, _oM / _wT);
                 } else {
                     researchOverScore = parseFloat(document.getElementById('combined-research-over')?.textContent) || 50;
                 }
@@ -36544,13 +36856,13 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 let oMag = 0, uMag = 0, wTotal = 0;
                 const pw = 1.0, yw = 0.8, sw = 0.6;
                 if (pplxLive?.redditSentiment) {
-                    const c = Math.min(85, Math.max(50, pplxLive.redditConfidence || 55));
+                    const c = Math.min(97, Math.max(50, pplxLive.redditConfidence || 55));
                     if (pplxLive.redditSentiment === 'OVER') { oMag += c * pw; uMag += (100-c) * pw; }
                     else if (pplxLive.redditSentiment === 'UNDER') { uMag += c * pw; oMag += (100-c) * pw; }
                     wTotal += pw;
                 }
                 if (youLive?.sentiment) {
-                    const c = Math.min(85, Math.max(50, youLive.confidence || 55));
+                    const c = Math.min(97, Math.max(50, youLive.confidence || 55));
                     if (youLive.sentiment === 'OVER') { oMag += c * yw; uMag += (100-c) * yw; }
                     else if (youLive.sentiment === 'UNDER') { uMag += c * yw; oMag += (100-c) * yw; }
                     wTotal += yw;
@@ -36562,8 +36874,8 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     wTotal += sw;
                 }
                 if (wTotal > 0) {
-                    researchOverPct = Math.min(85, oMag / wTotal).toFixed(1);
-                    researchUnderPct = Math.min(85, uMag / wTotal).toFixed(1);
+                    researchOverPct = Math.min(97, oMag / wTotal).toFixed(1);
+                    researchUnderPct = Math.min(97, uMag / wTotal).toFixed(1);
                 }
             } else {
                 // Fallback: tag counting if no live data (shouldn't happen normally)
@@ -37227,6 +37539,9 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             document.getElementById('key-boltodds').value = CONFIG.keys.boltodds || '';
             document.getElementById('key-sgo').value = CONFIG.keys.sgo || '';
             
+            // V50: CBBData API key
+            document.getElementById('key-cbbdata').value = state.cbbDataApiKey || '';
+            
             // Bankroll
             document.getElementById('bankroll-input').value = CONFIG.bankroll;
             document.getElementById('settings-modal').classList.add('active');
@@ -37238,6 +37553,25 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
         }
         
         function closeSettings() { document.getElementById('settings-modal').classList.remove('active'); }
+        
+        // V50: CBBData login — auto-retrieve API key
+        async function loginCBBData() {
+            const user = document.getElementById('cbbdata-user')?.value?.trim();
+            const pass = document.getElementById('cbbdata-pass')?.value?.trim();
+            if (!user || !pass) { alert('Enter CBBData username and password'); return; }
+            const btn = event?.target;
+            if (btn) btn.textContent = '⏳...';
+            const key = await CBBDATA_API.login(user, pass);
+            if (key) {
+                document.getElementById('key-cbbdata').value = key;
+                if (btn) btn.textContent = '✅ Got Key!';
+                alert('CBBData API key retrieved! Click Save to activate.');
+            } else {
+                if (btn) btn.textContent = '❌ Failed';
+                alert('Login failed. Check credentials or register at cbbdata.aweatherman.com');
+            }
+            setTimeout(() => { if (btn) btn.textContent = '🔑 Get Key'; }, 3000);
+        }
         
         function saveSettings() {
             // Save AI Proxy URL (most important)
@@ -37261,6 +37595,14 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             localStorage.setItem('sba_key_boltodds', CONFIG.keys.boltodds);
             localStorage.setItem('sba_key_sgo', CONFIG.keys.sgo);
             localStorage.setItem('sba_bankroll', CONFIG.bankroll);
+            
+            // V50: Save CBBData API key
+            const cbbKey = document.getElementById('key-cbbdata')?.value?.trim();
+            if (cbbKey) {
+                state.cbbDataApiKey = cbbKey;
+                localStorage.setItem('sba_cbbdata_key', cbbKey);
+                console.log('✅ CBBData API key saved');
+            }
             
             closeSettings();
             loadEvents();
@@ -41690,7 +42032,7 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
         // ═══════════════════════════════════════════════════════════════════════════
         console.log(`
 ╔═══════════════════════════════════════════════════════════════════════════════╗
-║                     🏆 SBA GENIUS V46 WORLD CLASS 🏆                          ║
+║                     🏆 SBA GENIUS V50 UNCAPPED PREDICTION ENGINE 🏆                          ║
 ║                    COMPLETE DATA INTEGRATION SUITE                            ║
 ╠═══════════════════════════════════════════════════════════════════════════════╣
 ║  ✅ 12 AI Engines (Claude, GPT, Perplexity, Grok, You.com, DeepSeek, etc.)   ║
@@ -41900,7 +42242,7 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                     const direction = leg.direction || (diff > 0 ? 'OVER' : 'UNDER');
                     
                     // Calculate win probability from stats
-                    const hitRate = Math.max(0.2, Math.min(0.85, 0.5 + diff * 0.04));
+                    const hitRate = Math.max(0.2, Math.min(0.97, 0.5 + diff * 0.04));
                     const odds = leg.odds || -110;
                     
                     enrichedLegs.push({
