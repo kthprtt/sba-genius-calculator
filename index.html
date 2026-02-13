@@ -11575,41 +11575,16 @@ Return ONLY valid JSON:
                     
                     // Also fetch BPI ratings for efficiency data
                     try {
-                        const bpiStatsUrl = 'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/statistics';
-                        const statsRes = await fetch(bpiStatsUrl);
-                        if (statsRes.ok) {
-                            const statsData = await statsRes.json();
-                            // Merge stats into team data
-                            console.log('📊 NCAAB Data: ESPN stats loaded');
-                        }
+                    // ESPN team stats (individual team endpoint, not bulk)
+                    // Note: /statistics bulk endpoint doesn't exist for NCAAB
+                    console.log('📊 NCAAB Data: ESPN rankings loaded (bulk stats N/A for NCAAB)');
                     } catch(e) { /* Stats optional */ }
                     
                     // Fetch team efficiency from ESPN power index
                     try {
-                        const piUrl = 'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/powerindex';
-                        const piRes = await fetch(piUrl);
-                        if (piRes.ok) {
-                            const piData = await piRes.json();
-                            if (piData.teams) {
-                                for (const t of piData.teams) {
-                                    const existing = teams.find(r => 
-                                        r.teamId === t.team?.id || 
-                                        r.fullName?.toLowerCase() === t.team?.displayName?.toLowerCase()
-                                    );
-                                    const effData = {
-                                        bpiRank: t.bpiRank,
-                                        bpi: t.bpi,
-                                        offRating: t.stats?.find(s => s.name === 'adjO')?.value || t.offensiveRating,
-                                        defRating: t.stats?.find(s => s.name === 'adjD')?.value || t.defensiveRating,
-                                        sos: t.strengthOfSchedule,
-                                        projWins: t.projectedWins,
-                                        projLosses: t.projectedLosses
-                                    };
-                                    if (existing) Object.assign(existing, effData);
-                                }
-                            }
-                            console.log('📊 NCAAB Data: ESPN Power Index loaded');
-                        }
+                    // ESPN Power Index — not available for NCAAB (CORS + 404)
+                    // Use team-level stats endpoint instead when needed
+                    console.log('📊 NCAAB Data: BPI endpoint N/A for NCAAB, using per-team stats');
                     } catch(e) { /* PI optional */ }
                     
                     this.cache.teamRatings = teams;
@@ -11723,6 +11698,33 @@ Return ONLY valid JSON:
                     
                     this.cache.injuries = injuries;
                     this.cache.injuriesTime = now;
+                    
+                    // V49: If ESPN returned 0, try BDL injuries as fallback
+                    if (injuries.length === 0 && typeof BDL_API !== 'undefined') {
+                        try {
+                            const bdlRes = await BDL_API.fetch('/ncaab/v1/player_injuries');
+                            if (bdlRes?.data) {
+                                for (const inj of bdlRes.data) {
+                                    injuries.push({
+                                        player: `${inj.first_name || ''} ${inj.last_name || ''}`.trim(),
+                                        playerId: inj.player_id || inj.id,
+                                        team: inj.team?.full_name || inj.team?.name || 'Unknown',
+                                        teamId: inj.team?.id,
+                                        position: inj.position || '',
+                                        status: inj.status || 'Unknown',
+                                        injury: inj.comment || inj.description || '',
+                                        date: inj.date || '',
+                                        returnDate: inj.return_date || ''
+                                    });
+                                }
+                                this.cache.injuries = injuries;
+                                console.log(`🏥 NCAAB Data: BDL fallback loaded ${injuries.length} injuries`);
+                            }
+                        } catch(bdlErr) {
+                            console.log('🏥 NCAAB: BDL injury fallback also unavailable');
+                        }
+                    }
+                    
                     console.log(`🏥 NCAAB Data: Loaded ${injuries.length} injuries`);
                     return injuries;
                 } catch(e) {
@@ -17711,7 +17713,9 @@ Return ONLY valid JSON:
             if (!ESPN_TEAM_CACHE[sport]) {
                 try {
                     console.log(`🏟️ ESPN: Loading ${sport} team directory...`);
-                    const url = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams?limit=100`;
+                    // NCAAB has 363+ teams, need higher limit
+                    const teamLimit = sport === 'ncaab' || sport === 'ncaaf' ? 400 : 100;
+                    const url = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams?limit=${teamLimit}`;
                     const res = await fetch(url);
                     if (!res.ok) {
                         console.log(`⚠️ ESPN team fetch failed for ${sport}: ${res.status}`);
@@ -18241,7 +18245,11 @@ Return ONLY valid JSON:
                     const currentSeasonYear = currentMonth >= 10 ? currentYear : currentYear - 1;
                     
                     for (const seasonYear of [currentSeasonYear, currentSeasonYear - 1]) {
-                        const statsUrl = `${baseUrl}/${statsPath}/season_averages/general?season=${seasonYear}&season_type=regular&type=base&player_ids[]=${playerId}`;
+                        // V49: NCAAB uses /player_season_stats, NBA uses /season_averages/general
+                        const statsEndpoint = sport === 'ncaab' 
+                            ? `${statsPath}/player_season_stats?season=${seasonYear}&player_ids[]=${playerId}`
+                            : `${statsPath}/season_averages/general?season=${seasonYear}&season_type=regular&type=base&player_ids[]=${playerId}`;
+                        const statsUrl = `${baseUrl}/${statsEndpoint}`;
                         console.log(`📊 BDL Stats URL:`, statsUrl);
                         
                         const statsRes = await fetch(statsUrl, { 
