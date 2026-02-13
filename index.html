@@ -12847,8 +12847,12 @@ Return ONLY valid JSON:
                 if (projection.hitRate) dataQualityScore += 5;
                 if (projection.defensiveMatchup) dataQualityScore += 5;
                 if (projection.h2hData?.games > 0) dataQualityScore += 5;
+                else if (projection.h2hData?.avg > 0) dataQualityScore += 3; // Proxy H2H still useful
                 if (projection.projectedMinutes > 0) dataQualityScore += 5;
             }
+            // V49.5: Bonus for real ESPN gamelog data (not synthetic)
+            if (intelData.recentForm?.source === 'ESPN_GAMELOG') dataQualityScore += 5;
+            if (intelData.advancedStats?.source === 'ESPN_GAMELOG') dataQualityScore += 3;
             if (state.liveOdds && Object.keys(state.liveOdds.lines || {}).length > 0) dataQualityScore += 10;
             if (state.betburgerSharp?.signalCount > 0) dataQualityScore += 5;
             if (state.gameLines?.spread) dataQualityScore += 3;
@@ -22571,7 +22575,13 @@ Return ONLY valid JSON:
                             }
                             
                             if (!h2hFound) {
-                                intelData.matchupHistory = { avg: 0, games: 0, statKey: 'none', source: 'UNAVAILABLE' };
+                            if (!h2hFound) {
+                                // No direct H2H — use combined team PPG as proxy
+                                const homeP = state.teamStats?.home?.ppg || 0;
+                                const awayP = state.teamStats?.away?.ppg || 0;
+                                const proxyTotal = homeP + awayP;
+                                intelData.matchupHistory = { avg: proxyTotal > 0 ? proxyTotal : 0, games: 0, statKey: 'total', source: 'TEAM_PPG_PROXY', note: 'No direct H2H — using combined team PPG' };
+                            }
                             }
                         }
                         
@@ -22696,22 +22706,36 @@ Return ONLY valid JSON:
                         console.log(`✅ V49.5 ESPN Gamelog Pipeline: ${playerData.name} ${statKey} — Season=${seasonVal.toFixed(1)}, L3=${l3Val.toFixed(1)}, L5=${l5Val.toFixed(1)}, L10=${l10Val.toFixed(1)} (${gamelog.gamesPlayed} games)`);
                         
                         // REAL rolling averages
-                        if (!intelData.seasonAvg) intelData.seasonAvg = seasonVal;
+                        // V49.5: ALWAYS override season avg with real gamelog data
+                        // BDL/ESPN individual stats often fail for NCAAB; gamelog is most reliable
+                        if (seasonVal > 0) {
+                            if (intelData.seasonAvg && intelData.seasonAvg !== seasonVal) {
+                                console.log(`📊 V49.5: Overriding seasonAvg ${intelData.seasonAvg} → ${seasonVal.toFixed(1)} (from ${gamelog.gamesPlayed} real games)`);
+                            }
+                            intelData.seasonAvg = seasonVal;
+                        }
                         intelData.l3Avg = l3Val;
                         intelData.l5Avg = l5Val;
                         intelData.l10Avg = l10Val;
                         
                         // REAL recent form from actual game logs
                         if (!intelData.recentForm || intelData.recentForm.source === 'BDL_SEASON_PROXY') {
+                            // V49.5 FIX: Pass FULL game objects so E10/V10 can read g.pts, g.min, g.reb etc.
                             intelData.recentForm = {
-                                recentGames: gamelog.games.slice(0, 10).map(g => ({ 
-                                    value: g[glKey] || 0, 
-                                    date: g.date, 
-                                    opponent: g.opponent,
-                                    result: g.result 
+                                recentGames: gamelog.games.slice(0, 10).map(g => ({
+                                    // Full stat fields for E10 Smart Momentum + V10 Variance
+                                    pts: g.pts || 0, reb: g.reb || 0, ast: g.ast || 0,
+                                    stl: g.stl || 0, blk: g.blk || 0, to: g.to || 0,
+                                    min: g.min || 0, minutesPlayed: g.min || 0,
+                                    fgm: g.fgm || 0, fga: g.fga || 0, fg3m: g.fg3m || 0, fg3a: g.fg3a || 0,
+                                    ftm: g.ftm || 0, fta: g.fta || 0,
+                                    pra: g.pra || 0, pr: g.pr || 0, pa: g.pa || 0, ra: g.ra || 0,
+                                    // Legacy field + metadata
+                                    value: g[glKey] || 0,
+                                    date: g.date, opponent: g.opponent, result: g.result, homeAway: g.homeAway
                                 })),
-                                l5: l5Val,
-                                l10: l10Val,
+                                l5: { avg: l5Val, min: gamelog.l5?.min || gamelog.season?.min || 30 },
+                                l10: { avg: l10Val, min: gamelog.l10?.min || gamelog.season?.min || 30 },
                                 gamesAvailable: gamelog.gamesPlayed,
                                 source: 'ESPN_GAMELOG'
                             };
@@ -22846,7 +22870,16 @@ Return ONLY valid JSON:
                                     }
                                 } catch(e) {}
                             }
-                            if (!h2hSet) intelData.matchupHistory = { avg: 0, games: 0, statKey: 'none', source: 'UNAVAILABLE' };
+                            if (!h2hSet) {
+                                // No direct H2H found — use team pace proxy (still useful signal)
+                                // Compare team offensive/defensive rates to estimate player performance
+                                const oppDefRating = aOppPPG || hOppPPG || 70;
+                                const teamOffRating = hPPG || aPPG || 70;
+                                const leagueAvg = ['ncaab', 'basketball_ncaab'].includes(state.sport) ? 72 : 112;
+                                const defFactor = leagueAvg > 0 ? oppDefRating / leagueAvg : 1;
+                                const proxyAvg = Math.round(seasonVal * defFactor * 10) / 10;
+                                intelData.matchupHistory = { avg: proxyAvg || seasonVal, games: 0, statKey: glKey, source: 'TEAM_PACE_PROXY', note: 'No direct H2H — using opponent defensive rate' };
+                            }
                         }
                         
                         espnGamelogUsed = true;
@@ -22956,7 +22989,12 @@ Return ONLY valid JSON:
                                 }
                             } catch(e) { console.log(`⚠️ V49.4 Player H2H error: ${e.message}`); }
                         }
-                        if (!h2hSet) intelData.matchupHistory = { avg: 0, games: 0, statKey: 'none', source: 'UNAVAILABLE' };
+                        if (!h2hSet) {
+                            const oppDef = aOppPPG || hOppPPG || 70;
+                            const lAvg = ['ncaab', 'basketball_ncaab'].includes(state.sport) ? 72 : 112;
+                            const dFact = lAvg > 0 ? oppDef / lAvg : 1;
+                            intelData.matchupHistory = { avg: Math.round((statVal || intelData.seasonAvg || 0) * dFact * 10) / 10, games: 0, statKey: statKey, source: 'TEAM_PACE_PROXY' };
+                        }
                     }
                     if (!intelData.homeAwaySplit) intelData.homeAwaySplit = { home: statVal, away: statVal, source: 'BDL_SEASON' };
                     if (!intelData.defensiveMatchup) intelData.defensiveMatchup = { oppDefRtg: aOppPPG || hOppPPG || 70, source: 'ESPN_TEAM' };
@@ -22982,7 +23020,7 @@ Return ONLY valid JSON:
                 l10Avg: intelData.l10Avg != null && intelData.l10Avg !== 0,
                 recentForm: !!(intelData.recentForm?.recentGames?.length > 0),
                 advancedStats: !!intelData.advancedStats,
-                matchupHistory: !!(intelData.matchupHistory?.games > 0),
+                matchupHistory: !!(intelData.matchupHistory && (intelData.matchupHistory.games > 0 || (intelData.matchupHistory.avg > 0 && intelData.matchupHistory.source?.includes('PROXY')))),
                 homeAwaySplit: !!intelData.homeAwaySplit,
                 paceData: !!intelData.paceData,
                 defensiveMatchup: !!intelData.defensiveMatchup,
@@ -29651,10 +29689,10 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             let h2hConfidence = 'Low';
             let h2hSource = 'proxy';
             
-            if (intelData.matchupHistory && intelData.matchupHistory.avg !== null && !isNaN(intelData.matchupHistory.avg) && intelData.matchupHistory.games > 0) {
+            if (intelData.matchupHistory && intelData.matchupHistory.avg !== null && !isNaN(intelData.matchupHistory.avg) && (intelData.matchupHistory.games > 0 || (intelData.matchupHistory.avg > 0 && intelData.matchupHistory.source?.includes('PROXY')))) {
                 engine3_matchupHistory = intelData.matchupHistory.avg;
                 matchupGames = intelData.matchupHistory.games || 0;
-                h2hSource = 'real';
+                h2hSource = intelData.matchupHistory.games > 0 ? 'real' : 'proxy';
                 
                 // V11: Confidence based on sample size
                 if (matchupGames >= 4) {
@@ -32146,6 +32184,12 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 // V50: Use !== 0 instead of > 0 so negative margins work for team markets
                 const projL10 = state.lastProjection?.l10Avg;
                 const projL5 = state.lastProjection?.l5Avg;
+                // V49.5 FIX: Override seasonAvg from projection when BDL had no data but ESPN gamelog did
+                const projSeasonAvg = state.lastProjection?.engines?.seasonAvg;
+                if (projSeasonAvg > 0 && (seasonAvg === line || seasonAvg === 0)) {
+                    console.log(`✅ V49.5 Season Avg Override: ${seasonAvg} → ${projSeasonAvg} (from ESPN gamelog)`);
+                    seasonAvg = projSeasonAvg;
+                }
                 l10Avg = (projL10 != null && projL10 !== 0) ? projL10 : (playerData.l10?.[statKey] || seasonAvg);
                 l5Avg = (projL5 != null && projL5 !== 0) ? projL5 : (playerData.l5?.[statKey] || seasonAvg);
                 usagePct = playerData.usage || 20;
