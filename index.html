@@ -22288,20 +22288,36 @@ Return ONLY valid JSON:
                                                     const comps = e.competitions?.[0]?.competitors || [];
                                                     const home = comps.find(c => c.homeAway === 'home');
                                                     const away = comps.find(c => c.homeAway === 'away');
-                                                    const hScore = parseInt(home?.score || 0);
-                                                    const aScore = parseInt(away?.score || 0);
+                                                    // ESPN schedule scores can be: string "85", number 85, nested {value: 85}, or undefined
+                                                    const parseScore = (comp) => {
+                                                        if (!comp) return 0;
+                                                        const s = comp.score;
+                                                        if (s == null) return 0;
+                                                        if (typeof s === 'number') return s;
+                                                        if (typeof s === 'string') return parseInt(s) || 0;
+                                                        if (typeof s === 'object' && s.value != null) return parseInt(s.value) || 0;
+                                                        return 0;
+                                                    };
+                                                    const hScore = parseScore(home);
+                                                    const aScore = parseScore(away);
+                                                    console.log(`   📊 H2H game: ${home?.team?.abbreviation || '?'} ${hScore} - ${away?.team?.abbreviation || '?'} ${aScore}`);
                                                     return { total: hScore + aScore, margin: hScore - aScore, homeScore: hScore, awayScore: aScore };
-                                                });
-                                                const avgTotal = h2hStats.reduce((s, g) => s + g.total, 0) / h2hStats.length;
-                                                const avgMargin = h2hStats.reduce((s, g) => s + g.margin, 0) / h2hStats.length;
-                                                intelData.matchupHistory = {
-                                                    avg: mktCtx.analysisType === 'game_total' ? avgTotal : avgMargin,
-                                                    games: h2hGames.length,
-                                                    statKey: mktCtx.analysisType === 'game_total' ? 'gameTotal' : 'margin',
-                                                    source: 'ESPN_SCHEDULE_H2H'
-                                                };
-                                                console.log(`✅ V49.2 H2H: Found ${h2hGames.length} prior meetings via ESPN schedule (avg total: ${avgTotal.toFixed(1)}, avg margin: ${avgMargin.toFixed(1)})`);
-                                                h2hFound = true;
+                                                }).filter(g => g.total > 0); // Filter out games with no scores
+                                                
+                                                if (h2hStats.length > 0) {
+                                                    const avgTotal = h2hStats.reduce((s, g) => s + g.total, 0) / h2hStats.length;
+                                                    const avgMargin = h2hStats.reduce((s, g) => s + g.margin, 0) / h2hStats.length;
+                                                    intelData.matchupHistory = {
+                                                        avg: mktCtx.analysisType === 'game_total' ? avgTotal : avgMargin,
+                                                        games: h2hStats.length,
+                                                        statKey: mktCtx.analysisType === 'game_total' ? 'gameTotal' : 'margin',
+                                                        source: 'ESPN_SCHEDULE_H2H'
+                                                    };
+                                                    console.log(`✅ V49.2 H2H: Found ${h2hStats.length} prior meetings via ESPN schedule (avg total: ${avgTotal.toFixed(1)}, avg margin: ${avgMargin.toFixed(1)})`);
+                                                    h2hFound = true;
+                                                } else {
+                                                    console.log(`⚠️ V49.2 H2H: Found ${h2hGames.length} completed games but scores were unavailable`);
+                                                }
                                             } else {
                                                 console.log(`📊 V49.2 H2H: No prior meetings found this season (${events.length} total games checked)`);
                                             }
@@ -29143,7 +29159,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             let h2hConfidence = 'Low';
             let h2hSource = 'proxy';
             
-            if (intelData.matchupHistory && intelData.matchupHistory.avg !== null) {
+            if (intelData.matchupHistory && intelData.matchupHistory.avg !== null && !isNaN(intelData.matchupHistory.avg) && intelData.matchupHistory.games > 0) {
                 engine3_matchupHistory = intelData.matchupHistory.avg;
                 matchupGames = intelData.matchupHistory.games || 0;
                 h2hSource = 'real';
