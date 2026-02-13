@@ -30581,8 +30581,15 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 
                 // V50: For moneyline, seasonAvg comes from projection (margin), not playerData
                 const isMoneylineBothOuter = (market || '').toLowerCase() === 'moneyline';
-                if (isMoneylineBothOuter && state.lastProjection?.engines?.seasonAvg != null) {
-                    seasonAvg = state.lastProjection.engines.seasonAvg;
+                if (isMoneylineBothOuter) {
+                    // Try projection engines first, then team matchup data
+                    if (state.lastProjection?.engines?.seasonAvg != null) {
+                        seasonAvg = state.lastProjection.engines.seasonAvg;
+                    } else if (state.teamIntelligence?.matchup) {
+                        // Fallback: compute from team intel matchup margins
+                        const m = state.teamIntelligence.matchup;
+                        seasonAvg = m.expectedMargin || 0;
+                    }
                 }
                 
                 // V39 FIX: Double-check seasonAvg isn't PPG contamination for non-points markets
@@ -35115,6 +35122,8 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             // ─── Populate Panel ───
             panel.style.display = 'block';
             // V50: For moneyline, show win probability with % suffix
+            const bookDisplay = isMLPanel ? `${(100 - sbaModel + gap).toFixed(1)}% implied` : bookLine.toFixed(1);
+            const modelDisplay = isMLPanel ? `${sbaModel.toFixed(1)}% win` : sbaModel.toFixed(1);
             document.getElementById('sba-model-number').textContent = isMLPanel ? `${sbaModel.toFixed(1)}%` : sbaModel.toFixed(1);
             document.getElementById('sba-model-number').style.color = modelSide === sideA ? '#00ff88' : modelSide === sideB ? '#ff6b6b' : '#f4c430';
             document.getElementById('sba-model-label').textContent = modelSide !== 'TOSS-UP' ? `Favors ${modelSide}` : 'TOSS-UP';
@@ -35144,8 +35153,6 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             // V50: For moneyline, use probability-based thresholds (in % points)
             const gapThresholdAction = isMLPanel ? 5 : 2;
             const gapThresholdLean = isMLPanel ? 2 : 1.5;
-            const bookDisplay = isMLPanel ? `${(100 - sbaModel + gap).toFixed(1)}% implied` : bookLine.toFixed(1);
-            const modelDisplay = isMLPanel ? `${sbaModel.toFixed(1)}% win` : sbaModel.toFixed(1);
             
             if (conviction >= 65 && absGap >= gapThresholdAction) {
                 verdictEl.textContent = `✅ ACTIONABLE: ${modelSide} (SBA ${modelDisplay} vs Book ${bookDisplay})`;
