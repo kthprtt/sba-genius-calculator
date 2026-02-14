@@ -6497,36 +6497,65 @@ Return ONLY valid JSON:
                 }
             },
             
-            // Team ratings — try Barttorvik CSV endpoint
+            // Team ratings — use CBBData API endpoint (not direct Barttorvik which is CORS-blocked)
             async teamRatings(year = 2026) {
                 if (!state.cbbDataApiKey) return null;
                 const cacheKey = `ratings_${year}`;
                 if (state.cbbDataCache[cacheKey]) return state.cbbDataCache[cacheKey];
                 
                 try {
-                    const csvUrl = `https://barttorvik.com/trank.php?year=${year}&csv=1`;
-                    const resp = await fetch(csvUrl, { headers: { 'User-Agent': 'CBB-DATA' } });
+                    // Primary: CBBData API ratings endpoint (no CORS issues)
+                    const params = new URLSearchParams({ key: state.cbbDataApiKey, year: String(year) });
+                    const resp = await fetch(`${this.BASE}/torvik/ratings?${params}`);
                     if (resp.ok) {
-                        const text = await resp.text();
-                        const lines = text.trim().split('\n');
-                        const ratings = {};
-                        for (const line of lines) {
-                            const cols = line.split(',');
-                            if (cols.length >= 10) {
-                                const team = cols[0]?.trim();
-                                if (team) {
-                                    ratings[team.toLowerCase()] = {
-                                        team, rank: parseInt(cols[1]) || 0,
-                                        adjO: parseFloat(cols[2]) || 0, adjD: parseFloat(cols[3]) || 0,
-                                        barthag: parseFloat(cols[4]) || 0, tempo: parseFloat(cols[7]) || 68,
-                                        wins: parseInt(cols[5]) || 0, losses: parseInt(cols[6]) || 0
-                                    };
+                        const contentType = resp.headers.get('content-type') || '';
+                        let teamsData;
+                        
+                        if (contentType.includes('json')) {
+                            teamsData = await resp.json();
+                        } else {
+                            // CBBData may return CSV or parquet — try text parsing
+                            const text = await resp.text();
+                            const lines = text.trim().split('\n');
+                            teamsData = [];
+                            const headers = lines[0]?.split(',').map(h => h.trim().toLowerCase());
+                            for (let i = 1; i < lines.length; i++) {
+                                const cols = lines[i].split(',');
+                                if (cols.length >= 5) {
+                                    const obj = {};
+                                    headers.forEach((h, idx) => obj[h] = cols[idx]?.trim());
+                                    teamsData.push(obj);
                                 }
                             }
                         }
-                        state.cbbDataCache[cacheKey] = ratings;
-                        console.log(`✅ CBBData Ratings: Loaded ${Object.keys(ratings).length} teams for ${year}`);
-                        return ratings;
+                        
+                        // Convert array to lookup object
+                        const ratings = {};
+                        const dataArr = Array.isArray(teamsData) ? teamsData : [teamsData];
+                        for (const t of dataArr) {
+                            const name = t.team || t.Team || t.name || '';
+                            if (name) {
+                                ratings[name.toLowerCase()] = {
+                                    team: name,
+                                    rank: parseInt(t.rank || t.rk || t.barthag_rk) || 0,
+                                    adjO: parseFloat(t.adjO || t.adj_o || t.adjo || t.off_rtg) || 0,
+                                    adjD: parseFloat(t.adjD || t.adj_d || t.adjd || t.def_rtg) || 0,
+                                    barthag: parseFloat(t.barthag || t.Barthag) || 0,
+                                    tempo: parseFloat(t.tempo || t.adj_t || t.Tempo) || 68,
+                                    wins: parseInt(t.wins || t.w) || 0,
+                                    losses: parseInt(t.losses || t.l) || 0
+                                };
+                            }
+                        }
+                        
+                        if (Object.keys(ratings).length > 0) {
+                            state.cbbDataCache[cacheKey] = ratings;
+                            console.log(`✅ CBBData Ratings: Loaded ${Object.keys(ratings).length} teams for ${year}`);
+                            return ratings;
+                        }
+                        console.log(`⚠️ CBBData Ratings: Response parsed but 0 teams extracted. Content-type: ${contentType}`);
+                    } else {
+                        console.warn(`⚠️ CBBData Ratings: HTTP ${resp.status}`);
                     }
                 } catch(e) {
                     console.warn(`⚠️ CBBData ratings fetch failed: ${e.message}`);
@@ -19671,14 +19700,36 @@ Return ONLY valid JSON:
                             homeTeam, awayTeam, 'H'
                         );
                         if (bartPred) {
+                            // CBBData returns array of 2 team predictions [{team1}, {team2}]
+                            // or sometimes a single object — normalize to find home team data
+                            let homePred = bartPred;
+                            let awayPred = null;
+                            if (Array.isArray(bartPred)) {
+                                // Find home and away predictions from the array
+                                homePred = bartPred.find(p => p.team === homeTeam || p.side === 'home') || bartPred[0];
+                                awayPred = bartPred.find(p => p.team === awayTeam || p.side === 'away') || bartPred[1];
+                            }
                             result.barttorvik = bartPred;
-                            // Override margin with Barttorvik's opponent-adjusted prediction
-                            if (bartPred.margin !== undefined) {
-                                result.matchup.expectedMargin = bartPred.margin;
-                                result.matchup.barttorvikMargin = bartPred.margin;
-                                result.matchup.barttorvikTotal = bartPred.total || projTotal;
-                                result.matchup.barttorvikWinProb = bartPred.win_pct || bartPred.winPct;
-                                console.log(`🎯 V50 Barttorvik: ${homeTeam} margin=${bartPred.margin.toFixed(1)}, total=${bartPred.total?.toFixed(1)}, win%=${(bartPred.win_pct||bartPred.winPct||0).toFixed(1)}%`);
+                            // Log the raw response for debugging
+                            console.log(`📋 V50 CBBData raw prediction:`, JSON.stringify(bartPred).substring(0, 500));
+                            
+                            // Extract margin — try multiple possible field names
+                            const bartMargin = homePred?.margin ?? homePred?.projected_margin ?? 
+                                homePred?.mov ?? homePred?.spread ?? 
+                                (homePred?.pts_for && homePred?.pts_against ? homePred.pts_for - homePred.pts_against : undefined);
+                            const bartTotal = homePred?.total ?? homePred?.projected_total ?? 
+                                (homePred?.pts_for && (awayPred?.pts_for || homePred?.pts_against) ? 
+                                    homePred.pts_for + (awayPred?.pts_for || homePred.pts_against) : undefined);
+                            const bartWinPct = homePred?.win_pct ?? homePred?.winPct ?? homePred?.win_prob ?? homePred?.home_win_pct;
+                            
+                            if (bartMargin !== undefined) {
+                                result.matchup.expectedMargin = bartMargin;
+                                result.matchup.barttorvikMargin = bartMargin;
+                                result.matchup.barttorvikTotal = bartTotal || projTotal;
+                                result.matchup.barttorvikWinProb = bartWinPct;
+                                console.log(`🎯 V50 Barttorvik: ${homeTeam} margin=${Number(bartMargin).toFixed(1)}, total=${bartTotal?.toFixed?.(1) || 'N/A'}, win%=${bartWinPct ? (bartWinPct * (bartWinPct < 1 ? 100 : 1)).toFixed(1) : 'N/A'}%`);
+                            } else {
+                                console.log(`⚠️ V50 CBBData: Got prediction but no margin field found. Keys:`, Object.keys(homePred || {}));
                             }
                         }
                         
@@ -22643,7 +22694,11 @@ Return ONLY valid JSON:
                                     teamPace: mlTeam?.pace || 68,
                                     oppPace: mlOpponent?.pace || 68,
                                     teamRecord: mlTeam?.record || '',
-                                    oppRecord: mlOpponent?.record || ''
+                                    oppRecord: mlOpponent?.record || '',
+                                    // V50.2: Pass Barttorvik data through for efficiency model
+                                    barttorvikMargin: m.barttorvikMargin ?? null,
+                                    barttorvikTotal: m.barttorvikTotal ?? null,
+                                    barttorvikWinProb: m.barttorvikWinProb ?? null
                                 };
                                 
                                 console.log(`📊 V50 Moneyline (${isHomeML ? 'HOME' : 'AWAY'}): Margin=${intelData.seasonAvg.toFixed(1)}, L5=${intelData.l5Avg?.toFixed(1)}, L10=${intelData.l10Avg?.toFixed(1)}, ProjMargin=${intelData._projectedMargin.toFixed(1)}`);
@@ -31201,18 +31256,29 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 // If we have both teams' offensive/defensive ratings, compute proper matchup
                 if (intelData._teamPPG && intelData._oppPPG && intelData._matchupData) {
                     const md = intelData._matchupData;
-                    // Matchup-specific: Team's offense vs Opp's defense, Opp's offense vs Team's defense
-                    const teamExpPts = (md.teamOffRtg + md.oppDefRtg) / 2;
-                    const oppExpPts = (md.oppOffRtg + md.teamDefRtg) / 2;
-                    efficiencyMargin = teamExpPts - oppExpPts;
                     
-                    // Home court adjustment (NCAAB ~3.5 pts, NBA ~2.5 pts)
-                    if (intelData._isHomeSelection) {
-                        efficiencyMargin += isNCAA_ML ? 3.5 : 2.5;
+                    // V50.2: If Barttorvik margin is available, use it (opponent-adjusted)
+                    if (md.barttorvikMargin !== undefined && md.barttorvikMargin !== null) {
+                        efficiencyMargin = md.barttorvikMargin;
+                        // Barttorvik already includes home court, but check if selection is away
+                        if (!intelData._isHomeSelection) {
+                            efficiencyMargin = -efficiencyMargin; // Flip for away team perspective
+                        }
+                        console.log(`🎯 V50 Barttorvik Efficiency: Margin=${md.barttorvikMargin.toFixed(1)} (${intelData._isHomeSelection ? 'HOME' : 'AWAY'} → ${efficiencyMargin.toFixed(1)})`);
                     } else {
-                        efficiencyMargin -= isNCAA_ML ? 3.5 : 2.5;
+                        // Fallback: ESPN matchup-specific projection
+                        const teamExpPts = (md.teamOffRtg + md.oppDefRtg) / 2;
+                        const oppExpPts = (md.oppOffRtg + md.teamDefRtg) / 2;
+                        efficiencyMargin = teamExpPts - oppExpPts;
+                        
+                        // Home court adjustment (NCAAB ~3.5 pts, NBA ~2.5 pts)
+                        if (intelData._isHomeSelection) {
+                            efficiencyMargin += isNCAA_ML ? 3.5 : 2.5;
+                        } else {
+                            efficiencyMargin -= isNCAA_ML ? 3.5 : 2.5;
+                        }
+                        console.log(`📊 V50 ESPN Efficiency Model: TeamExp=${teamExpPts.toFixed(1)}, OppExp=${oppExpPts.toFixed(1)}, AdjMargin=${efficiencyMargin.toFixed(1)}`);
                     }
-                    console.log(`📊 V50 Efficiency Model: TeamExp=${teamExpPts.toFixed(1)}, OppExp=${oppExpPts.toFixed(1)}, AdjMargin=${efficiencyMargin.toFixed(1)}`);
                 } else {
                     // Fallback: use projected margin with home court already factored in
                     efficiencyMargin = intelData._projectedMargin || marginProj;
