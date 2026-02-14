@@ -9,6 +9,9 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Rajdhani:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     
+    <!-- Flechette: lightweight Arrow/Parquet parser for CBBData binary responses -->
+    <script src="https://cdn.jsdelivr.net/npm/@uwdata/flechette@1/dist/flechette.min.js" defer onerror="console.log('⚠️ Flechette not loaded — CBBData Arrow parsing unavailable')"></script>
+    
     <style>
         :root {
             --bg-primary: #0a0a0f;
@@ -6497,56 +6500,126 @@ Return ONLY valid JSON:
                 }
             },
             
-            // Team ratings — query individual teams via CBBData API
-            // The bulk /torvik/ratings endpoint returns Apache Arrow format (binary)
-            // which requires special libraries. Instead, use per-team endpoints.
+            // Team ratings — bulk endpoint returns Apache Arrow/Parquet format
+            // Load ratings once and cache, using arrow library to parse binary response
             async teamRatings(year = 2026) {
                 if (!state.cbbDataApiKey) return null;
                 const cacheKey = `ratings_${year}`;
                 if (state.cbbDataCache[cacheKey]) return state.cbbDataCache[cacheKey];
                 
-                // CBBData bulk ratings returns Arrow/Parquet (application/octet-stream)
-                // We can't parse this in the browser without apache-arrow library
-                // Instead, return null and rely on per-team lookups in teamFactors()
-                console.log(`📊 CBBData Ratings: Skipping bulk endpoint (Arrow format). Using per-team lookups.`);
-                return null;
-            },
-            
-            // Per-team four factors (JSON endpoint)
-            async teamFactors(team, year = 2026) {
-                if (!state.cbbDataApiKey) return null;
-                const cacheKey = `factors_${team}_${year}`;
-                if (state.cbbDataCache[cacheKey]) return state.cbbDataCache[cacheKey];
-                
                 try {
-                    const params = new URLSearchParams({ 
-                        key: state.cbbDataApiKey, year: String(year), team 
-                    });
-                    const resp = await fetch(`${this.BASE}/torvik/team-factors?${params}`);
+                    // Try the ratings endpoint with arrow format parsing
+                    const params = new URLSearchParams({ key: state.cbbDataApiKey, year: String(year) });
+                    const resp = await fetch(`${this.BASE}/torvik/ratings?${params}`);
                     if (!resp.ok) {
-                        // Try alternate endpoint names
-                        const resp2 = await fetch(`${this.BASE}/torvik/team_factors?${params}`);
-                        if (!resp2.ok) {
-                            console.warn(`⚠️ CBBData team factors: HTTP ${resp.status}/${resp2.status} for ${team}`);
-                            return null;
-                        }
-                        const data = await resp2.json();
-                        state.cbbDataCache[cacheKey] = data;
-                        return data;
-                    }
-                    const contentType = resp.headers.get('content-type') || '';
-                    if (contentType.includes('octet-stream')) {
-                        console.warn(`⚠️ CBBData team factors: Got Arrow format for ${team}, skipping`);
+                        console.warn(`⚠️ CBBData Ratings: HTTP ${resp.status}`);
                         return null;
                     }
-                    const data = await resp.json();
-                    state.cbbDataCache[cacheKey] = data;
-                    console.log(`✅ CBBData: ${team} factors loaded (${year})`);
-                    return data;
+                    
+                    const contentType = resp.headers.get('content-type') || '';
+                    
+                    // If JSON, parse directly
+                    if (contentType.includes('json')) {
+                        const data = await resp.json();
+                        const ratings = {};
+                        const arr = Array.isArray(data) ? data : [data];
+                        for (const t of arr) {
+                            const name = t.team || t.Team || '';
+                            if (name) {
+                                ratings[name.toLowerCase()] = {
+                                    team: name, rank: parseInt(t.barthag_rk||t.rank) || 0,
+                                    adjO: parseFloat(t.adj_o||t.adjO) || 0,
+                                    adjD: parseFloat(t.adj_d||t.adjD) || 0,
+                                    barthag: parseFloat(t.barthag) || 0,
+                                    tempo: parseFloat(t.adj_t||t.tempo) || 68
+                                };
+                            }
+                        }
+                        if (Object.keys(ratings).length > 0) {
+                            state.cbbDataCache[cacheKey] = ratings;
+                            console.log(`✅ CBBData Ratings: ${Object.keys(ratings).length} teams (JSON)`);
+                            return ratings;
+                        }
+                    }
+                    
+                    // Binary/Arrow format — try parsing with Flechette or Apache Arrow JS
+                    const buffer = await resp.arrayBuffer();
+                    try {
+                        let table = null;
+                        // Try Flechette first (lighter, faster)
+                        if (typeof flechette !== 'undefined' && flechette.tableFromIPC) {
+                            table = flechette.tableFromIPC(new Uint8Array(buffer));
+                        }
+                        // Try Apache Arrow JS
+                        else if (typeof Arrow !== 'undefined' && Arrow.tableFromIPC) {
+                            table = Arrow.tableFromIPC(new Uint8Array(buffer));
+                        }
+                        
+                        if (table) {
+                            const ratings = {};
+                            const rows = table.toArray ? table.toArray() : [...table];
+                            for (const row of rows) {
+                                const name = row.team || row.Team || '';
+                                if (name) {
+                                    ratings[name.toLowerCase()] = {
+                                        team: name, rank: parseInt(row.barthag_rk||row.rank) || 0,
+                                        adjO: parseFloat(row.adj_o||row.adjO) || 0,
+                                        adjD: parseFloat(row.adj_d||row.adjD) || 0,
+                                        barthag: parseFloat(row.barthag) || 0,
+                                        tempo: parseFloat(row.adj_t||row.tempo) || 68
+                                    };
+                                }
+                            }
+                            if (Object.keys(ratings).length > 0) {
+                                state.cbbDataCache[cacheKey] = ratings;
+                                console.log(`✅ CBBData Ratings: ${Object.keys(ratings).length} teams (Arrow/Parquet)`);
+                                return ratings;
+                            }
+                        }
+                    } catch(arrowErr) {
+                        console.log(`⚠️ CBBData: Arrow parse failed: ${arrowErr.message}`);
+                    }
+                    
+                    // Fallback: Try parsing as CSV text (some endpoints return plain text)
+                    try {
+                        const text = new TextDecoder().decode(buffer);
+                        if (text.includes(',') && text.includes('\n') && !text.includes('\0')) {
+                            const lines = text.trim().split('\n');
+                            const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+                            const teamIdx = headers.findIndex(h => h === 'team');
+                            const adjOIdx = headers.findIndex(h => h === 'adj_o' || h === 'adjo');
+                            const adjDIdx = headers.findIndex(h => h === 'adj_d' || h === 'adjd');
+                            const barthagIdx = headers.findIndex(h => h === 'barthag');
+                            
+                            if (teamIdx >= 0 && adjOIdx >= 0) {
+                                const ratings = {};
+                                for (let i = 1; i < lines.length; i++) {
+                                    const cols = lines[i].split(',');
+                                    const name = cols[teamIdx]?.trim();
+                                    if (name) {
+                                        ratings[name.toLowerCase()] = {
+                                            team: name, rank: i,
+                                            adjO: parseFloat(cols[adjOIdx]) || 0,
+                                            adjD: parseFloat(cols[adjDIdx]) || 0,
+                                            barthag: parseFloat(cols[barthagIdx]) || 0,
+                                            tempo: 68
+                                        };
+                                    }
+                                }
+                                if (Object.keys(ratings).length > 0) {
+                                    state.cbbDataCache[cacheKey] = ratings;
+                                    console.log(`✅ CBBData Ratings: ${Object.keys(ratings).length} teams (CSV)`);
+                                    return ratings;
+                                }
+                            }
+                        }
+                    } catch(e) { /* CSV parse fallback failed */ }
+                    
+                    console.log(`⚠️ CBBData Ratings: Binary Arrow format — install apache-arrow library for parsing. Content-type: ${contentType}`);
                 } catch(e) {
-                    console.warn(`⚠️ CBBData team factors failed for ${team}: ${e.message}`);
-                    return null;
+                    console.warn(`⚠️ CBBData ratings fetch failed: ${e.message}`);
                 }
+                return null;
             },
             
             // Player season stats
@@ -19750,28 +19823,12 @@ Return ONLY valid JSON:
                             }
                         }
                         
-                        // Also try per-team factors for AdjO/AdjD
-                        // V50.4: Bulk ratings returns Arrow format; use per-team endpoints
-                        const [homeFact, awayFact] = await Promise.all([
-                            CBBDATA_API.teamFactors(homeTeam, cbbSeasonYear),
-                            CBBDATA_API.teamFactors(awayTeam, cbbSeasonYear)
-                        ]);
-                        const parseFactors = (data, teamName) => {
-                            if (!data) return null;
-                            const arr = Array.isArray(data) ? data : [data];
-                            const t = arr.find(d => (d.team||'').toLowerCase().includes(teamName.toLowerCase().split(' ')[0])) || arr[0];
-                            if (!t || !t.adj_o) return null;
-                            return {
-                                adjO: parseFloat(t.adj_o||t.adjO) || 0,
-                                adjD: parseFloat(t.adj_d||t.adjD) || 0,
-                                barthag: parseFloat(t.barthag) || 0,
-                                tempo: parseFloat(t.adj_t||t.tempo) || 68,
-                                rank: parseInt(t.barthag_rk||t.rank) || 0
-                            };
-                        };
-                        const homeRating = parseFactors(homeFact, homeTeam);
-                        const awayRating = parseFactors(awayFact, awayTeam);
-                        if (homeRating) {
+                        // Also try team ratings for AdjO/AdjD
+                        const ratings = await CBBDATA_API.teamRatings(cbbSeasonYear);
+                        if (ratings) {
+                            const homeRating = ratings[homeTeam.toLowerCase()] || ratings[homeTeam.toLowerCase().replace(/\./g, '')];
+                            const awayRating = ratings[awayTeam.toLowerCase()] || ratings[awayTeam.toLowerCase().replace(/\./g, '')];
+                            if (homeRating) {
                                 result.matchup.teamA.adjO = homeRating.adjO;
                                 result.matchup.teamA.adjD = homeRating.adjD;
                                 result.matchup.teamA.barthag = homeRating.barthag;
@@ -19786,6 +19843,7 @@ Return ONLY valid JSON:
                             if (homeRating && awayRating) {
                                 console.log(`🎯 V50 T-Rank: ${homeTeam} #${homeRating.rank} (${homeRating.adjO.toFixed(1)}O/${homeRating.adjD.toFixed(1)}D) vs ${awayTeam} #${awayRating.rank} (${awayRating.adjO.toFixed(1)}O/${awayRating.adjD.toFixed(1)}D)`);
                             }
+                        }
                     } catch(e) {
                         console.warn(`⚠️ V50 CBBData enrichment failed: ${e.message}`);
                     }
