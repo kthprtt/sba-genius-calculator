@@ -6506,13 +6506,16 @@ Return ONLY valid JSON:
                 const cacheKey = `ratings_${year}`;
                 if (state.cbbDataCache[cacheKey]) return state.cbbDataCache[cacheKey];
                 
+                // Try requested year, then fallback to year-1 if 0 rows
+                const yearsToTry = [year, year - 1];
+                for (const tryYear of yearsToTry) {
                 try {
                     // Try the ratings endpoint with arrow format parsing
-                    const params = new URLSearchParams({ key: state.cbbDataApiKey, year: String(year) });
+                    const params = new URLSearchParams({ key: state.cbbDataApiKey, year: String(tryYear) });
                     const resp = await fetch(`${this.BASE}/torvik/ratings?${params}`);
                     if (!resp.ok) {
-                        console.warn(`⚠️ CBBData Ratings: HTTP ${resp.status}`);
-                        return null;
+                        console.warn(`⚠️ CBBData Ratings: HTTP ${resp.status} for year=${tryYear}`);
+                        continue;
                     }
                     
                     const contentType = resp.headers.get('content-type') || '';
@@ -6550,7 +6553,7 @@ Return ONLY valid JSON:
                     console.log(`📊 CBBData Ratings: ${bytes.length} bytes, magic: [${magic}], str: "${magicStr}"`);
                     // Parquet = "PAR1" (50 41 52 31), Arrow IPC = "ARROW1"
                     const isParquet = magicStr === 'PAR1';
-                    console.log(`📊 CBBData format: ${isParquet ? 'Parquet' : 'Unknown'} (${bytes.length} bytes)`);
+                    console.log(`📊 CBBData format: ${isParquet ? 'Parquet' : 'Unknown'} (${bytes.length} bytes, year=${tryYear})`);
                     
                     if (isParquet) {
                         try {
@@ -6565,7 +6568,7 @@ Return ONLY valid JSON:
                                 const schema = hyparquet.parquetSchema(metadata);
                                 const colNames = schema.children ? schema.children.map(c => c.element?.name || c.name || '?') : [];
                                 const codec = metadata.row_groups?.[0]?.columns?.[0]?.meta_data?.codec || 'unknown';
-                                console.log(`📊 CBBData Parquet metadata: ${numRows} rows, ${colNames.length} cols, codec: ${codec}`);
+                                console.log(`📊 CBBData Parquet metadata (year=${tryYear}): ${numRows} rows, ${colNames.length} cols, codec: ${codec}`);
                                 console.log(`📊 CBBData Parquet columns: ${colNames.join(', ')}`);
                                 if (metadata.row_groups) {
                                     console.log(`📊 CBBData Parquet row_groups: ${metadata.row_groups.length}, first group rows: ${Number(metadata.row_groups[0]?.num_rows)}`);
@@ -6618,7 +6621,7 @@ Return ONLY valid JSON:
                                 console.log(`✅ CBBData Ratings: ${Object.keys(ratings).length} teams (Parquet via hyparquet)`);
                                 return ratings;
                             }
-                            console.log(`⚠️ CBBData: Parquet parsed but 0 teams found`);
+                            console.log(`⚠️ CBBData: Parquet parsed but 0 teams found (year=${tryYear})`);
                         } catch(parquetErr) {
                             console.log(`⚠️ CBBData: Parquet parse attempt: ${parquetErr.message}`);
                         }
@@ -6652,17 +6655,18 @@ Return ONLY valid JSON:
                                 }
                                 if (Object.keys(ratings).length > 0) {
                                     state.cbbDataCache[cacheKey] = ratings;
-                                    console.log(`✅ CBBData Ratings: ${Object.keys(ratings).length} teams (CSV)`);
+                                    console.log(`✅ CBBData Ratings: ${Object.keys(ratings).length} teams (CSV, year=${tryYear})`);
                                     return ratings;
                                 }
                             }
                         }
                     } catch(e) { /* CSV parse fallback failed */ }
                     
-                    console.log(`⚠️ CBBData Ratings: Unable to parse binary format (${bytes.length} bytes). Content-type: ${contentType}`);
+                    console.log(`⚠️ CBBData Ratings: Unable to parse binary format (${bytes.length} bytes, year=${tryYear}). Content-type: ${contentType}`);
                 } catch(e) {
-                    console.warn(`⚠️ CBBData ratings fetch failed: ${e.message}`);
+                    console.warn(`⚠️ CBBData ratings fetch failed (year=${tryYear}): ${e.message}`);
                 }
+                } // end for yearsToTry
                 return null;
             },
             
