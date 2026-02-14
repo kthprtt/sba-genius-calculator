@@ -6499,19 +6499,117 @@ Return ONLY valid JSON:
                 }
             },
             
-            // Team ratings — bulk endpoint returns Apache Arrow/Parquet format
-            // Load ratings once and cache, using arrow library to parse binary response
+            // Team ratings — V50.11: Try /torvik/team_factors JSON first (has real adj_o/adj_d/barthag)
+            // Falls back to /torvik/ratings Parquet with year fallback and null-value validation
             async teamRatings(year = 2026) {
                 if (!state.cbbDataApiKey) return null;
                 const cacheKey = `ratings_${year}`;
                 if (state.cbbDataCache[cacheKey]) return state.cbbDataCache[cacheKey];
                 
-                // Try requested year, then fallback to year-1 if 0 rows
+                // Helper: parse JSON array into ratings map, returns null if no real data
+                const parseJsonRatings = (data, source) => {
+                    const ratings = {};
+                    const arr = Array.isArray(data) ? data : [data];
+                    let hasRealData = 0;
+                    for (const t of arr) {
+                        const name = t.team || t.Team || '';
+                        if (!name) continue;
+                        const adjO = parseFloat(t.adj_o || t.adjO || t.off_ppp || 0);
+                        const adjD = parseFloat(t.adj_d || t.adjD || t.def_ppp || 0);
+                        const barthag = parseFloat(t.barthag || t.rating || 0);
+                        const rank = parseInt(t.barthag_rk || t.rank || t.rk || 0);
+                        const tempo = parseFloat(t.adj_t || t.tempo || 68);
+                        if (adjO > 50) hasRealData++; // efficiency values are typically 80-130
+                        const entry = { team: name, rank, adjO, adjD, barthag, tempo };
+                        // Capture extra metrics if available (from all_metrics endpoint)
+                        if (t.bpi != null) entry.bpi = parseFloat(t.bpi);
+                        if (t.net != null) entry.net = parseInt(t.net);
+                        if (t.kp != null) entry.kp = parseFloat(t.kp);
+                        if (t.sor != null) entry.sor = parseInt(t.sor);
+                        if (t.wab != null) entry.wab = parseFloat(t.wab);
+                        if (t.conf) entry.conf = t.conf;
+                        ratings[name.toLowerCase()] = entry;
+                    }
+                    if (Object.keys(ratings).length > 0 && hasRealData > 0) {
+                        state.cbbDataCache[cacheKey] = ratings;
+                        console.log(`✅ CBBData Ratings: ${Object.keys(ratings).length} teams, ${hasRealData} with efficiency data (${source})`);
+                        return ratings;
+                    }
+                    if (Object.keys(ratings).length > 0) {
+                        console.log(`⚠️ CBBData: ${Object.keys(ratings).length} teams but 0 with real adj_o (${source})`);
+                    }
+                    return null;
+                };
+                
                 const yearsToTry = [year, year - 1];
+                
+                // ═══ STRATEGY 0: /all_metrics (T-Rank + KP + BPI + NET combined) ═══
+                try {
+                    const params = new URLSearchParams({ key: state.cbbDataApiKey });
+                    console.log(`📊 CBBData: Trying all_metrics (combined ratings)...`);
+                    const resp = await fetch(`${this.BASE}/all_metrics?${params}`);
+                    if (resp.ok) {
+                        const contentType = resp.headers.get('content-type') || '';
+                        if (contentType.includes('json')) {
+                            const data = await resp.json();
+                            console.log(`📊 CBBData all_metrics: ${Array.isArray(data) ? data.length : '?'} items`);
+                            if (Array.isArray(data) && data.length > 0) {
+                                console.log(`📊 CBBData all_metrics keys: ${Object.keys(data[0]).join(', ')}`);
+                                console.log(`📊 CBBData all_metrics[0]: ${JSON.stringify(data[0]).slice(0,300)}`);
+                            }
+                            const result = parseJsonRatings(data, 'all_metrics JSON');
+                            if (result) return result;
+                        } else {
+                            console.log(`📊 CBBData all_metrics: Non-JSON response (${contentType})`);
+                        }
+                    } else {
+                        console.log(`⚠️ CBBData all_metrics: HTTP ${resp.status}`);
+                    }
+                } catch(e) {
+                    console.log(`⚠️ CBBData all_metrics failed: ${e.message}`);
+                }
+                
+                // ═══ STRATEGY 1: /torvik/team_factors (JSON — has real adj_o/adj_d/barthag) ═══
+                for (const tryYear of yearsToTry) {
+                    try {
+                        const params = new URLSearchParams({ key: state.cbbDataApiKey, year: String(tryYear), no_bias: 'true' });
+                        console.log(`📊 CBBData: Trying team_factors (year=${tryYear}, no_bias=true)...`);
+                        const resp = await fetch(`${this.BASE}/torvik/team_factors?${params}`);
+                        if (!resp.ok) {
+                            console.log(`⚠️ CBBData team_factors: HTTP ${resp.status} (year=${tryYear})`);
+                            continue;
+                        }
+                        const contentType = resp.headers.get('content-type') || '';
+                        if (contentType.includes('json')) {
+                            const data = await resp.json();
+                            console.log(`📊 CBBData team_factors: ${Array.isArray(data) ? data.length : '?'} items (year=${tryYear})`);
+                            if (Array.isArray(data) && data.length > 0) {
+                                console.log(`📊 CBBData team_factors keys: ${Object.keys(data[0]).join(', ')}`);
+                                console.log(`📊 CBBData team_factors[0]: ${JSON.stringify(data[0]).slice(0,300)}`);
+                            }
+                            const result = parseJsonRatings(data, `team_factors JSON year=${tryYear}`);
+                            if (result) return result;
+                        } else {
+                            // Might return Parquet/binary — try text parse
+                            const text = await resp.text();
+                            try {
+                                const data = JSON.parse(text);
+                                const result = parseJsonRatings(data, `team_factors parsed year=${tryYear}`);
+                                if (result) return result;
+                            } catch(e) {
+                                console.log(`📊 CBBData team_factors: Not JSON (${contentType}, ${text.length} bytes, year=${tryYear})`);
+                            }
+                        }
+                    } catch(e) {
+                        console.log(`⚠️ CBBData team_factors failed (year=${tryYear}): ${e.message}`);
+                    }
+                }
+                
+                // ═══ STRATEGY 2: /torvik/ratings (Parquet — validate non-null metrics) ═══
                 for (const tryYear of yearsToTry) {
                 try {
-                    // Try the ratings endpoint with arrow format parsing
                     const params = new URLSearchParams({ key: state.cbbDataApiKey, year: String(tryYear) });
+                    console.log(`📊 CBBData: Trying ratings Parquet (year=${tryYear})...`);
                     const resp = await fetch(`${this.BASE}/torvik/ratings?${params}`);
                     if (!resp.ok) {
                         console.warn(`⚠️ CBBData Ratings: HTTP ${resp.status} for year=${tryYear}`);
@@ -6523,111 +6621,76 @@ Return ONLY valid JSON:
                     // If JSON, parse directly
                     if (contentType.includes('json')) {
                         const data = await resp.json();
-                        const ratings = {};
-                        const arr = Array.isArray(data) ? data : [data];
-                        for (const t of arr) {
-                            const name = t.team || t.Team || '';
-                            if (name) {
-                                ratings[name.toLowerCase()] = {
-                                    team: name, rank: parseInt(t.barthag_rk||t.rank) || 0,
-                                    adjO: parseFloat(t.adj_o||t.adjO) || 0,
-                                    adjD: parseFloat(t.adj_d||t.adjD) || 0,
-                                    barthag: parseFloat(t.barthag) || 0,
-                                    tempo: parseFloat(t.adj_t||t.tempo) || 68
-                                };
-                            }
-                        }
-                        if (Object.keys(ratings).length > 0) {
-                            state.cbbDataCache[cacheKey] = ratings;
-                            console.log(`✅ CBBData Ratings: ${Object.keys(ratings).length} teams (JSON)`);
-                            return ratings;
-                        }
+                        const result = parseJsonRatings(data, `ratings JSON year=${tryYear}`);
+                        if (result) return result;
                     }
                     
-                    // Binary/Arrow format — dynamically load Flechette ESM for parsing
+                    // Binary format — try Parquet
                     const buffer = await resp.arrayBuffer();
                     const bytes = new Uint8Array(buffer);
-                    // Log magic bytes for format detection
-                    const magic = Array.from(bytes.slice(0, 8)).map(b => b.toString(16).padStart(2,'0')).join(' ');
                     const magicStr = new TextDecoder().decode(bytes.slice(0, 4));
-                    console.log(`📊 CBBData Ratings: ${bytes.length} bytes, magic: [${magic}], str: "${magicStr}"`);
-                    // Parquet = "PAR1" (50 41 52 31), Arrow IPC = "ARROW1"
-                    const isParquet = magicStr === 'PAR1';
-                    console.log(`📊 CBBData format: ${isParquet ? 'Parquet' : 'Unknown'} (${bytes.length} bytes, year=${tryYear})`);
+                    console.log(`📊 CBBData format: ${magicStr === 'PAR1' ? 'Parquet' : 'Unknown'} (${bytes.length} bytes, year=${tryYear})`);
                     
-                    if (isParquet) {
+                    if (magicStr === 'PAR1') {
                         try {
-                            // Dynamic ESM import of hyparquet via jsdelivr +esm (bundles all internals)
                             const hyparquet = await import('https://cdn.jsdelivr.net/npm/hyparquet@1/+esm');
-                            console.log(`📊 CBBData: hyparquet loaded, exports: ${Object.keys(hyparquet).join(',')}`);
                             
-                            // Step 1: Inspect metadata first to understand schema and compression
+                            // Quick metadata check — skip if 0 rows
                             try {
                                 const metadata = hyparquet.parquetMetadata(buffer);
                                 const numRows = Number(metadata.num_rows);
-                                const schema = hyparquet.parquetSchema(metadata);
-                                const colNames = schema.children ? schema.children.map(c => c.element?.name || c.name || '?') : [];
-                                const codec = metadata.row_groups?.[0]?.columns?.[0]?.meta_data?.codec || 'unknown';
-                                console.log(`📊 CBBData Parquet metadata (year=${tryYear}): ${numRows} rows, ${colNames.length} cols, codec: ${codec}`);
-                                console.log(`📊 CBBData Parquet columns: ${colNames.join(', ')}`);
-                                if (metadata.row_groups) {
-                                    console.log(`📊 CBBData Parquet row_groups: ${metadata.row_groups.length}, first group rows: ${Number(metadata.row_groups[0]?.num_rows)}`);
-                                }
-                            } catch(metaErr) {
-                                console.log(`⚠️ CBBData: Parquet metadata error: ${metaErr.message}`);
-                            }
+                                console.log(`📊 CBBData Parquet: ${numRows} rows (year=${tryYear})`);
+                                if (numRows === 0) { console.log(`⚠️ CBBData Parquet: 0 rows, skipping`); continue; }
+                            } catch(e) { /* continue anyway */ }
                             
-                            // Step 2: Try reading with hyparquet-compressors for full codec support
-                            let compressors = undefined;
+                            let compressors;
                             try {
                                 const compMod = await import('https://cdn.jsdelivr.net/npm/hyparquet-compressors@1/+esm');
                                 compressors = compMod.compressors || compMod.default?.compressors;
-                                if (compressors) console.log(`📊 CBBData: Loaded compressors: ${Object.keys(compressors).join(',')}`);
-                            } catch(compErr) {
-                                console.log(`📊 CBBData: Compressors not loaded (snappy only): ${compErr.message?.slice(0,60)}`);
-                            }
+                            } catch(e) { /* snappy only */ }
                             
-                            // Step 3: Read the data
                             const ratings = {};
+                            let hasRealData = 0;
                             const readOpts = {
-                                file: buffer,
-                                rowFormat: 'object',
+                                file: buffer, rowFormat: 'object',
                                 onComplete: (rows) => {
-                                    console.log(`📊 CBBData Parquet: ${rows.length} rows parsed`);
+                                    console.log(`📊 CBBData Parquet: ${rows.length} rows parsed (year=${tryYear})`);
                                     if (rows.length > 0) {
-                                        console.log(`📊 CBBData Parquet sample keys: ${Object.keys(rows[0]).join(',')}`);
-                                        console.log(`📊 CBBData Parquet row[0]: ${JSON.stringify(rows[0]).slice(0,300)}`);
+                                        const nonNull = rows.filter(r => r.adj_o !== null && r.adj_o !== undefined).length;
+                                        console.log(`📊 CBBData Parquet: ${nonNull}/${rows.length} have adj_o`);
+                                        if (rows[0]) console.log(`📊 CBBData Parquet row[0]: ${JSON.stringify(rows[0]).slice(0,300)}`);
                                     }
                                     for (const row of rows) {
                                         const name = row.team || row.Team || '';
-                                        if (name) {
-                                            ratings[name.toLowerCase()] = {
-                                                team: name, 
-                                                rank: parseInt(row.barthag_rk || row.rank) || 0,
-                                                adjO: parseFloat(row.adj_o || row.adjO) || 0,
-                                                adjD: parseFloat(row.adj_d || row.adjD) || 0,
-                                                barthag: parseFloat(row.barthag) || 0,
-                                                tempo: parseFloat(row.adj_t || row.tempo) || 68
-                                            };
-                                        }
+                                        if (!name) continue;
+                                        const adjO = (row.adj_o != null) ? parseFloat(row.adj_o) : 0;
+                                        const adjD = (row.adj_d != null) ? parseFloat(row.adj_d) : 0;
+                                        if (adjO > 50) hasRealData++;
+                                        ratings[name.toLowerCase()] = {
+                                            team: name, 
+                                            rank: parseInt(row.barthag_rk || row.rank) || 0,
+                                            adjO, adjD,
+                                            barthag: (row.barthag != null) ? parseFloat(row.barthag) : 0,
+                                            tempo: (row.adj_t != null) ? parseFloat(row.adj_t) : 68
+                                        };
                                     }
                                 }
                             };
                             if (compressors) readOpts.compressors = compressors;
-                            
                             await hyparquet.parquetRead(readOpts);
-                            if (Object.keys(ratings).length > 0) {
+                            
+                            if (Object.keys(ratings).length > 0 && hasRealData > 0) {
                                 state.cbbDataCache[cacheKey] = ratings;
-                                console.log(`✅ CBBData Ratings: ${Object.keys(ratings).length} teams (Parquet via hyparquet)`);
+                                console.log(`✅ CBBData Ratings: ${Object.keys(ratings).length} teams, ${hasRealData} with efficiency data (Parquet year=${tryYear})`);
                                 return ratings;
                             }
-                            console.log(`⚠️ CBBData: Parquet parsed but 0 teams found (year=${tryYear})`);
+                            console.log(`⚠️ CBBData Parquet: ${Object.keys(ratings).length} teams, ${hasRealData} with real adj_o (year=${tryYear})`);
                         } catch(parquetErr) {
-                            console.log(`⚠️ CBBData: Parquet parse attempt: ${parquetErr.message}`);
+                            console.log(`⚠️ CBBData Parquet error: ${parquetErr.message}`);
                         }
                     }
                     
-                    // Fallback: Try parsing as CSV text (some endpoints return plain text)
+                    // CSV fallback
                     try {
                         const text = new TextDecoder().decode(buffer);
                         if (text.includes(',') && text.includes('\n') && !text.includes('\0')) {
@@ -6637,7 +6700,6 @@ Return ONLY valid JSON:
                             const adjOIdx = headers.findIndex(h => h === 'adj_o' || h === 'adjo');
                             const adjDIdx = headers.findIndex(h => h === 'adj_d' || h === 'adjd');
                             const barthagIdx = headers.findIndex(h => h === 'barthag');
-                            
                             if (teamIdx >= 0 && adjOIdx >= 0) {
                                 const ratings = {};
                                 for (let i = 1; i < lines.length; i++) {
@@ -6660,9 +6722,9 @@ Return ONLY valid JSON:
                                 }
                             }
                         }
-                    } catch(e) { /* CSV parse fallback failed */ }
+                    } catch(e) { /* CSV fallback failed */ }
                     
-                    console.log(`⚠️ CBBData Ratings: Unable to parse binary format (${bytes.length} bytes, year=${tryYear}). Content-type: ${contentType}`);
+                    console.log(`⚠️ CBBData: Unable to parse (${bytes.length} bytes, year=${tryYear})`);
                 } catch(e) {
                     console.warn(`⚠️ CBBData ratings fetch failed (year=${tryYear}): ${e.message}`);
                 }
@@ -19871,11 +19933,25 @@ Return ONLY valid JSON:
                             }
                         }
                         
-                        // Also try team ratings for AdjO/AdjD
+                        // Also try team ratings for AdjO/AdjD (V50.11 — improved name matching)
                         const ratings = await CBBDATA_API.teamRatings(cbbSeasonYear);
                         if (ratings) {
-                            const homeRating = ratings[homeTeam.toLowerCase()] || ratings[homeTeam.toLowerCase().replace(/\./g, '')];
-                            const awayRating = ratings[awayTeam.toLowerCase()] || ratings[awayTeam.toLowerCase().replace(/\./g, '')];
+                            // CBBData uses names like "N.C. A&T", ESPN uses "NC A&T" etc.
+                            const findRating = (name) => {
+                                const n = name.toLowerCase();
+                                return ratings[n] 
+                                    || ratings[n.replace(/\./g, '')] 
+                                    || ratings[n.replace(/\./g, ' ').replace(/\s+/g,' ').trim()]
+                                    || ratings[n.replace(/st\b/g, 'state')]
+                                    || ratings[n.replace(/state/g, 'st.')]
+                                    || Object.values(ratings).find(r => {
+                                        const rn = r.team.toLowerCase().replace(/[^a-z]/g, '');
+                                        const nn = n.replace(/[^a-z]/g, '');
+                                        return rn === nn || rn.includes(nn) || nn.includes(rn);
+                                    });
+                            };
+                            const homeRating = findRating(homeTeam);
+                            const awayRating = findRating(awayTeam);
                             if (homeRating) {
                                 result.matchup.teamA.adjO = homeRating.adjO;
                                 result.matchup.teamA.adjD = homeRating.adjD;
