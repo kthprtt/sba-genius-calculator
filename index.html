@@ -6669,6 +6669,8 @@ Return ONLY valid JSON:
                                         ratings[name.toLowerCase()] = {
                                             team: name, 
                                             rank: parseInt(row.barthag_rk || row.rank) || 0,
+                                            adjORank: parseInt(row.adj_o_rk) || 0,
+                                            adjDRank: parseInt(row.adj_d_rk) || 0,
                                             adjO, adjD,
                                             barthag: (row.barthag != null) ? parseFloat(row.barthag) : 0,
                                             tempo: (row.adj_t != null) ? parseFloat(row.adj_t) : 68
@@ -6684,7 +6686,38 @@ Return ONLY valid JSON:
                                 console.log(`✅ CBBData Ratings: ${Object.keys(ratings).length} teams, ${hasRealData} with efficiency data (Parquet year=${tryYear})`);
                                 return ratings;
                             }
-                            console.log(`⚠️ CBBData Parquet: ${Object.keys(ratings).length} teams, ${hasRealData} with real adj_o (year=${tryYear})`);
+                            
+                            // ═══ RANK-DERIVED EFFICIENCY (when Parquet has ranks but null metrics) ═══
+                            const totalTeams = Object.keys(ratings).length;
+                            if (totalTeams > 100 && hasRealData === 0) {
+                                console.log(`📊 CBBData: Deriving efficiency from rankings (${totalTeams} teams, year=${tryYear})...`);
+                                // T-Rank efficiency distributions (based on historical data):
+                                // adj_o: #1 ~125, #182 ~105, #364 ~88 (roughly linear)
+                                // adj_d: #1 ~84, #182 ~105, #364 ~120 (inverted - lower is better)
+                                // barthag: #1 ~0.98, #182 ~0.50, #364 ~0.02
+                                let derivedCount = 0;
+                                for (const key of Object.keys(ratings)) {
+                                    const r = ratings[key];
+                                    const oRank = parseInt(r.adjORank || 0) || Math.round(totalTeams / 2);
+                                    const dRank = parseInt(r.adjDRank || 0) || Math.round(totalTeams / 2);
+                                    const bRank = r.rank || Math.round(totalTeams / 2);
+                                    // Linear interpolation from rank to efficiency
+                                    r.adjO = 125 - (oRank - 1) * (37 / (totalTeams - 1)); // 125 → 88
+                                    r.adjD = 84 + (dRank - 1) * (36 / (totalTeams - 1));   // 84 → 120
+                                    r.barthag = 0.98 - (bRank - 1) * (0.96 / (totalTeams - 1)); // 0.98 → 0.02
+                                    r.derived = true;
+                                    derivedCount++;
+                                }
+                                if (derivedCount > 0) {
+                                    state.cbbDataCache[cacheKey] = ratings;
+                                    console.log(`✅ CBBData Ratings: ${totalTeams} teams, ${derivedCount} with DERIVED efficiency from ranks (Parquet year=${tryYear})`);
+                                    const sample = Object.values(ratings)[0];
+                                    console.log(`📊 CBBData derived sample: ${sample.team} #${sample.rank} → adjO=${sample.adjO.toFixed(1)}, adjD=${sample.adjD.toFixed(1)}, barthag=${sample.barthag.toFixed(3)}`);
+                                    return ratings;
+                                }
+                            }
+                            
+                            console.log(`⚠️ CBBData Parquet: ${totalTeams} teams, ${hasRealData} with real adj_o (year=${tryYear})`);
                         } catch(parquetErr) {
                             console.log(`⚠️ CBBData Parquet error: ${parquetErr.message}`);
                         }
@@ -6729,6 +6762,118 @@ Return ONLY valid JSON:
                     console.warn(`⚠️ CBBData ratings fetch failed (year=${tryYear}): ${e.message}`);
                 }
                 } // end for yearsToTry
+                
+                // ═══ STRATEGY 3: NCAA API (free public API — Scoring Offense + Defense PPG) ═══
+                try {
+                    console.log(`📊 NCAA API: Trying scoring stats (free public API)...`);
+                    const NCAA_API = 'https://ncaa-api.henrygd.me';
+                    const [offResp, defResp] = await Promise.allSettled([
+                        fetch(`${NCAA_API}/stats/basketball-men/d1/current/team/145`),  // Scoring Offense
+                        fetch(`${NCAA_API}/stats/basketball-men/d1/current/team/28`)    // Scoring Defense
+                    ]);
+                    
+                    const offData = offResp.status === 'fulfilled' && offResp.value.ok ? await offResp.value.json().catch(() => null) : null;
+                    const defData = defResp.status === 'fulfilled' && defResp.value.ok ? await defResp.value.json().catch(() => null) : null;
+                    
+                    if (offData?.data?.length > 50 || defData?.data?.length > 50) {
+                        console.log(`📊 NCAA API: Scoring Offense=${offData?.data?.length || 0} teams, Defense=${defData?.data?.length || 0} teams`);
+                        const ratings = {};
+                        const totalPages = Math.max(offData?.pages || 1, defData?.pages || 1);
+                        
+                        // Parse scoring offense (PPG)
+                        if (offData?.data) {
+                            for (const row of offData.data) {
+                                const name = row.Team || row.team || '';
+                                if (!name) continue;
+                                const ppg = parseFloat(row.Avg || row.avg || row.PPG || 0);
+                                const rank = parseInt(row.Rank || row.rank || 0);
+                                ratings[name.toLowerCase()] = { 
+                                    team: name, rank: 0, adjO: ppg * 1.45, adjD: 100, barthag: 0.5, tempo: 68,
+                                    ppg, offRank: rank, source: 'NCAA'
+                                };
+                            }
+                        }
+                        
+                        // Parse scoring defense (opponent PPG)
+                        if (defData?.data) {
+                            for (const row of defData.data) {
+                                const name = row.Team || row.team || '';
+                                if (!name) continue;
+                                const oppPpg = parseFloat(row.Avg || row.avg || 0);
+                                const defRank = parseInt(row.Rank || row.rank || 0);
+                                const key = name.toLowerCase();
+                                if (ratings[key]) {
+                                    ratings[key].oppPpg = oppPpg;
+                                    ratings[key].adjD = oppPpg * 1.45;
+                                    ratings[key].defRank = defRank;
+                                    // Compute synthetic barthag from margin
+                                    const margin = (ratings[key].ppg || 75) - oppPpg;
+                                    ratings[key].barthag = 1 / (1 + Math.pow(10, -margin / 10));
+                                    ratings[key].rank = Math.round((ratings[key].offRank + defRank) / 2);
+                                } else {
+                                    ratings[key] = {
+                                        team: name, rank: defRank, adjO: 100, adjD: oppPpg * 1.45, barthag: 0.5, tempo: 68,
+                                        oppPpg, defRank, source: 'NCAA'
+                                    };
+                                }
+                            }
+                        }
+                        
+                        const teamCount = Object.keys(ratings).length;
+                        if (teamCount > 50) {
+                            // Fetch additional pages if available (NCAA API returns ~50 per page)
+                            if (totalPages > 1) {
+                                console.log(`📊 NCAA API: Page 1 of ${totalPages} — fetching more pages...`);
+                                for (let p = 2; p <= Math.min(totalPages, 8); p++) {
+                                    try {
+                                        const [offP, defP] = await Promise.allSettled([
+                                            fetch(`${NCAA_API}/stats/basketball-men/d1/current/team/145?page=${p}`),
+                                            fetch(`${NCAA_API}/stats/basketball-men/d1/current/team/28?page=${p}`)
+                                        ]);
+                                        const offPData = offP.status === 'fulfilled' && offP.value.ok ? await offP.value.json().catch(() => null) : null;
+                                        const defPData = defP.status === 'fulfilled' && defP.value.ok ? await defP.value.json().catch(() => null) : null;
+                                        if (offPData?.data) for (const row of offPData.data) {
+                                            const name = row.Team || '';
+                                            if (!name) continue;
+                                            const ppg = parseFloat(row.Avg || 0);
+                                            const rank = parseInt(row.Rank || 0);
+                                            const key = name.toLowerCase();
+                                            if (!ratings[key]) ratings[key] = { team: name, rank, adjO: ppg * 1.45, adjD: 100, barthag: 0.5, tempo: 68, ppg, offRank: rank, source: 'NCAA' };
+                                            else { ratings[key].ppg = ppg; ratings[key].adjO = ppg * 1.45; ratings[key].offRank = rank; }
+                                        }
+                                        if (defPData?.data) for (const row of defPData.data) {
+                                            const name = row.Team || '';
+                                            if (!name) continue;
+                                            const oppPpg = parseFloat(row.Avg || 0);
+                                            const defRank = parseInt(row.Rank || 0);
+                                            const key = name.toLowerCase();
+                                            if (ratings[key]) {
+                                                ratings[key].oppPpg = oppPpg;
+                                                ratings[key].adjD = oppPpg * 1.45;
+                                                ratings[key].defRank = defRank;
+                                                const margin = (ratings[key].ppg || 75) - oppPpg;
+                                                ratings[key].barthag = 1 / (1 + Math.pow(10, -margin / 10));
+                                                ratings[key].rank = Math.round(((ratings[key].offRank || 180) + defRank) / 2);
+                                            }
+                                        }
+                                    } catch(e) { break; }
+                                }
+                            }
+                            
+                            const finalCount = Object.keys(ratings).length;
+                            state.cbbDataCache[cacheKey] = ratings;
+                            const sample = Object.values(ratings).find(r => r.ppg > 80) || Object.values(ratings)[0];
+                            console.log(`✅ NCAA API Ratings: ${finalCount} teams (Scoring Off/Def PPG)`);
+                            console.log(`📊 NCAA sample: ${sample?.team} → PPG=${sample?.ppg?.toFixed(1)}, OppPPG=${sample?.oppPpg?.toFixed(1)}, adjO=${sample?.adjO?.toFixed(1)}, adjD=${sample?.adjD?.toFixed(1)}`);
+                            return ratings;
+                        }
+                    } else {
+                        console.log(`⚠️ NCAA API: Insufficient data (off=${offData?.data?.length || 0}, def=${defData?.data?.length || 0})`);
+                    }
+                } catch(e) {
+                    console.log(`⚠️ NCAA API failed: ${e.message}`);
+                }
+                
                 return null;
             },
             
