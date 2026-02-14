@@ -6554,15 +6554,20 @@ Return ONLY valid JSON:
                     
                     if (isParquet) {
                         try {
-                            // Dynamic ESM import of hyparquet (pure JS Parquet parser, no WASM)
-                            const { parquetRead } = await import('https://cdn.jsdelivr.net/npm/hyparquet/src/hyparquet.min.js');
+                            // Dynamic ESM import of hyparquet via jsdelivr +esm (bundles all internals)
+                            const hyparquet = await import('https://cdn.jsdelivr.net/npm/hyparquet@1/+esm');
+                            const parquetRead = hyparquet.parquetRead || hyparquet.default?.parquetRead;
+                            console.log(`📊 CBBData: hyparquet loaded, exports: ${Object.keys(hyparquet).join(',')}`);
                             const ratings = {};
+                            // ArrayBuffer can be passed directly as AsyncBuffer per docs
                             await parquetRead({
-                                file: { byteLength: buffer.byteLength, slice: (start, end) => buffer.slice(start, end) },
+                                file: buffer,
+                                rowFormat: 'object',
                                 onComplete: (rows) => {
                                     console.log(`📊 CBBData Parquet: ${rows.length} rows parsed`);
                                     if (rows.length > 0) {
                                         console.log(`📊 CBBData Parquet sample keys: ${Object.keys(rows[0]).join(',')}`);
+                                        console.log(`📊 CBBData Parquet row[0]: ${JSON.stringify(rows[0]).slice(0,200)}`);
                                     }
                                     for (const row of rows) {
                                         const name = row.team || row.Team || '';
