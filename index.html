@@ -6442,7 +6442,28 @@ Return ONLY valid JSON:
                     });
                     if (!resp.ok) throw new Error('Invalid credentials');
                     const data = await resp.json();
-                    const key = Array.isArray(data) ? data[0] : data.key || data;
+                    // CBBData returns the API key in various formats depending on version
+                    // Could be: string, {key: "..."}, ["key"], {api_key: "..."}, or nested
+                    let key = null;
+                    if (typeof data === 'string') {
+                        key = data;
+                    } else if (Array.isArray(data) && data.length > 0) {
+                        key = typeof data[0] === 'string' ? data[0] : data[0]?.key || data[0]?.api_key || JSON.stringify(data[0]);
+                    } else if (typeof data === 'object' && data !== null) {
+                        key = data.key || data.api_key || data.token || data.Key || data.API_KEY;
+                        // If still object, try to find any string value that looks like a key
+                        if (!key || typeof key !== 'string') {
+                            const vals = Object.values(data).filter(v => typeof v === 'string' && v.length > 10);
+                            if (vals.length > 0) key = vals[0];
+                        }
+                    }
+                    
+                    if (!key || typeof key !== 'string') {
+                        console.warn('⚠️ CBBData: Could not extract API key from response:', data);
+                        // Store the raw response for debugging
+                        console.log('📋 CBBData raw login response:', JSON.stringify(data));
+                        return null;
+                    }
                     state.cbbDataApiKey = key;
                     try { localStorage.setItem('sba_cbbdata_key', key); } catch(e) {}
                     console.log('✅ CBBData API key obtained');
@@ -6537,9 +6558,9 @@ Return ONLY valid JSON:
                 return null;
             },
             
-            // Check if CBBData is configured
+            // Check if CBBData is configured with a valid API key
             isConfigured() {
-                return !!state.cbbDataApiKey;
+                return typeof state.cbbDataApiKey === 'string' && state.cbbDataApiKey.length > 10;
             }
         };
         
@@ -12510,7 +12531,7 @@ Return ONLY valid JSON:
             players: [], // V9: Store players for ANALYZE BOTH
             
             // V50: CBBData API Integration (Barttorvik T-Rank + KenPom + BPI + NET)
-            cbbDataApiKey: (typeof localStorage !== 'undefined' && localStorage.getItem('sba_cbbdata_key')) || null,
+            cbbDataApiKey: (() => { try { const k = localStorage.getItem('sba_cbbdata_key'); return (k && k.length > 10 && !k.includes('object')) ? k : null; } catch(e) { return null; } })(),
             cbbDataCache: {}, // Cache Barttorvik ratings, player stats, predictions
             cbbDataLastFetch: null,
             
@@ -19642,6 +19663,9 @@ Return ONLY valid JSON:
                 // ═══════════════════════════════════════════════════════════════
                 if (isNCAA && CBBDATA_API.isConfigured()) {
                     try {
+                        // V50: Compute season year for NCAAB (Oct+ = next year's season)
+                        const _now = new Date();
+                        const cbbSeasonYear = _now.getMonth() >= 9 ? _now.getFullYear() + 1 : _now.getFullYear();
                         // Try game prediction endpoint (JSON, most useful)
                         const bartPred = await CBBDATA_API.gamePrediction(
                             homeTeam, awayTeam, 'H'
@@ -19659,7 +19683,7 @@ Return ONLY valid JSON:
                         }
                         
                         // Also try team ratings for AdjO/AdjD
-                        const ratings = await CBBDATA_API.teamRatings(espnSeasonYear);
+                        const ratings = await CBBDATA_API.teamRatings(cbbSeasonYear);
                         if (ratings) {
                             const homeRating = ratings[homeTeam.toLowerCase()] || ratings[homeTeam.toLowerCase().replace(/\./g, '')];
                             const awayRating = ratings[awayTeam.toLowerCase()] || ratings[awayTeam.toLowerCase().replace(/\./g, '')];
