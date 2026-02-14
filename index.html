@@ -9,8 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Rajdhani:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     
-    <!-- Flechette: lightweight Arrow/Parquet parser for CBBData binary responses -->
-    <script src="https://cdn.jsdelivr.net/npm/@uwdata/flechette@1/dist/flechette.min.js" defer onerror="console.log('⚠️ Flechette not loaded — CBBData Arrow parsing unavailable')"></script>
+    <!-- Arrow/Parquet parsing loaded dynamically via ESM import when needed -->
     
     <style>
         :root {
@@ -6542,42 +6541,43 @@ Return ONLY valid JSON:
                         }
                     }
                     
-                    // Binary/Arrow format — try parsing with Flechette or Apache Arrow JS
+                    // Binary/Arrow format — dynamically load Flechette ESM for parsing
                     const buffer = await resp.arrayBuffer();
+                    const bytes = new Uint8Array(buffer);
+                    // Log magic bytes for format detection
+                    const magic = Array.from(bytes.slice(0, 8)).map(b => b.toString(16).padStart(2,'0')).join(' ');
+                    const magicStr = new TextDecoder().decode(bytes.slice(0, 4));
+                    console.log(`📊 CBBData Ratings: ${bytes.length} bytes, magic: [${magic}], str: "${magicStr}"`);
+                    // Arrow IPC = "ARROW1" (41 52 52 4f 57 31), Parquet = "PAR1" (50 41 52 31)
+                    const isArrowIPC = magicStr === 'ARRO' || (bytes[0]===0x41 && bytes[1]===0x52 && bytes[2]===0x52 && bytes[3]===0x4F);
+                    const isParquet = magicStr === 'PAR1';
+                    console.log(`📊 CBBData format: ${isArrowIPC ? 'Arrow IPC' : isParquet ? 'Parquet' : 'Unknown'} (${bytes.length} bytes)`);
                     try {
-                        let table = null;
-                        // Try Flechette first (lighter, faster)
-                        if (typeof flechette !== 'undefined' && flechette.tableFromIPC) {
-                            table = flechette.tableFromIPC(new Uint8Array(buffer));
-                        }
-                        // Try Apache Arrow JS
-                        else if (typeof Arrow !== 'undefined' && Arrow.tableFromIPC) {
-                            table = Arrow.tableFromIPC(new Uint8Array(buffer));
-                        }
-                        
-                        if (table) {
-                            const ratings = {};
-                            const rows = table.toArray ? table.toArray() : [...table];
-                            for (const row of rows) {
-                                const name = row.team || row.Team || '';
-                                if (name) {
-                                    ratings[name.toLowerCase()] = {
-                                        team: name, rank: parseInt(row.barthag_rk||row.rank) || 0,
-                                        adjO: parseFloat(row.adj_o||row.adjO) || 0,
-                                        adjD: parseFloat(row.adj_d||row.adjD) || 0,
-                                        barthag: parseFloat(row.barthag) || 0,
-                                        tempo: parseFloat(row.adj_t||row.tempo) || 68
-                                    };
-                                }
-                            }
-                            if (Object.keys(ratings).length > 0) {
-                                state.cbbDataCache[cacheKey] = ratings;
-                                console.log(`✅ CBBData Ratings: ${Object.keys(ratings).length} teams (Arrow/Parquet)`);
-                                return ratings;
+                        // Dynamic ESM import of Flechette (lightweight Arrow parser)
+                        const { tableFromIPC } = await import('https://cdn.jsdelivr.net/npm/@uwdata/flechette@1/+esm');
+                        const table = tableFromIPC(new Uint8Array(buffer));
+                        const ratings = {};
+                        const rows = [...table];
+                        for (const row of rows) {
+                            const name = row.team || row.Team || '';
+                            if (name) {
+                                ratings[name.toLowerCase()] = {
+                                    team: name, rank: parseInt(row.barthag_rk||row.rank) || 0,
+                                    adjO: parseFloat(row.adj_o||row.adjO) || 0,
+                                    adjD: parseFloat(row.adj_d||row.adjD) || 0,
+                                    barthag: parseFloat(row.barthag) || 0,
+                                    tempo: parseFloat(row.adj_t||row.tempo) || 68
+                                };
                             }
                         }
+                        if (Object.keys(ratings).length > 0) {
+                            state.cbbDataCache[cacheKey] = ratings;
+                            console.log(`✅ CBBData Ratings: ${Object.keys(ratings).length} teams (Arrow/Parquet via Flechette)`);
+                            return ratings;
+                        }
+                        console.log(`⚠️ CBBData: Arrow parsed but 0 teams found. Schema: ${table.schema?.fields?.map(f=>f.name).join(',') || 'unknown'}`);
                     } catch(arrowErr) {
-                        console.log(`⚠️ CBBData: Arrow parse failed: ${arrowErr.message}`);
+                        console.log(`⚠️ CBBData: Arrow parse attempt: ${arrowErr.message}`);
                     }
                     
                     // Fallback: Try parsing as CSV text (some endpoints return plain text)
