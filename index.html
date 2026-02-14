@@ -23439,9 +23439,9 @@ Return ONLY valid JSON:
                                     barttorvikTotal: m.barttorvikTotal ?? null,
                                     barttorvikWinProb: m.barttorvikWinProb ?? null,
                                     // V50.11: Pass Highlightly predictions and odds through
-                                    highlightlyPrediction: intel?.highlightlyPrediction ?? null,
-                                    highlightlyOdds: intel?.highlightlyOdds ?? null,
-                                    highlightlyMatchId: intel?.highlightly?.matchId ?? null
+                                    highlightlyPrediction: teamIntel?.highlightlyPrediction ?? null,
+                                    highlightlyOdds: teamIntel?.highlightlyOdds ?? null,
+                                    highlightlyMatchId: teamIntel?.highlightly?.matchId ?? null
                                 };
                                 
                                 console.log(`📊 V50 Moneyline (${isHomeML ? 'HOME' : 'AWAY'}): Margin=${intelData.seasonAvg.toFixed(1)}, L5=${intelData.l5Avg?.toFixed(1)}, L10=${intelData.l10Avg?.toFixed(1)}, ProjMargin=${intelData._projectedMargin.toFixed(1)}`);
