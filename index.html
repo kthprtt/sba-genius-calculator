@@ -6548,36 +6548,46 @@ Return ONLY valid JSON:
                     const magic = Array.from(bytes.slice(0, 8)).map(b => b.toString(16).padStart(2,'0')).join(' ');
                     const magicStr = new TextDecoder().decode(bytes.slice(0, 4));
                     console.log(`📊 CBBData Ratings: ${bytes.length} bytes, magic: [${magic}], str: "${magicStr}"`);
-                    // Arrow IPC = "ARROW1" (41 52 52 4f 57 31), Parquet = "PAR1" (50 41 52 31)
-                    const isArrowIPC = magicStr === 'ARRO' || (bytes[0]===0x41 && bytes[1]===0x52 && bytes[2]===0x52 && bytes[3]===0x4F);
+                    // Parquet = "PAR1" (50 41 52 31), Arrow IPC = "ARROW1"
                     const isParquet = magicStr === 'PAR1';
-                    console.log(`📊 CBBData format: ${isArrowIPC ? 'Arrow IPC' : isParquet ? 'Parquet' : 'Unknown'} (${bytes.length} bytes)`);
-                    try {
-                        // Dynamic ESM import of Flechette (lightweight Arrow parser)
-                        const { tableFromIPC } = await import('https://cdn.jsdelivr.net/npm/@uwdata/flechette@1/+esm');
-                        const table = tableFromIPC(new Uint8Array(buffer));
-                        const ratings = {};
-                        const rows = [...table];
-                        for (const row of rows) {
-                            const name = row.team || row.Team || '';
-                            if (name) {
-                                ratings[name.toLowerCase()] = {
-                                    team: name, rank: parseInt(row.barthag_rk||row.rank) || 0,
-                                    adjO: parseFloat(row.adj_o||row.adjO) || 0,
-                                    adjD: parseFloat(row.adj_d||row.adjD) || 0,
-                                    barthag: parseFloat(row.barthag) || 0,
-                                    tempo: parseFloat(row.adj_t||row.tempo) || 68
-                                };
+                    console.log(`📊 CBBData format: ${isParquet ? 'Parquet' : 'Unknown'} (${bytes.length} bytes)`);
+                    
+                    if (isParquet) {
+                        try {
+                            // Dynamic ESM import of hyparquet (pure JS Parquet parser, no WASM)
+                            const { parquetRead } = await import('https://cdn.jsdelivr.net/npm/hyparquet/src/hyparquet.min.js');
+                            const ratings = {};
+                            await parquetRead({
+                                file: { byteLength: buffer.byteLength, slice: (start, end) => buffer.slice(start, end) },
+                                onComplete: (rows) => {
+                                    console.log(`📊 CBBData Parquet: ${rows.length} rows parsed`);
+                                    if (rows.length > 0) {
+                                        console.log(`📊 CBBData Parquet sample keys: ${Object.keys(rows[0]).join(',')}`);
+                                    }
+                                    for (const row of rows) {
+                                        const name = row.team || row.Team || '';
+                                        if (name) {
+                                            ratings[name.toLowerCase()] = {
+                                                team: name, 
+                                                rank: parseInt(row.barthag_rk || row.rank) || 0,
+                                                adjO: parseFloat(row.adj_o || row.adjO) || 0,
+                                                adjD: parseFloat(row.adj_d || row.adjD) || 0,
+                                                barthag: parseFloat(row.barthag) || 0,
+                                                tempo: parseFloat(row.adj_t || row.tempo) || 68
+                                            };
+                                        }
+                                    }
+                                }
+                            });
+                            if (Object.keys(ratings).length > 0) {
+                                state.cbbDataCache[cacheKey] = ratings;
+                                console.log(`✅ CBBData Ratings: ${Object.keys(ratings).length} teams (Parquet via hyparquet)`);
+                                return ratings;
                             }
+                            console.log(`⚠️ CBBData: Parquet parsed but 0 teams found`);
+                        } catch(parquetErr) {
+                            console.log(`⚠️ CBBData: Parquet parse attempt: ${parquetErr.message}`);
                         }
-                        if (Object.keys(ratings).length > 0) {
-                            state.cbbDataCache[cacheKey] = ratings;
-                            console.log(`✅ CBBData Ratings: ${Object.keys(ratings).length} teams (Arrow/Parquet via Flechette)`);
-                            return ratings;
-                        }
-                        console.log(`⚠️ CBBData: Arrow parsed but 0 teams found. Schema: ${table.schema?.fields?.map(f=>f.name).join(',') || 'unknown'}`);
-                    } catch(arrowErr) {
-                        console.log(`⚠️ CBBData: Arrow parse attempt: ${arrowErr.message}`);
                     }
                     
                     // Fallback: Try parsing as CSV text (some endpoints return plain text)
@@ -6615,7 +6625,7 @@ Return ONLY valid JSON:
                         }
                     } catch(e) { /* CSV parse fallback failed */ }
                     
-                    console.log(`⚠️ CBBData Ratings: Binary Arrow format — install apache-arrow library for parsing. Content-type: ${contentType}`);
+                    console.log(`⚠️ CBBData Ratings: Unable to parse binary format (${bytes.length} bytes). Content-type: ${contentType}`);
                 } catch(e) {
                     console.warn(`⚠️ CBBData ratings fetch failed: ${e.message}`);
                 }
