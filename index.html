@@ -6763,17 +6763,25 @@ Return ONLY valid JSON:
                 }
                 } // end for yearsToTry
                 
-                // ═══ STRATEGY 3: NCAA API (free public API — Scoring Offense + Defense PPG) ═══
+                // ═══ STRATEGY 3: NCAA API (free public API — Scoring Off/Def/Margin + Win%) ═══
                 try {
                     console.log(`📊 NCAA API: Trying scoring stats (free public API)...`);
                     const NCAA_API = 'https://ncaa-api.henrygd.me';
-                    const [offResp, defResp] = await Promise.allSettled([
-                        fetch(`${NCAA_API}/stats/basketball-men/d1/current/team/145`),  // Scoring Offense
-                        fetch(`${NCAA_API}/stats/basketball-men/d1/current/team/28`)    // Scoring Defense
+                    const [offResp, defResp, marginResp, winResp] = await Promise.allSettled([
+                        fetch(`${NCAA_API}/stats/basketball-men/d1/current/team/145`),  // Scoring Offense (PPG)
+                        fetch(`${NCAA_API}/stats/basketball-men/d1/current/team/28`),   // Scoring Defense (OppPPG)
+                        fetch(`${NCAA_API}/stats/basketball-men/d1/current/team/146`),  // Scoring Margin
+                        fetch(`${NCAA_API}/stats/basketball-men/d1/current/team/169`)   // Winning Percentage
                     ]);
                     
                     const offData = offResp.status === 'fulfilled' && offResp.value.ok ? await offResp.value.json().catch(() => null) : null;
                     const defData = defResp.status === 'fulfilled' && defResp.value.ok ? await defResp.value.json().catch(() => null) : null;
+                    const marginData = marginResp.status === 'fulfilled' && marginResp.value.ok ? await marginResp.value.json().catch(() => null) : null;
+                    const winData = winResp.status === 'fulfilled' && winResp.value.ok ? await winResp.value.json().catch(() => null) : null;
+                    
+                    // Log what season the data is from
+                    const seasonInfo = offData?.updated || defData?.updated || '';
+                    if (seasonInfo) console.log(`📊 NCAA API season: ${seasonInfo}`);
                     
                     if (offData?.data?.length > 50 || defData?.data?.length > 50) {
                         console.log(`📊 NCAA API: Scoring Offense=${offData?.data?.length || 0} teams, Defense=${defData?.data?.length || 0} teams`);
@@ -6815,6 +6823,42 @@ Return ONLY valid JSON:
                                         team: name, rank: defRank, adjO: 100, adjD: oppPpg * 1.45, barthag: 0.5, tempo: 68,
                                         oppPpg, defRank, source: 'NCAA'
                                     };
+                                }
+                            }
+                        }
+                        
+                        // Parse scoring margin
+                        if (marginData?.data) {
+                            for (const row of marginData.data) {
+                                const name = row.Team || row.team || '';
+                                if (!name) continue;
+                                const margin = parseFloat(row.Avg || row.avg || row.Margin || 0);
+                                const key = name.toLowerCase();
+                                if (ratings[key]) {
+                                    ratings[key].margin = margin;
+                                    // Recalculate barthag from actual margin
+                                    ratings[key].barthag = 1 / (1 + Math.pow(10, -margin / 10));
+                                } else {
+                                    ratings[key] = {
+                                        team: name, rank: parseInt(row.Rank || 0), adjO: 100, adjD: 100, 
+                                        barthag: 1 / (1 + Math.pow(10, -margin / 10)), tempo: 68,
+                                        margin, source: 'NCAA'
+                                    };
+                                }
+                            }
+                        }
+                        
+                        // Parse winning percentage
+                        if (winData?.data) {
+                            for (const row of winData.data) {
+                                const name = row.Team || row.team || '';
+                                if (!name) continue;
+                                const winPct = parseFloat(row.PCT || row.Pct || row['Win Pct'] || row.avg || 0);
+                                const key = name.toLowerCase();
+                                if (ratings[key]) {
+                                    ratings[key].winPct = winPct;
+                                    ratings[key].wins = parseInt(row.W || row.w || 0);
+                                    ratings[key].losses = parseInt(row.L || row.l || 0);
                                 }
                             }
                         }
@@ -6863,12 +6907,12 @@ Return ONLY valid JSON:
                             const finalCount = Object.keys(ratings).length;
                             state.cbbDataCache[cacheKey] = ratings;
                             const sample = Object.values(ratings).find(r => r.ppg > 80) || Object.values(ratings)[0];
-                            console.log(`✅ NCAA API Ratings: ${finalCount} teams (Scoring Off/Def PPG)`);
-                            console.log(`📊 NCAA sample: ${sample?.team} → PPG=${sample?.ppg?.toFixed(1)}, OppPPG=${sample?.oppPpg?.toFixed(1)}, adjO=${sample?.adjO?.toFixed(1)}, adjD=${sample?.adjD?.toFixed(1)}`);
+                            console.log(`✅ NCAA API Ratings: ${finalCount} teams (PPG/OppPPG/Margin/Win%)`);
+                            console.log(`📊 NCAA sample: ${sample?.team} → PPG=${sample?.ppg?.toFixed(1) || '?'}, OppPPG=${sample?.oppPpg?.toFixed(1) || '?'}, Margin=${sample?.margin?.toFixed(1) || '?'}, Win%=${sample?.winPct || '?'}, adjO=${sample?.adjO?.toFixed(1)}, adjD=${sample?.adjD?.toFixed(1)}`);
                             return ratings;
                         }
                     } else {
-                        console.log(`⚠️ NCAA API: Insufficient data (off=${offData?.data?.length || 0}, def=${defData?.data?.length || 0})`);
+                        console.log(`⚠️ NCAA API: Insufficient data (off=${offData?.data?.length || 0}, def=${defData?.data?.length || 0}, margin=${marginData?.data?.length || 0}, win=${winData?.data?.length || 0})`);
                     }
                 } catch(e) {
                     console.log(`⚠️ NCAA API failed: ${e.message}`);
@@ -6904,6 +6948,302 @@ Return ONLY valid JSON:
             // Check if CBBData is configured with a valid API key
             isConfigured() {
                 return typeof state.cbbDataApiKey === 'string' && state.cbbDataApiKey.length > 10;
+            }
+        };
+        
+        // ════════════════════════════════════════════════════════════════
+        // HIGHLIGHTLY API — NBA/NCAAB Matches, Predictions, Odds, Stats
+        // Base: https://nba.highlightly.net  |  Auth: x-rapidapi-key header
+        // ════════════════════════════════════════════════════════════════
+        const HIGHLIGHTLY_API = {
+            BASE: 'https://nba.highlightly.net',
+            KEY: 'df0855dc-3043-410d-a013-18e9ca37bb31',
+            cache: {},
+            
+            async fetch(endpoint, params = {}) {
+                const url = new URL(`${this.BASE}${endpoint}`);
+                for (const [k, v] of Object.entries(params)) {
+                    if (v !== undefined && v !== null) url.searchParams.set(k, v);
+                }
+                const resp = await fetch(url.toString(), {
+                    headers: { 'x-rapidapi-key': this.KEY }
+                });
+                if (!resp.ok) {
+                    const remaining = resp.headers.get('x-ratelimit-requests-remaining');
+                    console.warn(`⚠️ Highlightly ${endpoint}: HTTP ${resp.status}${remaining !== null ? ` (${remaining} remaining)` : ''}`);
+                    return null;
+                }
+                return await resp.json().catch(() => null);
+            },
+            
+            // ─── MATCHES: Today's NCAAB games with scores, state, team info ───
+            async getMatches(date, league = 'NCAA') {
+                const cacheKey = `hl_matches_${league}_${date}`;
+                if (this.cache[cacheKey]) return this.cache[cacheKey];
+                
+                const dateStr = date || new Date().toISOString().slice(0, 10);
+                console.log(`🏀 Highlightly: Fetching ${league} matches for ${dateStr}...`);
+                
+                const data = await this.fetch('/matches', {
+                    league, date: dateStr, timezone: 'America/New_York', limit: 100
+                });
+                
+                if (data?.data?.length > 0) {
+                    this.cache[cacheKey] = data.data;
+                    console.log(`✅ Highlightly: ${data.data.length} ${league} matches (${data.pagination?.totalCount || '?'} total)`);
+                    return data.data;
+                } else if (Array.isArray(data) && data.length > 0) {
+                    this.cache[cacheKey] = data;
+                    console.log(`✅ Highlightly: ${data.length} ${league} matches`);
+                    return data;
+                }
+                console.log(`⚠️ Highlightly: No ${league} matches for ${dateStr}`);
+                return [];
+            },
+            
+            // ─── MATCH DETAIL: matchStatistics, predictions, events, venue ───
+            async getMatchDetail(matchId) {
+                const cacheKey = `hl_match_${matchId}`;
+                if (this.cache[cacheKey]) return this.cache[cacheKey];
+                
+                const data = await this.fetch(`/matches/${matchId}`);
+                if (data) {
+                    // Handle array response (API returns array with single item)
+                    const match = Array.isArray(data) ? data[0] : data;
+                    this.cache[cacheKey] = match;
+                    console.log(`✅ Highlightly match ${matchId}: ${match?.homeTeam?.name || '?'} vs ${match?.awayTeam?.name || '?'}`);
+                    return match;
+                }
+                return null;
+            },
+            
+            // ─── ODDS: Multi-bookmaker prematch & live odds ───
+            async getOdds(matchId, oddsType = 'prematch') {
+                const cacheKey = `hl_odds_${matchId}_${oddsType}`;
+                if (this.cache[cacheKey]) return this.cache[cacheKey];
+                
+                const data = await this.fetch('/odds', { matchId, oddsType, limit: 5 });
+                if (data?.data?.length > 0) {
+                    this.cache[cacheKey] = data.data;
+                    console.log(`✅ Highlightly odds: ${data.data.length} bookmakers for match ${matchId} (${oddsType})`);
+                    return data.data;
+                }
+                return [];
+            },
+            
+            // ─── TEAM STATS: Total/Home/Away splits ───
+            async getTeamStats(teamId, fromDate) {
+                const cacheKey = `hl_teamstats_${teamId}_${fromDate}`;
+                if (this.cache[cacheKey]) return this.cache[cacheKey];
+                
+                const startDate = fromDate || '2025-11-01';
+                const data = await this.fetch(`/teams/statistics/${teamId}`, {
+                    fromDate: startDate, timezone: 'America/New_York'
+                });
+                
+                if (data && (Array.isArray(data) ? data.length > 0 : true)) {
+                    const stats = Array.isArray(data) ? data[0] : data;
+                    this.cache[cacheKey] = stats;
+                    console.log(`✅ Highlightly team stats: ID ${teamId} loaded`);
+                    return stats;
+                }
+                return null;
+            },
+            
+            // ─── STANDINGS: Conference/league standings ───
+            async getStandings(leagueType = 'NCAA', abbreviation, year) {
+                const cacheKey = `hl_standings_${leagueType}_${abbreviation || 'all'}_${year || 'cur'}`;
+                if (this.cache[cacheKey]) return this.cache[cacheKey];
+                
+                const params = { leagueType, limit: 10, offset: 0 };
+                if (abbreviation) params.abbreviation = abbreviation;
+                if (year) params.year = year;
+                
+                const data = await this.fetch('/standings', params);
+                if (data?.data?.length > 0) {
+                    this.cache[cacheKey] = data.data;
+                    console.log(`✅ Highlightly standings: ${data.data.length} entries`);
+                    return data.data;
+                }
+                return [];
+            },
+            
+            // ─── HEAD TO HEAD: Last 10 H2H games ───
+            async getH2H(teamIdOne, teamIdTwo) {
+                const cacheKey = `hl_h2h_${teamIdOne}_${teamIdTwo}`;
+                if (this.cache[cacheKey]) return this.cache[cacheKey];
+                
+                const data = await this.fetch('/head-2-head', { teamIdOne, teamIdTwo });
+                if (Array.isArray(data) && data.length > 0) {
+                    this.cache[cacheKey] = data;
+                    console.log(`✅ Highlightly H2H: ${data.length} games`);
+                    return data;
+                }
+                return [];
+            },
+            
+            // ─── LAST 5 GAMES: Team form ───
+            async getLast5(teamId) {
+                const cacheKey = `hl_last5_${teamId}`;
+                if (this.cache[cacheKey]) return this.cache[cacheKey];
+                
+                const data = await this.fetch('/last-five-games', { teamId });
+                if (Array.isArray(data) && data.length > 0) {
+                    this.cache[cacheKey] = data;
+                    console.log(`✅ Highlightly last 5: ${data.length} games for team ${teamId}`);
+                    return data;
+                }
+                return [];
+            },
+            
+            // ─── BOX SCORE: Per-player stats for a match ───
+            async getBoxScore(matchId) {
+                const cacheKey = `hl_box_${matchId}`;
+                if (this.cache[cacheKey]) return this.cache[cacheKey];
+                
+                const data = await this.fetch(`/box-score/${matchId}`);
+                if (Array.isArray(data) && data.length > 0) {
+                    this.cache[cacheKey] = data;
+                    console.log(`✅ Highlightly box score: match ${matchId}`);
+                    return data;
+                }
+                return null;
+            },
+            
+            // ─── LINEUPS: Pregame lineups ───
+            async getLineups(matchId) {
+                const cacheKey = `hl_lineups_${matchId}`;
+                if (this.cache[cacheKey]) return this.cache[cacheKey];
+                
+                const data = await this.fetch(`/lineups/${matchId}`);
+                if (data?.home || data?.away) {
+                    this.cache[cacheKey] = data;
+                    console.log(`✅ Highlightly lineups: match ${matchId}`);
+                    return data;
+                }
+                return null;
+            },
+            
+            // ─── TEAMS: Search/lookup teams ───
+            async findTeam(name, league = 'NCAA') {
+                const cacheKey = `hl_team_${name}_${league}`;
+                if (this.cache[cacheKey]) return this.cache[cacheKey];
+                
+                const data = await this.fetch('/teams', { name, league });
+                if (Array.isArray(data) && data.length > 0) {
+                    this.cache[cacheKey] = data[0];
+                    return data[0];
+                }
+                return null;
+            },
+            
+            // ─── HIGHLIGHTS: Game recaps and clips ───
+            async getHighlights(matchId) {
+                const data = await this.fetch('/highlights', { matchId, limit: 10 });
+                return data?.data || [];
+            },
+            
+            // ═══ ENRICHMENT: Enrich an NCAAB game with Highlightly data ═══
+            async enrichNCAABGame(game) {
+                if (!game) return game;
+                
+                try {
+                    // Try to find matching Highlightly match
+                    const homeTeam = game.homeTeam || game.home_team || '';
+                    const awayTeam = game.awayTeam || game.away_team || '';
+                    const gameDateStr = game.commence_time ? 
+                        new Date(game.commence_time).toISOString().slice(0, 10) : 
+                        new Date().toISOString().slice(0, 10);
+                    
+                    // Get today's matches and find a match
+                    const matches = await this.getMatches(gameDateStr, 'NCAA');
+                    if (!matches || matches.length === 0) return game;
+                    
+                    // Find matching game by team name similarity
+                    const normalize = s => (s || '').toLowerCase().replace(/[^a-z]/g, '');
+                    const hlMatch = matches.find(m => {
+                        const hHome = normalize(m.homeTeam?.displayName || m.homeTeam?.name || '');
+                        const hAway = normalize(m.awayTeam?.displayName || m.awayTeam?.name || '');
+                        const gHome = normalize(homeTeam);
+                        const gAway = normalize(awayTeam);
+                        return (hHome.includes(gHome) || gHome.includes(hHome) || 
+                                hAway.includes(gAway) || gAway.includes(hAway)) &&
+                               (hHome.includes(gHome) || hAway.includes(gAway) ||
+                                gHome.includes(hHome) || gAway.includes(hAway));
+                    });
+                    
+                    if (!hlMatch) {
+                        console.log(`⚠️ Highlightly: No match found for ${homeTeam} vs ${awayTeam}`);
+                        return game;
+                    }
+                    
+                    console.log(`🎯 Highlightly: Matched → ${hlMatch.homeTeam?.displayName} vs ${hlMatch.awayTeam?.displayName} (ID: ${hlMatch.id})`);
+                    
+                    // Enrich with match detail (predictions, stats)
+                    const [detail, odds] = await Promise.allSettled([
+                        this.getMatchDetail(hlMatch.id),
+                        this.getOdds(hlMatch.id, 'prematch')
+                    ]);
+                    
+                    // Attach Highlightly data to game object
+                    game.highlightly = {
+                        matchId: hlMatch.id,
+                        state: hlMatch.state,
+                        homeTeam: hlMatch.homeTeam,
+                        awayTeam: hlMatch.awayTeam,
+                        date: hlMatch.date,
+                        season: hlMatch.season
+                    };
+                    
+                    // Add predictions if available
+                    if (detail.status === 'fulfilled' && detail.value?.predictions) {
+                        game.highlightly.predictions = detail.value.predictions;
+                        console.log(`📊 Highlightly predictions: ${JSON.stringify(detail.value.predictions).slice(0, 200)}`);
+                    }
+                    
+                    // Add match statistics if available
+                    if (detail.status === 'fulfilled' && detail.value?.matchStatistics) {
+                        game.highlightly.matchStatistics = detail.value.matchStatistics;
+                    }
+                    
+                    // Add venue info
+                    if (detail.status === 'fulfilled' && detail.value?.venue) {
+                        game.highlightly.venue = detail.value.venue;
+                    }
+                    
+                    // Add odds from multiple bookmakers
+                    if (odds.status === 'fulfilled' && odds.value?.length > 0) {
+                        game.highlightly.odds = odds.value;
+                        // Extract consensus from Highlightly odds
+                        const mlOdds = [];
+                        for (const bookie of odds.value) {
+                            const markets = bookie.markets || bookie.odds || [];
+                            for (const market of (Array.isArray(markets) ? markets : [])) {
+                                if (market.name === 'Moneyline' || market.name === 'Full Time Result') {
+                                    const homeOdd = market.outcomes?.find(o => o.name === 'Home')?.odds;
+                                    const awayOdd = market.outcomes?.find(o => o.name === 'Away')?.odds;
+                                    if (homeOdd && awayOdd) {
+                                        mlOdds.push({ home: parseFloat(homeOdd), away: parseFloat(awayOdd), book: bookie.bookmaker?.name || 'unknown' });
+                                    }
+                                }
+                            }
+                        }
+                        if (mlOdds.length > 0) {
+                            game.highlightly.mlConsensus = {
+                                homeAvg: mlOdds.reduce((s, o) => s + o.home, 0) / mlOdds.length,
+                                awayAvg: mlOdds.reduce((s, o) => s + o.away, 0) / mlOdds.length,
+                                books: mlOdds.length,
+                                details: mlOdds
+                            };
+                            console.log(`💰 Highlightly ML consensus: Home=${game.highlightly.mlConsensus.homeAvg.toFixed(2)}, Away=${game.highlightly.mlConsensus.awayAvg.toFixed(2)} (${mlOdds.length} books)`);
+                        }
+                    }
+                    
+                    return game;
+                } catch(e) {
+                    console.warn(`⚠️ Highlightly enrichment failed: ${e.message}`);
+                    return game;
+                }
             }
         };
         
@@ -20117,6 +20457,46 @@ Return ONLY valid JSON:
                         console.warn(`⚠️ V50 CBBData enrichment failed: ${e.message}`);
                     }
                 }
+                
+                // ═══════════════════════════════════════════════════════════════
+                // V50.11: HIGHLIGHTLY API ENRICHMENT (NCAAB)
+                // Predictions, multi-bookmaker odds, match stats
+                // Runs alongside CBBData — different data, complementary signals
+                // ═══════════════════════════════════════════════════════════════
+                if (isNCAA) {
+                    try {
+                        console.log(`🏀 Highlightly: Enriching ${homeTeam} vs ${awayTeam}...`);
+                        const enriched = await HIGHLIGHTLY_API.enrichNCAABGame({
+                            homeTeam, awayTeam,
+                            commence_time: new Date().toISOString()
+                        });
+                        
+                        if (enriched?.highlightly) {
+                            result.highlightly = enriched.highlightly;
+                            
+                            // Extract Highlightly prediction as a comparison signal
+                            if (enriched.highlightly.predictions) {
+                                const hlPred = enriched.highlightly.predictions;
+                                result.highlightlyPrediction = hlPred;
+                                console.log(`🔮 Highlightly prediction: ${JSON.stringify(hlPred).slice(0, 300)}`);
+                            }
+                            
+                            // Extract multi-bookmaker odds consensus
+                            if (enriched.highlightly.mlConsensus) {
+                                result.highlightlyOdds = enriched.highlightly.mlConsensus;
+                            }
+                            
+                            // Log Highlightly team IDs for future H2H/form lookups
+                            if (enriched.highlightly.homeTeam?.id) {
+                                result.hlHomeTeamId = enriched.highlightly.homeTeam.id;
+                                result.hlAwayTeamId = enriched.highlightly.awayTeam?.id;
+                            }
+                        }
+                    } catch(e) {
+                        console.warn(`⚠️ Highlightly enrichment failed: ${e.message}`);
+                    }
+                }
+                
                 return result;
             }
             
@@ -23057,7 +23437,11 @@ Return ONLY valid JSON:
                                     // V50.2: Pass Barttorvik data through for efficiency model
                                     barttorvikMargin: m.barttorvikMargin ?? null,
                                     barttorvikTotal: m.barttorvikTotal ?? null,
-                                    barttorvikWinProb: m.barttorvikWinProb ?? null
+                                    barttorvikWinProb: m.barttorvikWinProb ?? null,
+                                    // V50.11: Pass Highlightly predictions and odds through
+                                    highlightlyPrediction: intel?.highlightlyPrediction ?? null,
+                                    highlightlyOdds: intel?.highlightlyOdds ?? null,
+                                    highlightlyMatchId: intel?.highlightly?.matchId ?? null
                                 };
                                 
                                 console.log(`📊 V50 Moneyline (${isHomeML ? 'HOME' : 'AWAY'}): Margin=${intelData.seasonAvg.toFixed(1)}, L5=${intelData.l5Avg?.toFixed(1)}, L10=${intelData.l10Avg?.toFixed(1)}, ProjMargin=${intelData._projectedMargin.toFixed(1)}`);
