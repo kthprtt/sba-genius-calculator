@@ -6556,18 +6556,44 @@ Return ONLY valid JSON:
                         try {
                             // Dynamic ESM import of hyparquet via jsdelivr +esm (bundles all internals)
                             const hyparquet = await import('https://cdn.jsdelivr.net/npm/hyparquet@1/+esm');
-                            const parquetRead = hyparquet.parquetRead || hyparquet.default?.parquetRead;
                             console.log(`📊 CBBData: hyparquet loaded, exports: ${Object.keys(hyparquet).join(',')}`);
+                            
+                            // Step 1: Inspect metadata first to understand schema and compression
+                            try {
+                                const metadata = hyparquet.parquetMetadata(buffer);
+                                const numRows = Number(metadata.num_rows);
+                                const schema = hyparquet.parquetSchema(metadata);
+                                const colNames = schema.children ? schema.children.map(c => c.element?.name || c.name || '?') : [];
+                                const codec = metadata.row_groups?.[0]?.columns?.[0]?.meta_data?.codec || 'unknown';
+                                console.log(`📊 CBBData Parquet metadata: ${numRows} rows, ${colNames.length} cols, codec: ${codec}`);
+                                console.log(`📊 CBBData Parquet columns: ${colNames.join(', ')}`);
+                                if (metadata.row_groups) {
+                                    console.log(`📊 CBBData Parquet row_groups: ${metadata.row_groups.length}, first group rows: ${Number(metadata.row_groups[0]?.num_rows)}`);
+                                }
+                            } catch(metaErr) {
+                                console.log(`⚠️ CBBData: Parquet metadata error: ${metaErr.message}`);
+                            }
+                            
+                            // Step 2: Try reading with hyparquet-compressors for full codec support
+                            let compressors = undefined;
+                            try {
+                                const compMod = await import('https://cdn.jsdelivr.net/npm/hyparquet-compressors@1/+esm');
+                                compressors = compMod.compressors || compMod.default?.compressors;
+                                if (compressors) console.log(`📊 CBBData: Loaded compressors: ${Object.keys(compressors).join(',')}`);
+                            } catch(compErr) {
+                                console.log(`📊 CBBData: Compressors not loaded (snappy only): ${compErr.message?.slice(0,60)}`);
+                            }
+                            
+                            // Step 3: Read the data
                             const ratings = {};
-                            // ArrayBuffer can be passed directly as AsyncBuffer per docs
-                            await parquetRead({
+                            const readOpts = {
                                 file: buffer,
                                 rowFormat: 'object',
                                 onComplete: (rows) => {
                                     console.log(`📊 CBBData Parquet: ${rows.length} rows parsed`);
                                     if (rows.length > 0) {
                                         console.log(`📊 CBBData Parquet sample keys: ${Object.keys(rows[0]).join(',')}`);
-                                        console.log(`📊 CBBData Parquet row[0]: ${JSON.stringify(rows[0]).slice(0,200)}`);
+                                        console.log(`📊 CBBData Parquet row[0]: ${JSON.stringify(rows[0]).slice(0,300)}`);
                                     }
                                     for (const row of rows) {
                                         const name = row.team || row.Team || '';
@@ -6583,7 +6609,10 @@ Return ONLY valid JSON:
                                         }
                                     }
                                 }
-                            });
+                            };
+                            if (compressors) readOpts.compressors = compressors;
+                            
+                            await hyparquet.parquetRead(readOpts);
                             if (Object.keys(ratings).length > 0) {
                                 state.cbbDataCache[cacheKey] = ratings;
                                 console.log(`✅ CBBData Ratings: ${Object.keys(ratings).length} teams (Parquet via hyparquet)`);
