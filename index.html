@@ -6497,70 +6497,56 @@ Return ONLY valid JSON:
                 }
             },
             
-            // Team ratings — use CBBData API endpoint (not direct Barttorvik which is CORS-blocked)
+            // Team ratings — query individual teams via CBBData API
+            // The bulk /torvik/ratings endpoint returns Apache Arrow format (binary)
+            // which requires special libraries. Instead, use per-team endpoints.
             async teamRatings(year = 2026) {
                 if (!state.cbbDataApiKey) return null;
                 const cacheKey = `ratings_${year}`;
                 if (state.cbbDataCache[cacheKey]) return state.cbbDataCache[cacheKey];
                 
-                try {
-                    // Primary: CBBData API ratings endpoint (no CORS issues)
-                    const params = new URLSearchParams({ key: state.cbbDataApiKey, year: String(year) });
-                    const resp = await fetch(`${this.BASE}/torvik/ratings?${params}`);
-                    if (resp.ok) {
-                        const contentType = resp.headers.get('content-type') || '';
-                        let teamsData;
-                        
-                        if (contentType.includes('json')) {
-                            teamsData = await resp.json();
-                        } else {
-                            // CBBData may return CSV or parquet — try text parsing
-                            const text = await resp.text();
-                            const lines = text.trim().split('\n');
-                            teamsData = [];
-                            const headers = lines[0]?.split(',').map(h => h.trim().toLowerCase());
-                            for (let i = 1; i < lines.length; i++) {
-                                const cols = lines[i].split(',');
-                                if (cols.length >= 5) {
-                                    const obj = {};
-                                    headers.forEach((h, idx) => obj[h] = cols[idx]?.trim());
-                                    teamsData.push(obj);
-                                }
-                            }
-                        }
-                        
-                        // Convert array to lookup object
-                        const ratings = {};
-                        const dataArr = Array.isArray(teamsData) ? teamsData : [teamsData];
-                        for (const t of dataArr) {
-                            const name = t.team || t.Team || t.name || '';
-                            if (name) {
-                                ratings[name.toLowerCase()] = {
-                                    team: name,
-                                    rank: parseInt(t.rank || t.rk || t.barthag_rk) || 0,
-                                    adjO: parseFloat(t.adjO || t.adj_o || t.adjo || t.off_rtg) || 0,
-                                    adjD: parseFloat(t.adjD || t.adj_d || t.adjd || t.def_rtg) || 0,
-                                    barthag: parseFloat(t.barthag || t.Barthag) || 0,
-                                    tempo: parseFloat(t.tempo || t.adj_t || t.Tempo) || 68,
-                                    wins: parseInt(t.wins || t.w) || 0,
-                                    losses: parseInt(t.losses || t.l) || 0
-                                };
-                            }
-                        }
-                        
-                        if (Object.keys(ratings).length > 0) {
-                            state.cbbDataCache[cacheKey] = ratings;
-                            console.log(`✅ CBBData Ratings: Loaded ${Object.keys(ratings).length} teams for ${year}`);
-                            return ratings;
-                        }
-                        console.log(`⚠️ CBBData Ratings: Response parsed but 0 teams extracted. Content-type: ${contentType}`);
-                    } else {
-                        console.warn(`⚠️ CBBData Ratings: HTTP ${resp.status}`);
-                    }
-                } catch(e) {
-                    console.warn(`⚠️ CBBData ratings fetch failed: ${e.message}`);
-                }
+                // CBBData bulk ratings returns Arrow/Parquet (application/octet-stream)
+                // We can't parse this in the browser without apache-arrow library
+                // Instead, return null and rely on per-team lookups in teamFactors()
+                console.log(`📊 CBBData Ratings: Skipping bulk endpoint (Arrow format). Using per-team lookups.`);
                 return null;
+            },
+            
+            // Per-team four factors (JSON endpoint)
+            async teamFactors(team, year = 2026) {
+                if (!state.cbbDataApiKey) return null;
+                const cacheKey = `factors_${team}_${year}`;
+                if (state.cbbDataCache[cacheKey]) return state.cbbDataCache[cacheKey];
+                
+                try {
+                    const params = new URLSearchParams({ 
+                        key: state.cbbDataApiKey, year: String(year), team 
+                    });
+                    const resp = await fetch(`${this.BASE}/torvik/team-factors?${params}`);
+                    if (!resp.ok) {
+                        // Try alternate endpoint names
+                        const resp2 = await fetch(`${this.BASE}/torvik/team_factors?${params}`);
+                        if (!resp2.ok) {
+                            console.warn(`⚠️ CBBData team factors: HTTP ${resp.status}/${resp2.status} for ${team}`);
+                            return null;
+                        }
+                        const data = await resp2.json();
+                        state.cbbDataCache[cacheKey] = data;
+                        return data;
+                    }
+                    const contentType = resp.headers.get('content-type') || '';
+                    if (contentType.includes('octet-stream')) {
+                        console.warn(`⚠️ CBBData team factors: Got Arrow format for ${team}, skipping`);
+                        return null;
+                    }
+                    const data = await resp.json();
+                    state.cbbDataCache[cacheKey] = data;
+                    console.log(`✅ CBBData: ${team} factors loaded (${year})`);
+                    return data;
+                } catch(e) {
+                    console.warn(`⚠️ CBBData team factors failed for ${team}: ${e.message}`);
+                    return null;
+                }
             },
             
             // Player season stats
@@ -19705,40 +19691,87 @@ Return ONLY valid JSON:
                             let homePred = bartPred;
                             let awayPred = null;
                             if (Array.isArray(bartPred)) {
-                                // Find home and away predictions from the array
-                                homePred = bartPred.find(p => p.team === homeTeam || p.side === 'home') || bartPred[0];
-                                awayPred = bartPred.find(p => p.team === awayTeam || p.side === 'away') || bartPred[1];
+                                homePred = bartPred.find(p => 
+                                    (p.team || '').toLowerCase().includes(homeTeam.toLowerCase().split(' ')[0]) || 
+                                    p.location === 'H' || p.side === 'home'
+                                ) || bartPred[0];
+                                awayPred = bartPred.find(p => 
+                                    (p.team || '').toLowerCase().includes(awayTeam.toLowerCase().split(' ')[0]) || 
+                                    p.location === 'A' || p.side === 'away'
+                                ) || bartPred[1];
                             }
                             result.barttorvik = bartPred;
-                            // Log the raw response for debugging
                             console.log(`📋 V50 CBBData raw prediction:`, JSON.stringify(bartPred).substring(0, 500));
                             
-                            // Extract margin — try multiple possible field names
-                            const bartMargin = homePred?.margin ?? homePred?.projected_margin ?? 
-                                homePred?.mov ?? homePred?.spread ?? 
-                                (homePred?.pts_for && homePred?.pts_against ? homePred.pts_for - homePred.pts_against : undefined);
-                            const bartTotal = homePred?.total ?? homePred?.projected_total ?? 
-                                (homePred?.pts_for && (awayPred?.pts_for || homePred?.pts_against) ? 
-                                    homePred.pts_for + (awayPred?.pts_for || homePred.pts_against) : undefined);
-                            const bartWinPct = homePred?.win_pct ?? homePred?.winPct ?? homePred?.win_prob ?? homePred?.home_win_pct;
+                            // V50.3: Check if this is a post-game result (did_win exists, pts populated)
+                            // vs a prediction (projected fields, no did_win)
+                            const isPostGame = homePred?.did_win !== undefined;
                             
-                            if (bartMargin !== undefined) {
+                            // Extract margin — try multiple possible field names
+                            let bartMargin = homePred?.margin ?? homePred?.projected_margin ?? homePred?.mov ?? homePred?.spread;
+                            
+                            // If pts are available (post-game or prediction), compute margin
+                            if (bartMargin === undefined && homePred?.pts != null && awayPred?.pts != null) {
+                                bartMargin = homePred.pts - awayPred.pts;
+                            }
+                            // pts_for/pts_against format
+                            if (bartMargin === undefined && homePred?.pts_for != null && homePred?.pts_against != null) {
+                                bartMargin = homePred.pts_for - homePred.pts_against;
+                            }
+                            
+                            // V50.3: If it's a prediction with win_per but no margin, derive margin from win probability
+                            // Using inverse logistic: margin = ln(p/(1-p)) / k  where k=0.148 for NCAAB
+                            if (bartMargin === undefined && homePred?.win_per != null && homePred.win_per > 0 && homePred.win_per < 100) {
+                                const p = homePred.win_per / 100;
+                                bartMargin = Math.log(p / (1 - p)) / 0.148;
+                                console.log(`📊 V50 CBBData: Derived margin=${bartMargin.toFixed(1)} from win_per=${homePred.win_per}%`);
+                            }
+                            
+                            const bartTotal = homePred?.total ?? homePred?.projected_total ?? 
+                                (homePred?.pts != null && awayPred?.pts != null ? homePred.pts + awayPred.pts : undefined);
+                            const bartWinPct = homePred?.win_pct ?? homePred?.winPct ?? homePred?.win_prob ?? homePred?.home_win_pct ?? 
+                                (homePred?.win_per != null ? homePred.win_per / 100 : undefined);
+                            
+                            if (bartMargin !== undefined && !isPostGame) {
+                                // Use prediction margin
                                 result.matchup.expectedMargin = bartMargin;
                                 result.matchup.barttorvikMargin = bartMargin;
                                 result.matchup.barttorvikTotal = bartTotal || projTotal;
                                 result.matchup.barttorvikWinProb = bartWinPct;
-                                console.log(`🎯 V50 Barttorvik: ${homeTeam} margin=${Number(bartMargin).toFixed(1)}, total=${bartTotal?.toFixed?.(1) || 'N/A'}, win%=${bartWinPct ? (bartWinPct * (bartWinPct < 1 ? 100 : 1)).toFixed(1) : 'N/A'}%`);
+                                console.log(`🎯 V50 Barttorvik PREDICTION: ${homeTeam} margin=${Number(bartMargin).toFixed(1)}, total=${bartTotal?.toFixed?.(1) || 'N/A'}, win%=${bartWinPct ? (bartWinPct * 100).toFixed(1) : 'N/A'}%`);
+                            } else if (isPostGame && bartMargin !== undefined) {
+                                // Post-game result — log but don't override model prediction
+                                console.log(`📋 V50 CBBData POST-GAME result: ${homeTeam} ${homePred.did_win ? 'WON' : 'LOST'} by ${Math.abs(bartMargin).toFixed(1)}`);
+                            } else if (isPostGame && (homePred?.win_per === 100 || homePred?.win_per === 0)) {
+                                // Post-game result with no margin data
+                                console.log(`📋 V50 CBBData POST-GAME stub: ${homeTeam} ${homePred.did_win ? 'WON' : 'LOST'} (no margin/pts data yet)`);
                             } else {
-                                console.log(`⚠️ V50 CBBData: Got prediction but no margin field found. Keys:`, Object.keys(homePred || {}));
+                                console.log(`⚠️ V50 CBBData: Got response but no usable margin. Keys:`, Object.keys(homePred || {}));
                             }
                         }
                         
-                        // Also try team ratings for AdjO/AdjD
-                        const ratings = await CBBDATA_API.teamRatings(cbbSeasonYear);
-                        if (ratings) {
-                            const homeRating = ratings[homeTeam.toLowerCase()] || ratings[homeTeam.toLowerCase().replace(/\./g, '')];
-                            const awayRating = ratings[awayTeam.toLowerCase()] || ratings[awayTeam.toLowerCase().replace(/\./g, '')];
-                            if (homeRating) {
+                        // Also try per-team factors for AdjO/AdjD
+                        // V50.4: Bulk ratings returns Arrow format; use per-team endpoints
+                        const [homeFact, awayFact] = await Promise.all([
+                            CBBDATA_API.teamFactors(homeTeam, cbbSeasonYear),
+                            CBBDATA_API.teamFactors(awayTeam, cbbSeasonYear)
+                        ]);
+                        const parseFactors = (data, teamName) => {
+                            if (!data) return null;
+                            const arr = Array.isArray(data) ? data : [data];
+                            const t = arr.find(d => (d.team||'').toLowerCase().includes(teamName.toLowerCase().split(' ')[0])) || arr[0];
+                            if (!t || !t.adj_o) return null;
+                            return {
+                                adjO: parseFloat(t.adj_o||t.adjO) || 0,
+                                adjD: parseFloat(t.adj_d||t.adjD) || 0,
+                                barthag: parseFloat(t.barthag) || 0,
+                                tempo: parseFloat(t.adj_t||t.tempo) || 68,
+                                rank: parseInt(t.barthag_rk||t.rank) || 0
+                            };
+                        };
+                        const homeRating = parseFactors(homeFact, homeTeam);
+                        const awayRating = parseFactors(awayFact, awayTeam);
+                        if (homeRating) {
                                 result.matchup.teamA.adjO = homeRating.adjO;
                                 result.matchup.teamA.adjD = homeRating.adjD;
                                 result.matchup.teamA.barthag = homeRating.barthag;
@@ -19753,7 +19786,6 @@ Return ONLY valid JSON:
                             if (homeRating && awayRating) {
                                 console.log(`🎯 V50 T-Rank: ${homeTeam} #${homeRating.rank} (${homeRating.adjO.toFixed(1)}O/${homeRating.adjD.toFixed(1)}D) vs ${awayTeam} #${awayRating.rank} (${awayRating.adjO.toFixed(1)}O/${awayRating.adjD.toFixed(1)}D)`);
                             }
-                        }
                     } catch(e) {
                         console.warn(`⚠️ V50 CBBData enrichment failed: ${e.message}`);
                     }
