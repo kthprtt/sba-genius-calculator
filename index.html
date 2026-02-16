@@ -13986,6 +13986,19 @@ Return ONLY valid JSON:
         
         function selectSport(sportId) {
             state.sport = sportId;
+            
+            // V50.14 FIX: Clear stale team intelligence from previous sport
+            // Without this, NBA data (PPG=117, Total=236) leaks into soccer/hockey/etc
+            state.teamIntelligence = null;
+            state.lastProjection = null;
+            state.liveOdds = null;
+            state.rollingStats = null;
+            
+            // V50.14 FIX: Clear V26 team caches — keys are teamId-based (not sport-scoped)
+            // so NBA team 1 (Hawks) and WNBA team 1 share the same cache key
+            Object.keys(teamGameLogCache).forEach(k => delete teamGameLogCache[k]);
+            Object.keys(teamSeasonProfileCache).forEach(k => delete teamSeasonProfileCache[k]);
+            
             renderSports();
             
             const sport = SPORTS.find(s => s.id === sportId);
@@ -33144,9 +33157,18 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     'ncaaf': 'football/college-football',
                     'basketball_ncaab': 'basketball/mens-college-basketball',
                     'basketball_nba': 'basketball/nba',
-                    'icehockey_nhl': 'hockey/nhl'
+                    'icehockey_nhl': 'hockey/nhl',
+                    // V50.14 FIX: Add all soccer leagues + MMA
+                    'soccer_epl': 'soccer/eng.1',
+                    'soccer_laliga': 'soccer/esp.1',
+                    'soccer_seriea': 'soccer/ita.1',
+                    'soccer_bundesliga': 'soccer/ger.1',
+                    'soccer_mls': 'soccer/usa.1',
+                    'soccer_ucl': 'soccer/uefa.champions',
+                    'soccer_ligue1': 'soccer/fra.1',
+                    'mma': 'mma/ufc'
                 };
-                const sportPath = sportPaths[sport] || 'basketball/nba';
+                const sportPath = sportPaths[sport] || ESPN_SPORT_PATHS[sport] || 'basketball/nba';
                 
                 const url = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${teamId}/statistics`;
                 console.log(`📡 Fetching team stats for ${teamName} (${sport}, ID: ${teamId})...`);
