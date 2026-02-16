@@ -7159,17 +7159,24 @@ Return ONLY valid JSON:
                     const matches = await this.getMatches(gameDateStr, 'NCAA');
                     if (!matches || matches.length === 0) return game;
                     
-                    // Find matching game by team name similarity
-                    const normalize = s => (s || '').toLowerCase().replace(/[^a-z]/g, '');
+                    // V50.12 FIX: Word-boundary matching to prevent Duke→Dukes false positives
+                    const normalize = s => (s || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+                    const wordMatch = (haystack, needle) => {
+                        // Exact word-boundary match: "duke" matches "duke blue devils" but NOT "james madison dukes"
+                        const h = ' ' + normalize(haystack) + ' ';
+                        const n = normalize(needle);
+                        return h.includes(' ' + n + ' ') || h.includes(' ' + n + 's ') || 
+                               normalize(haystack) === n || normalize(haystack).startsWith(n + ' ');
+                    };
                     const hlMatch = matches.find(m => {
-                        const hHome = normalize(m.homeTeam?.displayName || m.homeTeam?.name || '');
-                        const hAway = normalize(m.awayTeam?.displayName || m.awayTeam?.name || '');
-                        const gHome = normalize(homeTeam);
-                        const gAway = normalize(awayTeam);
-                        return (hHome.includes(gHome) || gHome.includes(hHome) || 
-                                hAway.includes(gAway) || gAway.includes(hAway)) &&
-                               (hHome.includes(gHome) || hAway.includes(gAway) ||
-                                gHome.includes(hHome) || gAway.includes(hAway));
+                        const hHome = m.homeTeam?.displayName || m.homeTeam?.name || '';
+                        const hAway = m.awayTeam?.displayName || m.awayTeam?.name || '';
+                        // BOTH teams must match (home↔home AND away↔away, or swapped)
+                        const matchNormal = (wordMatch(hHome, homeTeam) || wordMatch(homeTeam, hHome.split(' ')[0])) &&
+                                           (wordMatch(hAway, awayTeam) || wordMatch(awayTeam, hAway.split(' ')[0]));
+                        const matchSwapped = (wordMatch(hHome, awayTeam) || wordMatch(awayTeam, hHome.split(' ')[0])) &&
+                                            (wordMatch(hAway, homeTeam) || wordMatch(homeTeam, hAway.split(' ')[0]));
+                        return matchNormal || matchSwapped;
                     });
                     
                     if (!hlMatch) {
@@ -7179,11 +7186,8 @@ Return ONLY valid JSON:
                     
                     console.log(`🎯 Highlightly: Matched → ${hlMatch.homeTeam?.displayName} vs ${hlMatch.awayTeam?.displayName} (ID: ${hlMatch.id})`);
                     
-                    // Enrich with match detail (predictions, stats)
-                    const [detail, odds] = await Promise.allSettled([
-                        this.getMatchDetail(hlMatch.id),
-                        this.getOdds(hlMatch.id, 'prematch')
-                    ]);
+                    // Enrich with match detail (predictions, stats) — free plan only
+                    const detail = await this.getMatchDetail(hlMatch.id);
                     
                     // Attach Highlightly data to game object
                     game.highlightly = {
@@ -7196,47 +7200,19 @@ Return ONLY valid JSON:
                     };
                     
                     // Add predictions if available
-                    if (detail.status === 'fulfilled' && detail.value?.predictions) {
-                        game.highlightly.predictions = detail.value.predictions;
-                        console.log(`📊 Highlightly predictions: ${JSON.stringify(detail.value.predictions).slice(0, 200)}`);
+                    if (detail?.predictions) {
+                        game.highlightly.predictions = detail.predictions;
+                        console.log(`📊 Highlightly predictions: ${JSON.stringify(detail.predictions).slice(0, 200)}`);
                     }
                     
                     // Add match statistics if available
-                    if (detail.status === 'fulfilled' && detail.value?.matchStatistics) {
-                        game.highlightly.matchStatistics = detail.value.matchStatistics;
+                    if (detail?.matchStatistics) {
+                        game.highlightly.matchStatistics = detail.matchStatistics;
                     }
                     
                     // Add venue info
-                    if (detail.status === 'fulfilled' && detail.value?.venue) {
-                        game.highlightly.venue = detail.value.venue;
-                    }
-                    
-                    // Add odds from multiple bookmakers
-                    if (odds.status === 'fulfilled' && odds.value?.length > 0) {
-                        game.highlightly.odds = odds.value;
-                        // Extract consensus from Highlightly odds
-                        const mlOdds = [];
-                        for (const bookie of odds.value) {
-                            const markets = bookie.markets || bookie.odds || [];
-                            for (const market of (Array.isArray(markets) ? markets : [])) {
-                                if (market.name === 'Moneyline' || market.name === 'Full Time Result') {
-                                    const homeOdd = market.outcomes?.find(o => o.name === 'Home')?.odds;
-                                    const awayOdd = market.outcomes?.find(o => o.name === 'Away')?.odds;
-                                    if (homeOdd && awayOdd) {
-                                        mlOdds.push({ home: parseFloat(homeOdd), away: parseFloat(awayOdd), book: bookie.bookmaker?.name || 'unknown' });
-                                    }
-                                }
-                            }
-                        }
-                        if (mlOdds.length > 0) {
-                            game.highlightly.mlConsensus = {
-                                homeAvg: mlOdds.reduce((s, o) => s + o.home, 0) / mlOdds.length,
-                                awayAvg: mlOdds.reduce((s, o) => s + o.away, 0) / mlOdds.length,
-                                books: mlOdds.length,
-                                details: mlOdds
-                            };
-                            console.log(`💰 Highlightly ML consensus: Home=${game.highlightly.mlConsensus.homeAvg.toFixed(2)}, Away=${game.highlightly.mlConsensus.awayAvg.toFixed(2)} (${mlOdds.length} books)`);
-                        }
+                    if (detail?.venue) {
+                        game.highlightly.venue = detail.venue;
                     }
                     
                     return game;
