@@ -14266,7 +14266,8 @@ Return ONLY valid JSON:
                 const selectedEvent = state.events?.find(e => e.id === option.value);
                 if (selectedEvent) {
                     state.event = selectedEvent; // THIS WAS MISSING!
-                    console.log(`🎮 Selected event: ${selectedEvent.awayTeam?.shortDisplayName || selectedEvent.awayTeam?.displayName} @ ${selectedEvent.homeTeam?.shortDisplayName || selectedEvent.homeTeam?.displayName}`);
+                    const _isCombat = ['mma', 'boxing'].includes(state.sport);
+                    console.log(`🎮 Selected event: ${selectedEvent.awayTeam?.shortDisplayName || selectedEvent.awayTeam?.displayName} ${_isCombat ? 'vs' : '@'} ${selectedEvent.homeTeam?.shortDisplayName || selectedEvent.homeTeam?.displayName}`);
                     
                     updateInjuryPanel(selectedEvent);
                     // Show intel panels
@@ -14501,8 +14502,9 @@ Return ONLY valid JSON:
                 if (lineLabel) lineLabel.textContent = 'Line (N/A)';
                 // Change Over/Under to Yes/No or Team1/Team2
                 if (market === 'Moneyline' || market === 'Match Winner' || market === 'Draw No Bet') {
-                    if (overLabel) overLabel.textContent = 'Home/Fav Odds';
-                    if (underLabel) underLabel.textContent = 'Away/Dog Odds';
+                    const isCombat = ['mma', 'boxing'].includes(state.sport);
+                    if (overLabel) overLabel.textContent = isCombat ? 'Fighter 1 Odds' : 'Home/Fav Odds';
+                    if (underLabel) underLabel.textContent = isCombat ? 'Fighter 2 Odds' : 'Away/Dog Odds';
                 } else if (['Both Teams Score', 'NRFI', 'YRFI', 'Fight to Go Distance'].includes(market)) {
                     if (overLabel) overLabel.textContent = 'Yes Odds';
                     if (underLabel) underLabel.textContent = 'No Odds';
@@ -18650,9 +18652,12 @@ Return ONLY valid JSON:
                             // Format time
                             const timeStr = gameDate.toLocaleTimeString([], {hour: 'numeric', minute:'2-digit'});
                             
+                            const isCombatSport = ['mma', 'boxing'].includes(sport);
                             return {
                                 id: e.id,
-                                name: `${away?.team?.shortDisplayName || 'Away'} @ ${home?.team?.shortDisplayName || 'Home'}`,
+                                name: isCombatSport 
+                                    ? `${away?.team?.shortDisplayName || 'Fighter 1'} vs ${home?.team?.shortDisplayName || 'Fighter 2'}`
+                                    : `${away?.team?.shortDisplayName || 'Away'} @ ${home?.team?.shortDisplayName || 'Home'}`,
                                 fullName: e.name,
                                 live: isLive,
                                 completed: isCompleted,
@@ -33414,8 +33419,9 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             
             const homeTeamName = selectedEvent.homeTeam?.shortDisplayName || selectedEvent.homeTeam?.displayName || '';
             const awayTeamName = selectedEvent.awayTeam?.shortDisplayName || selectedEvent.awayTeam?.displayName || '';
+            const isCombat = ['mma', 'boxing'].includes(state.sport);
             
-            console.log(`🔄 Loading team stats for ${awayTeamName} @ ${homeTeamName}...`);
+            console.log(`🔄 Loading team stats for ${awayTeamName} ${isCombat ? 'vs' : '@'} ${homeTeamName}...`);
             
             // Create a promise others can await
             state._teamStatsPromise = (async () => {
@@ -33449,7 +33455,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     📊 ${awayTeamName} (${statValue.toFixed(1)} ${teamStatKey})
                 </option>`;
             } else {
-                html += `<option value="${awayTeamName}">${awayTeamName} (Away)</option>`;
+                html += `<option value="${awayTeamName}">${awayTeamName}${isCombat ? '' : ' (Away)'}</option>`;
             }
             
             // Home team option
@@ -33459,7 +33465,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     📊 ${homeTeamName} (${statValue.toFixed(1)} ${teamStatKey})
                 </option>`;
             } else {
-                html += `<option value="${homeTeamName}">${homeTeamName} (Home)</option>`;
+                html += `<option value="${homeTeamName}">${homeTeamName}${isCombat ? '' : ' (Home)'}</option>`;
             }
             
             // Game total option
@@ -33514,10 +33520,10 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 ]
             };
             return (events[sport] || [{ id: 'demo1', name: 'Home @ Away', time: 'Today' }]).map(e => {
-                // V50.14 FIX: Parse team names from "Away @ Home" format into proper team objects
-                // Without this, loadTeamOptions gets undefined team names → blank dropdown
-                if (!e.homeTeam && e.name && e.name.includes(' @ ')) {
-                    const [awayName, homeName] = e.name.split(' @ ');
+                // V50.14 FIX: Parse team names from "Away @ Home" or "Fighter vs Fighter" format
+                if (!e.homeTeam && e.name && (e.name.includes(' @ ') || e.name.includes(' vs '))) {
+                    const sep = e.name.includes(' vs ') ? ' vs ' : ' @ ';
+                    const [awayName, homeName] = e.name.split(sep);
                     e.homeTeam = { shortDisplayName: homeName.trim(), displayName: homeName.trim() };
                     e.awayTeam = { shortDisplayName: awayName.trim(), displayName: awayName.trim() };
                 }
