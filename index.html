@@ -33451,7 +33451,17 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     { id: 'nhl2', name: 'Avalanche @ Rangers', time: '8:00 PM ET', live: false }
                 ]
             };
-            return events[sport] || [{ id: 'demo1', name: 'Home @ Away', time: 'Today' }];
+            return (events[sport] || [{ id: 'demo1', name: 'Home @ Away', time: 'Today' }]).map(e => {
+                // V50.14 FIX: Parse team names from "Away @ Home" format into proper team objects
+                // Without this, loadTeamOptions gets undefined team names → blank dropdown
+                if (!e.homeTeam && e.name && e.name.includes(' @ ')) {
+                    const [awayName, homeName] = e.name.split(' @ ');
+                    e.homeTeam = { shortDisplayName: homeName.trim(), displayName: homeName.trim() };
+                    e.awayTeam = { shortDisplayName: awayName.trim(), displayName: awayName.trim() };
+                }
+                e.dayLabel = e.dayLabel || 'Demo';
+                return e;
+            });
         }
         
         // ⚠️ LEGACY STATIC ROSTERS — 2023-24 SEASON DATA (may have wrong teams/players)
