@@ -19264,9 +19264,11 @@ Return ONLY valid JSON:
             }
         }
         // Fetch player stats from ESPN scoreboard (includes season averages)
-        async function fetchGamePlayersWithStats(eventId) {
+        async function fetchGamePlayersWithStats(eventId, sport) {
             try {
-                const url = `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event=${eventId}`;
+                // V50.14 FIX: Use dynamic sport path instead of hardcoded basketball/nba
+                const sportPath = ESPN_SPORT_PATHS[sport] || ESPN_SPORT_PATHS[state.sport] || 'basketball/nba';
+                const url = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/summary?event=${eventId}`;
                 console.log(`📡 Fetching game players with stats...`, url);
                 
                 const response = await fetch(url);
@@ -31429,13 +31431,16 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             // Factor 1: Recent minutes trend (L5 vs L10)
             // V50.14 FIX: Use cleaned L5 minutes (exclude DNP/0-min games) to match V48 stat cleaning
             let l5Minutes = validateMinutes(intelData.recentForm?.l5?.min || seasonMinutes);
-            if (blowoutContextLow > 0 && intelData.rollingStats?.games) {
-                // Recalculate L5 minutes excluding DNP/scratch games (same logic as V48 stat clean)
-                const l5Games = intelData.rollingStats.games.slice(0, 5);
-                const validMinGames = l5Games.filter(g => (g.min || 0) >= 5); // Must have played 5+ min
-                if (validMinGames.length > 0) {
-                    l5Minutes = validMinGames.reduce((sum, g) => sum + (g.min || 0), 0) / validMinGames.length;
-                    console.log(`🧹 V50.14 E7: Cleaned L5 minutes (excluded ${l5Games.length - validMinGames.length} DNP/low-min games) → ${l5Minutes.toFixed(1)}min`);
+            if (intelData.rollingStats?.games) {
+                // Check L5 games directly for DNP/0-min contamination (blowoutContextLow not yet declared)
+                const l5GamesForMin = intelData.rollingStats.games.slice(0, 5);
+                const dnpGames = l5GamesForMin.filter(g => (g.min || 0) < 5);
+                if (dnpGames.length > 0) {
+                    const validMinGames = l5GamesForMin.filter(g => (g.min || 0) >= 5);
+                    if (validMinGames.length > 0) {
+                        l5Minutes = validMinGames.reduce((sum, g) => sum + (g.min || 0), 0) / validMinGames.length;
+                        console.log(`🧹 V50.14 E7: Cleaned L5 minutes (excluded ${dnpGames.length} DNP/low-min games) → ${l5Minutes.toFixed(1)}min`);
+                    }
                 }
             }
             const minutesTrend = l5Minutes - seasonMinutes;
@@ -32962,7 +32967,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 console.log('🔄 Attempting to fetch LIVE player data from ESPN...');
                 updateDataTimestamp('espn');
                 
-                const livePlayers = await fetchGamePlayersWithStats(selectedEvent.id);
+                const livePlayers = await fetchGamePlayersWithStats(selectedEvent.id, state.sport);
                 if (livePlayers && livePlayers.length > 0) {
                     // Check if we have players from BOTH teams
                     const teams = [...new Set(livePlayers.map(p => p.team))];
