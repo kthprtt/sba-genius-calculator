@@ -7159,32 +7159,129 @@ Return ONLY valid JSON:
                     const matches = await this.getMatches(gameDateStr, 'NCAA');
                     if (!matches || matches.length === 0) return game;
                     
-                    // V50.12 FIX: Word-boundary matching to prevent Duke→Dukes false positives
-                    const normalize = s => (s || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
-                    const wordMatch = (haystack, needle) => {
-                        // Exact word-boundary match: "duke" matches "duke blue devils" but NOT "james madison dukes"
-                        const h = ' ' + normalize(haystack) + ' ';
-                        const n = normalize(needle);
-                        return h.includes(' ' + n + ' ') || h.includes(' ' + n + 's ') || 
-                               normalize(haystack) === n || normalize(haystack).startsWith(n + ' ');
+                    // V50.13: Robust NCAAB team matching with abbreviation expansion
+                    const normalize = s => (s || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+                    
+                    // NCAAB abbreviation expansions (ESPN short → full name)
+                    const expandAbbreviations = (name) => {
+                        let n = name;
+                        // Common abbreviations
+                        n = n.replace(/\bst\b/gi, 'state');
+                        n = n.replace(/\bmiss\b/gi, 'mississippi');
+                        n = n.replace(/\bn\b\.\s*/gi, 'north ');
+                        n = n.replace(/\bs\b\.\s*/gi, 'south ');
+                        n = n.replace(/\be\b\.\s*/gi, 'east ');
+                        n = n.replace(/\bw\b\.\s*/gi, 'west ');
+                        n = n.replace(/\bmt\b/gi, 'mount');
+                        n = n.replace(/\bft\b/gi, 'fort');
+                        n = n.replace(/\bse\b/gi, 'southeastern');
+                        n = n.replace(/\bne\b/gi, 'northeastern');
+                        n = n.replace(/\bsw\b/gi, 'southwestern');
+                        n = n.replace(/\bnw\b/gi, 'northwestern');
+                        n = n.replace(/\bso\b/gi, 'southern');
+                        n = n.replace(/\bno\b/gi, 'northern');
+                        n = n.replace(/\bga\b/gi, 'georgia');
+                        n = n.replace(/\bla\b/gi, 'louisiana');
+                        n = n.replace(/\bfl\b/gi, 'florida');
+                        n = n.replace(/\bal\b/gi, 'alabama');
+                        n = n.replace(/\bks\b/gi, 'kansas');
+                        n = n.replace(/\bpenn\b/gi, 'pennsylvania');
+                        n = n.replace(/\bconn\b/gi, 'connecticut');
+                        n = n.replace(/\bmass\b/gi, 'massachusetts');
+                        n = n.replace(/\bwis\b/gi, 'wisconsin');
+                        n = n.replace(/\bfla\b/gi, 'florida');
+                        n = n.replace(/\bcolo\b/gi, 'colorado');
+                        n = n.replace(/\bcal\b/gi, 'california');
+                        n = n.replace(/\billini?\b/gi, 'illinois');
+                        n = n.replace(/\bva\b/gi, 'virginia');
+                        n = n.replace(/\bunc\b/gi, 'north carolina');
+                        n = n.replace(/\busc\b/gi, 'southern california');
+                        n = n.replace(/\bucf\b/gi, 'central florida');
+                        n = n.replace(/\butep\b/gi, 'texas el paso');
+                        n = n.replace(/\butsa\b/gi, 'texas san antonio');
+                        n = n.replace(/\bunlv\b/gi, 'nevada las vegas');
+                        n = n.replace(/\bam\b/gi, 'a&m');
+                        // Strip mascot suffixes for matching
+                        n = n.replace(/\b(lions|tigers|bears|bulldogs|wildcats|eagles|hawks|hornets|devils|demons|cougars|panthers|wolves|warriors|knights|jaguars|owls|bobcats|cardinals|mustangs|aggies|huskies|spartans|trojans|gators|razorbacks|longhorns|sooners|seminoles|hurricanes|cavaliers|hokies|terrapins|scarlet knights|blue devils|tar heels|yellow jackets|crimson tide|fighting irish|wolverines|buckeyes|badgers|cornhuskers|jayhawks|cyclones|mountaineers|beavers|bruins|utes|buffaloes|ducks|sun devils|golden bears|rams|falcons|49ers)\b/gi, '');
+                        return n.replace(/\s+/g, ' ').trim();
                     };
-                    const hlMatch = matches.find(m => {
+                    
+                    // Multi-strategy matching: expanded names, key-word overlap, prefix match
+                    const teamMatchScore = (espnName, hlName) => {
+                        const e = normalize(espnName);
+                        const h = normalize(hlName);
+                        
+                        // Word-boundary contains helper
+                        const wbContains = (haystack, needle) => {
+                            if (haystack === needle) return true;
+                            const hp = ' ' + haystack + ' ';
+                            return hp.includes(' ' + needle + ' ');
+                        };
+                        
+                        // Exact normalized match
+                        if (e === h) return 100;
+                        
+                        // One contains the other (word-boundary)
+                        if (wbContains(h, e) || wbContains(e, h)) return 90;
+                        
+                        // Expanded abbreviation match
+                        const eExp = normalize(expandAbbreviations(espnName));
+                        const hExp = normalize(expandAbbreviations(hlName));
+                        if (eExp === hExp) return 95;
+                        if (wbContains(hExp, eExp) || wbContains(eExp, hExp)) return 85;
+                        
+                        // Word overlap scoring (after expansion)
+                        const eWords = new Set(eExp.split(' ').filter(w => w.length > 1));
+                        const hWords = new Set(hExp.split(' ').filter(w => w.length > 1));
+                        let overlap = 0;
+                        for (const w of eWords) { if (hWords.has(w)) overlap++; }
+                        const overlapPct = overlap / Math.min(eWords.size, hWords.size);
+                        if (overlapPct >= 0.6 && overlap >= 2) return 70 + Math.round(overlapPct * 20);
+                        
+                        // First significant word match (for "Duke" → "Duke Blue Devils")
+                        const eFirst = eExp.split(' ')[0];
+                        const hFirst = hExp.split(' ')[0];
+                        if (eFirst.length >= 4 && eFirst === hFirst) return 65;
+                        
+                        // Word-boundary: ESPN name appears as word boundary in HL name
+                        if (wbContains(hExp, eExp)) return 80;
+                        
+                        return 0;
+                    };
+                    
+                    // Find best match — require BOTH teams to score ≥60
+                    let hlMatch = null;
+                    let bestScore = 0;
+                    for (const m of matches) {
                         const hHome = m.homeTeam?.displayName || m.homeTeam?.name || '';
                         const hAway = m.awayTeam?.displayName || m.awayTeam?.name || '';
-                        // BOTH teams must match (home↔home AND away↔away, or swapped)
-                        const matchNormal = (wordMatch(hHome, homeTeam) || wordMatch(homeTeam, hHome.split(' ')[0])) &&
-                                           (wordMatch(hAway, awayTeam) || wordMatch(awayTeam, hAway.split(' ')[0]));
-                        const matchSwapped = (wordMatch(hHome, awayTeam) || wordMatch(awayTeam, hHome.split(' ')[0])) &&
-                                            (wordMatch(hAway, homeTeam) || wordMatch(homeTeam, hAway.split(' ')[0]));
-                        return matchNormal || matchSwapped;
-                    });
+                        
+                        // Normal orientation
+                        const s1 = Math.min(teamMatchScore(homeTeam, hHome), teamMatchScore(awayTeam, hAway));
+                        // Swapped orientation
+                        const s2 = Math.min(teamMatchScore(homeTeam, hAway), teamMatchScore(awayTeam, hHome));
+                        const score = Math.max(s1, s2);
+                        
+                        if (score >= 60 && score > bestScore) {
+                            bestScore = score;
+                            hlMatch = m;
+                        }
+                    }
                     
                     if (!hlMatch) {
-                        console.log(`⚠️ Highlightly: No match found for ${homeTeam} vs ${awayTeam}`);
+                        // Debug: show closest match attempt
+                        if (matches.length > 0) {
+                            const sample = matches[0];
+                            const sHome = sample.homeTeam?.displayName || sample.homeTeam?.name || '?';
+                            const sAway = sample.awayTeam?.displayName || sample.awayTeam?.name || '?';
+                            console.log(`⚠️ Highlightly: No match found for ${homeTeam} vs ${awayTeam} (${matches.length} candidates, e.g. "${sHome} vs ${sAway}", bestScore=${bestScore})`);
+                        } else {
+                            console.log(`⚠️ Highlightly: No match found for ${homeTeam} vs ${awayTeam} (0 candidates)`);
+                        }
                         return game;
                     }
                     
-                    console.log(`🎯 Highlightly: Matched → ${hlMatch.homeTeam?.displayName} vs ${hlMatch.awayTeam?.displayName} (ID: ${hlMatch.id})`);
+                    console.log(`🎯 Highlightly: Matched → ${hlMatch.homeTeam?.displayName} vs ${hlMatch.awayTeam?.displayName} (ID: ${hlMatch.id}, score=${bestScore})`);
                     
                     // Enrich with match detail (predictions, stats) — free plan only
                     const detail = await this.getMatchDetail(hlMatch.id);
