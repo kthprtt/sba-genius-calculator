@@ -7200,14 +7200,40 @@ Return ONLY valid JSON:
                     };
                     
                     // Add predictions if available
+                    // Debug: log what keys the match detail actually has
+                    if (detail) {
+                        const detailKeys = Object.keys(detail);
+                        console.log(`📋 Highlightly match ${hlMatch.id} keys: [${detailKeys.join(', ')}]`);
+                        // Log prediction-related fields
+                        const predKeys = detailKeys.filter(k => /pred|prob|win|score|expect|forecast|tip/i.test(k));
+                        if (predKeys.length > 0) {
+                            console.log(`🔮 Highlightly prediction keys: [${predKeys.join(', ')}]`);
+                            predKeys.forEach(k => console.log(`   ${k}: ${JSON.stringify(detail[k]).slice(0, 300)}`));
+                        }
+                    }
+                    
                     if (detail?.predictions) {
                         game.highlightly.predictions = detail.predictions;
                         console.log(`📊 Highlightly predictions: ${JSON.stringify(detail.predictions).slice(0, 200)}`);
+                    } else if (detail?.prediction) {
+                        game.highlightly.predictions = detail.prediction;
+                        console.log(`📊 Highlightly prediction (singular): ${JSON.stringify(detail.prediction).slice(0, 200)}`);
+                    } else if (detail?.winProbability || detail?.homeWinProbability) {
+                        game.highlightly.predictions = {
+                            homeWin: detail.homeWinProbability || detail.winProbability?.home,
+                            awayWin: detail.awayWinProbability || detail.winProbability?.away,
+                            draw: detail.drawProbability || detail.winProbability?.draw
+                        };
+                        console.log(`📊 Highlightly win probability: ${JSON.stringify(game.highlightly.predictions).slice(0, 200)}`);
+                    } else {
+                        console.log(`⚠️ Highlightly match ${hlMatch.id}: No predictions found in response`);
                     }
                     
                     // Add match statistics if available
                     if (detail?.matchStatistics) {
                         game.highlightly.matchStatistics = detail.matchStatistics;
+                    } else if (detail?.statistics) {
+                        game.highlightly.matchStatistics = detail.statistics;
                     }
                     
                     // Add venue info
