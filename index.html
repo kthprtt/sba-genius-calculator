@@ -31321,7 +31321,10 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 // V11: Weight H2H based on sample size
                 // With 1 game, blend 70% L10 + 30% H2H
                 // With 4+ games, use full H2H
-                const h2hWeight = Math.min(1.0, 0.3 + (matchupGames * 0.175));
+                // V50.14 FIX: Reduced H2H weight for small samples
+                // Old: 0.3 + games*0.175 → 2 games = 65% (too aggressive)
+                // New: 0.2 + games*0.15 → 2 games = 50%, 4 games = 80%, 5+ = 95%
+                const h2hWeight = Math.min(0.95, 0.2 + (matchupGames * 0.15));
                 engine3_matchupHistory = (engine3_matchupHistory * h2hWeight) + (l10Avg * (1 - h2hWeight));
                 
                 console.log(`🎯 V11 E3 Matchup: ${intelData.matchupHistory.avg.toFixed(1)} in ${matchupGames} games vs opponent (${h2hConfidence} conf, ${(h2hWeight * 100).toFixed(0)}% weight) → ${engine3_matchupHistory.toFixed(1)}`);
@@ -31343,10 +31346,9 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 const awayAvg = intelData.homeAwaySplit.away || seasonAvg;
                 const rawDiff = isHome ? (homeAvg - seasonAvg) : (awayAvg - seasonAvg);
                 
-                // V10 FIX: Cap home/away adjustment to reasonable bounds
-                // NBA home court advantage is typically 1-3 points, not 10+
-                // Cap at ±15% of season average to prevent wild swings
-                const maxHomeAwayImpact = seasonAvg * 0.15;
+                // V50.14 FIX: Tighter cap — 10% of season avg (was 15%)
+                // NBA home court advantage is typically 1-3 points, not 4+
+                const maxHomeAwayImpact = seasonAvg * 0.10;
                 adjustment4_homeAway = Math.max(-maxHomeAwayImpact, Math.min(maxHomeAwayImpact, rawDiff));
                 
                 // Log if we capped the adjustment
@@ -31425,7 +31427,17 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             let minutesFactors = [];
             
             // Factor 1: Recent minutes trend (L5 vs L10)
-            const l5Minutes = validateMinutes(intelData.recentForm?.l5?.min || seasonMinutes);
+            // V50.14 FIX: Use cleaned L5 minutes (exclude DNP/0-min games) to match V48 stat cleaning
+            let l5Minutes = validateMinutes(intelData.recentForm?.l5?.min || seasonMinutes);
+            if (blowoutContextLow > 0 && intelData.rollingStats?.games) {
+                // Recalculate L5 minutes excluding DNP/scratch games (same logic as V48 stat clean)
+                const l5Games = intelData.rollingStats.games.slice(0, 5);
+                const validMinGames = l5Games.filter(g => (g.min || 0) >= 5); // Must have played 5+ min
+                if (validMinGames.length > 0) {
+                    l5Minutes = validMinGames.reduce((sum, g) => sum + (g.min || 0), 0) / validMinGames.length;
+                    console.log(`🧹 V50.14 E7: Cleaned L5 minutes (excluded ${l5Games.length - validMinGames.length} DNP/low-min games) → ${l5Minutes.toFixed(1)}min`);
+                }
+            }
             const minutesTrend = l5Minutes - seasonMinutes;
             if (Math.abs(minutesTrend) > 1 && Math.abs(minutesTrend) < 15) { // Sanity check
                 projectedMinutes += minutesTrend * 0.5; // 50% weight to trend
@@ -32004,9 +32016,20 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             adjustments.tierContext = adjustment19_tierContext;
             
             const totalAdjustment = Object.values(adjustments).reduce((sum, val) => sum + val, 0);
-            let rawProjection = baseProjection + totalAdjustment;
             
-            console.log(`📊 Adjustments: ${totalAdjustment >= 0 ? '+' : ''}${totalAdjustment.toFixed(1)} → Raw: ${rawProjection.toFixed(1)}`);
+            // V50.14 FIX: Global adjustment cap — prevent cascading correlated adjustments
+            // Individual engines may each have valid signals, but when 5+ engines all push negative
+            // they often reflect the SAME underlying cause (recent cold streak, away game, etc.)
+            // Cap total adjustments to ±25% of season average to prevent unrealistic projections
+            const maxGlobalAdj = seasonAvg * 0.25;
+            const cappedAdjustment = Math.max(-maxGlobalAdj, Math.min(maxGlobalAdj, totalAdjustment));
+            let rawProjection = baseProjection + cappedAdjustment;
+            
+            if (Math.abs(totalAdjustment) > Math.abs(cappedAdjustment)) {
+                console.log(`🛡️ V50.14 Global Cap: Adjustments ${totalAdjustment >= 0 ? '+' : ''}${totalAdjustment.toFixed(1)} → CAPPED to ${cappedAdjustment >= 0 ? '+' : ''}${cappedAdjustment.toFixed(1)} (max ±${maxGlobalAdj.toFixed(1)})`);
+            }
+            
+            console.log(`📊 Adjustments: ${cappedAdjustment >= 0 ? '+' : ''}${cappedAdjustment.toFixed(1)} → Raw: ${rawProjection.toFixed(1)}`);
             
             // ═══════════════════════════════════════════════════════════════════════
             // V10 ENGINE 14: VEGAS ANCHOR (Confidence-Weighted)
