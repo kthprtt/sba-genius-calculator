@@ -32162,8 +32162,10 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 
                 // ── LAYER 3b: Highlightly ML Prediction (external model cross-check) ──
                 let hlWinProb = null;
-                if (intelData.highlightlyPrediction?.prematch?.length > 0) {
-                    const hlPrematch = intelData.highlightlyPrediction.prematch[0];
+                // V50.13: highlightlyPrediction lives in _matchupData (from team intel pipeline)
+                const hlPredData = intelData._matchupData?.highlightlyPrediction || intelData.highlightlyPrediction || null;
+                if (hlPredData?.prematch?.length > 0) {
+                    const hlPrematch = hlPredData.prematch[0];
                     const hlProbs = hlPrematch.probabilities;
                     if (hlProbs) {
                         // Parse percentage strings → decimals (e.g., "50.27%" → 0.5027)
