@@ -32063,18 +32063,64 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                     }
                 }
                 
+                // ── LAYER 3b: Highlightly ML Prediction (external model cross-check) ──
+                let hlWinProb = null;
+                if (intelData.highlightlyPrediction?.prematch?.length > 0) {
+                    const hlPrematch = intelData.highlightlyPrediction.prematch[0];
+                    const hlProbs = hlPrematch.probabilities;
+                    if (hlProbs) {
+                        // Parse percentage strings → decimals (e.g., "50.27%" → 0.5027)
+                        const parseHlPct = (s) => {
+                            if (!s) return null;
+                            const n = parseFloat(String(s).replace('%', ''));
+                            return isNaN(n) ? null : n / 100;
+                        };
+                        const hlHome = parseHlPct(hlProbs.home);
+                        const hlAway = parseHlPct(hlProbs.away);
+                        const hlDraw = parseHlPct(hlProbs.draw);
+                        
+                        if (hlHome !== null && hlAway !== null) {
+                            // For basketball (no draw), redistribute draw probability proportionally
+                            // For soccer, keep as-is
+                            const isBBall = /ncaab|nba|wnba|basketball/i.test(state.sport);
+                            if (isBBall && hlDraw !== null && hlDraw > 0) {
+                                // Redistribute draw proportionally between home/away
+                                const totalNonDraw = hlHome + hlAway;
+                                const hlHomeAdj = hlHome + (hlDraw * (hlHome / totalNonDraw));
+                                const hlAwayAdj = hlAway + (hlDraw * (hlAway / totalNonDraw));
+                                hlWinProb = intelData._isHomeSelection ? hlHomeAdj : hlAwayAdj;
+                                console.log(`🔮 V50 Highlightly ML: Home=${(hlHome*100).toFixed(1)}%, Away=${(hlAway*100).toFixed(1)}%, Draw=${(hlDraw*100).toFixed(1)}% → Redistributed: ${intelData._isHomeSelection ? 'Home' : 'Away'}=${(hlWinProb*100).toFixed(1)}%`);
+                            } else {
+                                hlWinProb = intelData._isHomeSelection ? hlHome : hlAway;
+                                console.log(`🔮 V50 Highlightly ML: Home=${(hlHome*100).toFixed(1)}%, Away=${(hlAway*100).toFixed(1)}% → ${intelData._isHomeSelection ? 'Home' : 'Away'}=${(hlWinProb*100).toFixed(1)}%`);
+                            }
+                        }
+                    }
+                }
+                
                 // ── LAYER 4: Engine Consensus Blend ──
-                // If market data available: 40% model + 40% market + 20% situational
-                // If no market data: 70% model + 30% situational
+                // Blend weights adapt based on available signals:
+                // Full (model + market + HL): 35% model + 35% market + 15% HL + 15% situational
+                // Model + HL (no market):     55% model + 20% HL + 25% situational
+                // Model + Market (no HL):     40% model + 40% market + 20% situational
+                // Model only:                 70% model + 30% situational
                 let blendedWinProb;
                 const situationalAdj = (adjustment4_homeAway + adjustment5_restDays + adjustment6_pace) / 100;
                 
-                if (marketWinProb !== null) {
+                if (marketWinProb !== null && hlWinProb !== null) {
+                    // Full blend: all 3 independent signals
+                    blendedWinProb = (logisticWinProb * 0.35) + (marketWinProb * 0.35) + (hlWinProb * 0.15) + ((logisticWinProb + situationalAdj) * 0.15);
+                    console.log(`📊 V50 Blend [FULL]: Model=${(logisticWinProb*100).toFixed(1)}%, Market=${(marketWinProb*100).toFixed(1)}%, Highlightly=${(hlWinProb*100).toFixed(1)}%, Sit=${(situationalAdj*100).toFixed(1)}%`);
+                } else if (hlWinProb !== null) {
+                    // Model + Highlightly (no market odds)
+                    blendedWinProb = (logisticWinProb * 0.55) + (hlWinProb * 0.20) + ((logisticWinProb + situationalAdj) * 0.25);
+                    console.log(`📊 V50 Blend [Model+HL]: Model=${(logisticWinProb*100).toFixed(1)}%, Highlightly=${(hlWinProb*100).toFixed(1)}%, Sit=${(situationalAdj*100).toFixed(1)}%`);
+                } else if (marketWinProb !== null) {
                     blendedWinProb = (logisticWinProb * 0.40) + (marketWinProb * 0.40) + ((logisticWinProb + situationalAdj) * 0.20);
-                    console.log(`📊 V50 Blend: Model=${(logisticWinProb*100).toFixed(1)}%, Market=${(marketWinProb*100).toFixed(1)}%, Situational=${(situationalAdj*100).toFixed(1)}%`);
+                    console.log(`📊 V50 Blend [Model+Market]: Model=${(logisticWinProb*100).toFixed(1)}%, Market=${(marketWinProb*100).toFixed(1)}%, Sit=${(situationalAdj*100).toFixed(1)}%`);
                 } else {
                     blendedWinProb = (logisticWinProb * 0.70) + ((logisticWinProb + situationalAdj) * 0.30);
-                    console.log(`📊 V50 Blend (no market): Model=${(logisticWinProb*100).toFixed(1)}%, Situational=${(situationalAdj*100).toFixed(1)}%`);
+                    console.log(`📊 V50 Blend [Model only]: Model=${(logisticWinProb*100).toFixed(1)}%, Sit=${(situationalAdj*100).toFixed(1)}%`);
                 }
                 
                 // ── V50 UNCAPPED OUTPUT ──
@@ -32082,7 +32128,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 // Floor at 5% (no team has 0% chance), ceiling at 97% (upsets happen)
                 const winProb = Math.max(5, Math.min(97, blendedWinProb * 100));
                 
-                console.log(`📊 V50 Moneyline FINAL: Margin=${efficiencyMargin.toFixed(1)} → Logistic=${(logisticWinProb*100).toFixed(1)}% → Blended=${winProb.toFixed(1)}% [UNCAPPED]`);
+                console.log(`📊 V50 Moneyline FINAL: Margin=${efficiencyMargin.toFixed(1)} → Logistic=${(logisticWinProb*100).toFixed(1)}%${hlWinProb !== null ? ' | HL=' + (hlWinProb*100).toFixed(1) + '%' : ''}${marketWinProb !== null ? ' | Mkt=' + (marketWinProb*100).toFixed(1) + '%' : ''} → Blended=${winProb.toFixed(1)}% [UNCAPPED]`);
                 finalProjection = winProb;
             }
             
