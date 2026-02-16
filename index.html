@@ -7160,7 +7160,7 @@ Return ONLY valid JSON:
                     if (!matches || matches.length === 0) return game;
                     
                     // V50.13: Robust NCAAB team matching with abbreviation expansion
-                    const normalize = s => (s || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+                    const normalize = s => (s || '').toLowerCase().replace(/[-–—]/g, ' ').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
                     
                     // NCAAB abbreviation expansions (ESPN short → full name)
                     const expandAbbreviations = (name) => {
@@ -7184,7 +7184,15 @@ Return ONLY valid JSON:
                         n = n.replace(/\bla\b/gi, 'louisiana');
                         n = n.replace(/\bfl\b/gi, 'florida');
                         n = n.replace(/\bal\b/gi, 'alabama');
+                        n = n.replace(/\bar\b/gi, 'arkansas');
                         n = n.replace(/\bks\b/gi, 'kansas');
+                        n = n.replace(/\bmo\b/gi, 'missouri');
+                        n = n.replace(/\btn\b/gi, 'tennessee');
+                        n = n.replace(/\bky\b/gi, 'kentucky');
+                        n = n.replace(/\bmd\b/gi, 'maryland');
+                        n = n.replace(/\bnc\b/gi, 'north carolina');
+                        n = n.replace(/\bsc\b/gi, 'south carolina');
+                        n = n.replace(/\bwv\b/gi, 'west virginia');
                         n = n.replace(/\bpenn\b/gi, 'pennsylvania');
                         n = n.replace(/\bconn\b/gi, 'connecticut');
                         n = n.replace(/\bmass\b/gi, 'massachusetts');
@@ -7202,7 +7210,7 @@ Return ONLY valid JSON:
                         n = n.replace(/\bunlv\b/gi, 'nevada las vegas');
                         n = n.replace(/\bam\b/gi, 'a&m');
                         // Strip mascot suffixes for matching
-                        n = n.replace(/\b(lions|tigers|bears|bulldogs|wildcats|eagles|hawks|hornets|devils|demons|cougars|panthers|wolves|warriors|knights|jaguars|owls|bobcats|cardinals|mustangs|aggies|huskies|spartans|trojans|gators|razorbacks|longhorns|sooners|seminoles|hurricanes|cavaliers|hokies|terrapins|scarlet knights|blue devils|tar heels|yellow jackets|crimson tide|fighting irish|wolverines|buckeyes|badgers|cornhuskers|jayhawks|cyclones|mountaineers|beavers|bruins|utes|buffaloes|ducks|sun devils|golden bears|rams|falcons|49ers)\b/gi, '');
+                        n = n.replace(/\b(lions|golden lions|tigers|bears|bulldogs|wildcats|eagles|hawks|hornets|devils|delta devils|demons|blue demons|cougars|panthers|wolves|warriors|knights|golden knights|jaguars|owls|bobcats|cardinals|mustangs|aggies|huskies|spartans|trojans|gators|razorbacks|longhorns|sooners|seminoles|hurricanes|cavaliers|hokies|terrapins|scarlet knights|blue devils|tar heels|yellow jackets|crimson tide|fighting irish|wolverines|buckeyes|badgers|cornhuskers|jayhawks|cyclones|mountaineers|beavers|bruins|utes|buffaloes|ducks|sun devils|golden bears|rams|falcons|49ers|braves|tigers|gamecocks|volunteers|commodores|rebels|flames|bison|thundering herd|chanticleers|paladins|catamounts|phoenix|colonials|dukes|spiders|tribe|monarchs|pirates|shockers|penguins|anteaters|gauchos|matadors|highlanders|roadrunners|miners|lumberjacks|bearcats|zips|redhawks|redbirds|leathernecks|salukis|sycamores|purple aces|peacocks|jaspers|gaels|broncos|toreros|pilots|waves|dons|saints|coyotes|kangaroos|ospreys|hatters|dolphins|rattlers|bethune cookman)\b/gi, '');
                         return n.replace(/\s+/g, ' ').trim();
                     };
                     
