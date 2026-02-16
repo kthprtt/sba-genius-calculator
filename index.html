@@ -6034,7 +6034,9 @@ Return ONLY valid JSON:
             { id: 'soccer_seriea', name: 'Serie A', icon: '⚽', live: true, subreddit: 'SerieA', statssite: 'FBRef', apiKey: 'soccer_italy_serie_a' },
             { id: 'soccer_bundesliga', name: 'Bundesliga', icon: '⚽', live: true, subreddit: 'Bundesliga', statssite: 'FBRef', apiKey: 'soccer_germany_bundesliga' },
             { id: 'soccer_mls', name: 'MLS', icon: '⚽', live: true, subreddit: 'MLS', statssite: 'FBRef', apiKey: 'soccer_usa_mls' },
-            { id: 'soccer_ucl', name: 'Champions League', icon: '⚽', live: true, subreddit: 'ChampionsLeague', statssite: 'FBRef', apiKey: 'soccer_uefa_champs_league' }
+            { id: 'soccer_ucl', name: 'Champions League', icon: '⚽', live: true, subreddit: 'ChampionsLeague', statssite: 'FBRef', apiKey: 'soccer_uefa_champs_league' },
+            { id: 'soccer_ligue1', name: 'Ligue 1', icon: '⚽', live: true, subreddit: 'Ligue1', statssite: 'FBRef', apiKey: 'soccer_france_ligue_one' },
+            { id: 'mma', name: 'MMA/UFC', icon: '🥊', live: true, subreddit: 'MMA', statssite: 'UFC Stats', apiKey: 'mma_mixed_martial_arts' }
         ];
         
         // ══════════════════════════════════════════════════════════════════
@@ -6172,6 +6174,18 @@ Return ONLY valid JSON:
                 team: ['Match Winner', 'Asian Handicap', 'Team Goals', 'Alt Team Goals'],
                 player: ['Anytime Goal', 'First Goal', 'Last Goal', 'Shots on Target', 'Shots', 'Assists',
                          'To Receive Card', 'To Receive Red Card']
+            },
+            soccer_ligue1: {
+                game: ['Match Total', 'Both Teams Score', 'Double Chance', 'Draw No Bet', '3-Way ML',
+                       'Total Corners', 'Total Cards'],
+                team: ['Match Winner', 'Asian Handicap', 'Team Goals', 'Alt Team Goals'],
+                player: ['Anytime Goal', 'First Goal', 'Last Goal', 'Shots on Target', 'Shots', 'Assists',
+                         'To Receive Card']
+            },
+            mma: {
+                game: ['Method of Victory', 'Round Betting', 'Fight Total Rounds', 'Will Fight Go Distance'],
+                team: ['Moneyline'],
+                player: ['Significant Strikes', 'Takedowns', 'Knockdowns']
             }
         };
         
@@ -13291,7 +13305,7 @@ Return ONLY valid JSON:
         };
         
         // Weather impact factors by sport
-        const WEATHER_SPORTS = ['nfl', 'ncaaf', 'mlb', 'soccer_epl', 'soccer_laliga', 'soccer_mls', 'soccer_seriea', 'soccer_bundesliga', 'soccer_ucl'];
+        const WEATHER_SPORTS = ['nfl', 'ncaaf', 'mlb', 'soccer_epl', 'soccer_laliga', 'soccer_mls', 'soccer_seriea', 'soccer_bundesliga', 'soccer_ucl', 'soccer_ligue1'];
         
         // Critical factors we track
         const CRITICAL_FACTORS = {
@@ -13993,6 +14007,11 @@ Return ONLY valid JSON:
             state.lastProjection = null;
             state.liveOdds = null;
             state.rollingStats = null;
+            state.teamStats = null;
+            state._teamStatsPromise = null;
+            state.event = null;
+            state.cachedPlayers = null;
+            state.players = null;
             
             // V50.14 FIX: Clear V26 team caches — keys are teamId-based (not sport-scoped)
             // so NBA team 1 (Hawks) and WNBA team 1 share the same cache key
@@ -14858,7 +14877,9 @@ Return ONLY valid JSON:
             mlb: 1,
             nhl: 6,
             soccer_epl: 7, soccer_laliga: 7, soccer_seriea: 7,
-            soccer_bundesliga: 7, soccer_mls: 7, soccer_ucl: 7
+            soccer_bundesliga: 7, soccer_mls: 7, soccer_ucl: 7,
+            soccer_ligue1: 7,
+            mma: 9
         };
         
         // BetBurger period IDs by sport family
@@ -18830,6 +18851,22 @@ Return ONLY valid JSON:
         };
         
         // Sport-specific ESPN paths
+        // V50.14 FIX: Sport-aware ESPN season year
+        // European soccer seasons span Aug-May and use the STARTING year (2025-26 = season 2025)
+        // North American leagues use ending year (NBA 2025-26 = season 2026)
+        function getESPNSeasonYear(sport) {
+            const now = new Date();
+            const month = now.getMonth() + 1; // 1-12
+            const year = now.getFullYear();
+            const euroSoccer = ['soccer_epl', 'soccer_laliga', 'soccer_seriea', 'soccer_bundesliga', 'soccer_ligue1', 'soccer_ucl'];
+            if (euroSoccer.includes(sport)) {
+                // Aug+ = current year, Jan-Jul = previous year (2025-26 season in Feb 2026 = 2025)
+                return month >= 8 ? year : year - 1;
+            }
+            // NA leagues: Oct+ = next year (NBA/NHL 2025-26 in Oct 2025 = 2026)
+            return month >= 10 ? year + 1 : year;
+        }
+        
         const ESPN_SPORT_PATHS = {
             nba: 'basketball/nba',
             basketball_nba: 'basketball/nba',
@@ -19083,7 +19120,7 @@ Return ONLY valid JSON:
                 if (!completedGames) {
                     // ESPN uses the END year of the season (2025-26 season = 2026)
                     const now = new Date();
-                    const espnSeasonYear = now.getMonth() >= 9 ? now.getFullYear() + 1 : now.getFullYear(); // Oct+ = next year
+                    const espnSeasonYear = getESPNSeasonYear(state.sport); // V50.14: sport-aware season year
                     const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${teamESPNId}/schedule?season=${espnSeasonYear}`;
                     console.log(`📅 V49.5: Fetching schedule for team ${teamESPNId}...`);
                     const schedRes = await fetch(schedUrl);
@@ -20381,8 +20418,20 @@ Return ONLY valid JSON:
                 const homeStrengthFactor = awayWPct / Math.max(0.3, avgWPct); // >1 if facing tough opponent
                 const awayStrengthFactor = homeWPct / Math.max(0.3, avgWPct);
                 
-                // V50: Home court advantage for NCAAB (3.5 pts), NBA (2.5 pts)
-                const homeCourtAdv = isNCAA ? 3.5 : 2.5;
+                // V50: Home court/field advantage calibrated per sport
+                const sportHCA = {
+                    'ncaab': 3.5, 'basketball_ncaab': 3.5,
+                    'nba': 2.5, 'basketball_nba': 2.5,
+                    'wnba': 2.0,
+                    'nfl': 2.5, 'ncaaf': 3.0,
+                    'mlb': 0.35,
+                    'nhl': 0.15,
+                    'soccer_epl': 0.35, 'soccer_laliga': 0.40, 'soccer_seriea': 0.35,
+                    'soccer_bundesliga': 0.35, 'soccer_mls': 0.30, 'soccer_ucl': 0.25,
+                    'soccer_ligue1': 0.35,
+                    'mma': 0
+                };
+                const homeCourtAdv = sportHCA[state.sport] || (isNCAA ? 3.5 : 2.5);
                 
                 // V50: Adjusted margin incorporates opponent strength + home court
                 // Raw margin already has both teams' context, but home court needs explicit addition
@@ -20435,8 +20484,8 @@ Return ONLY valid JSON:
                     const awayESPNId = at?.espnId || event.awayTeam?.id;
                     
                     // Fetch team schedules for ATS computation
-                    const espnSeasonYear = new Date().getMonth() >= 9 ? new Date().getFullYear() + 1 : new Date().getFullYear();
-                    const sportPath = isNCAA ? 'basketball/mens-college-basketball' : 'basketball/nba';
+                    const espnSeasonYear = getESPNSeasonYear(state.sport);
+                    const sportPath = isNCAA ? 'basketball/mens-college-basketball' : (ESPN_SPORT_PATHS[state.sport] || 'basketball/nba');
                     
                     if (homeESPNId) {
                         const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${homeESPNId}/schedule?season=${espnSeasonYear}`;
@@ -23817,7 +23866,7 @@ Return ONLY valid JSON:
                                             
                                             console.log(`📅 V49.7 recentForm: sport=${state.sport}, sportPath=${sportPath}, teamESPNId=${teamESPNId}, isHome=${isHome}, playerName=${playerName}`);
                                             if (teamESPNId && sportPath) {
-                                                const espnYear = new Date().getMonth() >= 9 ? new Date().getFullYear() + 1 : new Date().getFullYear();
+                                                const espnYear = getESPNSeasonYear(state.sport);
                                                 const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${teamESPNId}/schedule?season=${espnYear}`;
                                                 console.log(`📅 V49.7: Fetching schedule for recentForm (team ${teamESPNId})...`);
                                                 const schedRes = await fetch(schedUrl);
@@ -23895,7 +23944,7 @@ Return ONLY valid JSON:
                                         const sportPath = ESPN_SPORT_PATHS[state.sport] || ESPN_SPORT_PATHS[state.sport?.replace('basketball_', '')] || (state.sport?.includes('ncaab') ? 'basketball/mens-college-basketball' : null);
                                         
                                         if (homeESPNId && sportPath) {
-                                            const espnSeasonYear = new Date().getMonth() >= 9 ? new Date().getFullYear() + 1 : new Date().getFullYear();
+                                            const espnSeasonYear = getESPNSeasonYear(state.sport);
                                             const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${homeESPNId}/schedule?season=${espnSeasonYear}`;
                                             console.log(`🔍 V49.7 H2H: Checking ESPN schedule for ${selectedEvent.homeTeam?.shortDisplayName} (ID: ${homeESPNId})...`);
                                             const schedRes = await fetch(schedUrl);
@@ -24094,7 +24143,7 @@ Return ONLY valid JSON:
                                     const sportPath = ESPN_SPORT_PATHS[state.sport] || ESPN_SPORT_PATHS[state.sport?.replace('basketball_', '')] || (state.sport?.includes('ncaab') ? 'basketball/mens-college-basketball' : null);
                                     
                                     if (homeESPNId && sportPath) {
-                                        const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${homeESPNId}/schedule?season=${new Date().getMonth() >= 9 ? new Date().getFullYear() + 1 : new Date().getFullYear()}`;
+                                        const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${homeESPNId}/schedule?season=${getESPNSeasonYear(state.sport)}`;
                                         console.log(`🔍 V49.2 H2H: Checking ESPN schedule for ${selectedEvent.homeTeam?.shortDisplayName} (ID: ${homeESPNId})...`);
                                         const schedRes = await fetch(schedUrl);
                                         if (schedRes.ok) {
@@ -24419,7 +24468,7 @@ Return ONLY valid JSON:
                                     const awayESPNId = state.teamStats?.away?.espnId || await resolveESPNTeamId(selectedEvent.awayTeam?.shortDisplayName || '', state.sport);
                                     const sportPathH2H = ESPN_SPORT_PATHS[state.sport] || ESPN_SPORT_PATHS[state.sport?.replace('basketball_', '')] || (state.sport?.includes('ncaab') ? 'basketball/mens-college-basketball' : null);
                                     if (homeESPNId && sportPathH2H) {
-                                        const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPathH2H}/teams/${homeESPNId}/schedule?season=${new Date().getMonth() >= 9 ? new Date().getFullYear() + 1 : new Date().getFullYear()}`;
+                                        const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPathH2H}/teams/${homeESPNId}/schedule?season=${getESPNSeasonYear(state.sport)}`;
                                         const schedRes = await fetch(schedUrl);
                                         if (schedRes.ok) {
                                             const schedData = await schedRes.json();
@@ -24518,7 +24567,7 @@ Return ONLY valid JSON:
                                 const awayESPNId = state.teamStats?.away?.espnId || await resolveESPNTeamId(selectedEvent.awayTeam?.shortDisplayName || '', state.sport);
                                 const sportPath = ESPN_SPORT_PATHS[state.sport] || ESPN_SPORT_PATHS[state.sport?.replace('basketball_', '')] || (state.sport?.includes('ncaab') ? 'basketball/mens-college-basketball' : null);
                                 if (homeESPNId && sportPath) {
-                                    const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${homeESPNId}/schedule?season=${new Date().getMonth() >= 9 ? new Date().getFullYear() + 1 : new Date().getFullYear()}`;
+                                    const schedUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${homeESPNId}/schedule?season=${getESPNSeasonYear(state.sport)}`;
                                     console.log(`🔍 V49.4 Player H2H: Checking ESPN schedule for team context...`);
                                     const schedRes = await fetch(schedUrl);
                                     if (schedRes.ok) {
@@ -28789,11 +28838,17 @@ Return ONLY JSON: {"pick": "OVER|UNDER|PASS", "confidence": 0-100, "trueProb": 0
                 const isTeam = context?.isTeamMarket || ['Spread', 'Game Total', 'Team Total', 'Moneyline', 'Match Total'].includes(market);
                 const ti = context?.teamIntelligence;
                 const isML = (market || '').toLowerCase() === 'moneyline';
+                const sportLabel = { nba: 'NBA', ncaab: 'NCAAB', wnba: 'WNBA', nfl: 'NFL', ncaaf: 'NCAAF', mlb: 'MLB', nhl: 'NHL',
+                    soccer_epl: 'EPL (English Premier League)', soccer_laliga: 'La Liga (Spain)', soccer_seriea: 'Serie A (Italy)',
+                    soccer_bundesliga: 'Bundesliga (Germany)', soccer_mls: 'MLS (USA)', soccer_ucl: 'UEFA Champions League',
+                    soccer_ligue1: 'Ligue 1 (France)', mma: 'MMA/UFC' }[state.sport] || state.sport;
+                const statUnit = state.sport?.startsWith('soccer') ? 'goals' : state.sport === 'nhl' ? 'goals' : 'pts';
                 const prompt = isTeam
                 ? `Sports betting TEAM/GAME market analysis:
+Sport: ${sportLabel}
 Matchup: ${ti?.awayTeam || player} @ ${ti?.homeTeam || 'opponent'}
 Market: ${market}${isML ? '' : ` ${line > 0 ? 'OVER/UNDER' : ''} ${line}`}
-${isML ? `Team Season Margin: ${context?.seasonAvg?.toFixed?.(1) || context?.seasonAvg || 'N/A'} pts, L5 Margin: ${context?.l5Avg?.toFixed?.(1) || context?.l5Avg || 'N/A'} pts, L10 Margin: ${context?.l10Avg?.toFixed?.(1) || context?.l10Avg || 'N/A'} pts` : `Team Stats: Season margin=${context?.seasonAvg || 'N/A'}, L5 margin=${context?.l5Avg || 'N/A'}, L10 margin=${context?.l10Avg || 'N/A'}`}
+${isML ? `Team Season Margin: ${context?.seasonAvg?.toFixed?.(1) || context?.seasonAvg || 'N/A'} ${statUnit}, L5 Margin: ${context?.l5Avg?.toFixed?.(1) || context?.l5Avg || 'N/A'} ${statUnit}, L10 Margin: ${context?.l10Avg?.toFixed?.(1) || context?.l10Avg || 'N/A'} ${statUnit}` : `Team Stats: Season margin=${context?.seasonAvg || 'N/A'}, L5 margin=${context?.l5Avg || 'N/A'}, L10 margin=${context?.l10Avg || 'N/A'}`}
 Home PPG: ${ti?.home?.ppg?.toFixed(1) || 'N/A'}, Away PPG: ${ti?.away?.ppg?.toFixed(1) || 'N/A'}
 Proj Total: ${ti?.projectedTotal?.toFixed(1) || 'N/A'}, Proj Margin: ${ti?.projectedMargin?.toFixed(1) || 'N/A'}
 H2H: ${context?.h2h?.avg || 'N/A'} margin (${context?.h2h?.games || 0}g)
@@ -32184,9 +32239,14 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 const sportLogisticK = {
                     'ncaab': 0.148, 'basketball_ncaab': 0.148,
                     'nba': 0.12, 'basketball_nba': 0.12,
-                    'nfl': 0.067, 'football_nfl': 0.067,
+                    'wnba': 0.13,
+                    'nfl': 0.067, 'ncaaf': 0.067,
                     'nhl': 0.20, 'hockey_nhl': 0.20,
-                    'soccer': 0.35, 'mls': 0.35
+                    'mlb': 0.18,
+                    'soccer_epl': 0.35, 'soccer_laliga': 0.35, 'soccer_seriea': 0.35,
+                    'soccer_bundesliga': 0.35, 'soccer_mls': 0.35, 'soccer_ucl': 0.35,
+                    'soccer_ligue1': 0.35,
+                    'mma': 0.10
                 };
                 const k = sportLogisticK[state.sport] || 0.148;
                 const logisticWinProb = 1 / (1 + Math.exp(-k * efficiencyMargin));
