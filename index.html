@@ -6447,6 +6447,7 @@ Return ONLY valid JSON:
         // ═══════════════════════════════════════════════════════════════════════
         const CBBDATA_API = {
             BASE: 'https://www.cbbdata.com/api',
+            _dead: {},  // V50.14: Cache dead endpoints to prevent repeated 404 console errors
             
             // Login to get API key
             async login(username, password) {
@@ -6559,6 +6560,9 @@ Return ONLY valid JSON:
                 
                 // ═══ STRATEGY 0: /all_metrics (T-Rank + KP + BPI + NET combined) ═══
                 try {
+                    if (CBBDATA_API._dead['all_metrics']) {
+                        console.log('📊 CBBData: Skipping all_metrics (cached 404)');
+                    } else {
                     const params = new URLSearchParams({ key: state.cbbDataApiKey });
                     console.log(`📊 CBBData: Trying all_metrics (combined ratings)...`);
                     const resp = await fetch(`${this.BASE}/all_metrics?${params}`);
@@ -6578,19 +6582,26 @@ Return ONLY valid JSON:
                         }
                     } else {
                         console.log(`⚠️ CBBData all_metrics: HTTP ${resp.status}`);
+                        if (resp.status === 404) CBBDATA_API._dead['all_metrics'] = true;
                     }
+                    } // close dead-cache if
                 } catch(e) {
                     console.log(`⚠️ CBBData all_metrics failed: ${e.message}`);
                 }
                 
                 // ═══ STRATEGY 1: /torvik/team_factors (JSON — has real adj_o/adj_d/barthag) ═══
                 for (const tryYear of yearsToTry) {
+                    if (CBBDATA_API._dead['team_factors']) {
+                        console.log(`📊 CBBData: Skipping team_factors (cached 404)`);
+                        break;
+                    }
                     try {
                         const params = new URLSearchParams({ key: state.cbbDataApiKey, year: String(tryYear), no_bias: 'true' });
                         console.log(`📊 CBBData: Trying team_factors (year=${tryYear}, no_bias=true)...`);
                         const resp = await fetch(`${this.BASE}/torvik/team_factors?${params}`);
                         if (!resp.ok) {
                             console.log(`⚠️ CBBData team_factors: HTTP ${resp.status} (year=${tryYear})`);
+                            if (resp.status === 404) CBBDATA_API._dead['team_factors'] = true;
                             continue;
                         }
                         const contentType = resp.headers.get('content-type') || '';
@@ -13849,7 +13860,7 @@ Return ONLY valid JSON:
             
             // G6: Data Validated (have real stats source)
             // V49.1: Team/game markets don't have playerData — bypass G6 for spreads, totals, moneyline
-            const isTeamMkt = ['Spread', 'Game Total', 'Team Total', 'Moneyline', 'Match Total', 'Alt Spread', 'Alt Total'].some(t => market.includes(t));
+            const isTeamMkt = ['Spread', 'Game Total', 'Team Total', 'Moneyline', 'Match Total', 'Alt Spread', 'Alt Total', 'Match Winner', 'Draw No Bet', 'Double Chance', 'Both Teams to Score'].some(t => market.includes(t));
             const g6 = isTeamMkt ? true : !!(playerData || projection?.seasonAvg > 0);
             gates.push({ name: 'G6: Data Validated', pass: g6, detail: g6 ? (isTeamMkt ? 'Team market (V49.1)' : playerData?.source || 'BDL') : 'No player data', critical: false });
             
@@ -22761,8 +22772,8 @@ Return ONLY valid JSON:
             
             console.log(`🏥 Filtering injuries for: ${awayTeam} (${awayNickname}) @ ${homeTeam} (${homeNickname})`);
             
-            // Debug: Log first 3 injuries to see if team mapping worked
-            if (injuries.length > 0) {
+            // Debug: Only log injury samples for sports where BDL has relevant data
+            if (injuries.length > 0 && ['nba', 'nhl', 'ncaab'].includes(state.sport)) {
                 console.log('🏥 Sample mapped injuries:', injuries.slice(0, 3).map(i => `${i.playerName} - ${i.team}`));
             }
             
@@ -24716,6 +24727,12 @@ Return ONLY valid JSON:
             }
             
             const projection = calculateAIProjection(intelData, line, lockedMarket, contextData);
+            
+            // V50.14: If market drift caused abort, skip rendering stale data
+            if (!projection) {
+                console.log('🔄 V50.14: Skipping stale pipeline — market changed');
+                return;
+            }
             
             // V11: Store projection in state for use by BOTH SIDES analysis
             state.lastProjection = projection;
@@ -31385,8 +31402,8 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
         function calculateAIProjection(intelData, line, market, contextData = {}) {
             // V34 FIX: Assert market consistency — if state.analysisMarket was locked, verify we got it
             if (state.analysisMarket && market !== state.analysisMarket) {
-                console.warn(`🚨 V34 MARKET DRIFT: calculateAIProjection received '${market}' but state.analysisMarket='${state.analysisMarket}'. Using locked market.`);
-                market = state.analysisMarket;
+                console.log(`🔄 V34 MARKET DRIFT: calculateAIProjection received '${market}' but state.analysisMarket='${state.analysisMarket}'. Aborting stale calculation.`);
+                return null;  // V50.14: Abort instead of running with wrong context
             }
             
             const seasonAvg = (intelData.seasonAvg != null && intelData.seasonAvg !== '') ? intelData.seasonAvg : 22;
@@ -31453,10 +31470,14 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             // ═══════════════════════════════════════════════════════════════════════
             // ENGINE 4: HOME/AWAY SPLIT (Real differential)
             // Uses actual home vs away performance splits - CAPPED for sanity
+            // V50.14: Skip for combat sports (no home/away concept)
             // ═══════════════════════════════════════════════════════════════════════
             let adjustment4_homeAway = 0;
             const isHome = contextData.isHome ?? false;
-            if (intelData.homeAwaySplit) {
+            const isCombatE4 = ['mma', 'boxing'].includes(state.sport);
+            if (isCombatE4) {
+                // Combat sports have no home/away advantage — skip
+            } else if (intelData.homeAwaySplit) {
                 // Real split data: homeAvg and awayAvg
                 const homeAvg = intelData.homeAwaySplit.home || seasonAvg;
                 const awayAvg = intelData.homeAwaySplit.away || seasonAvg;
@@ -31506,8 +31527,22 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             // Fast teams = more possessions = more stats
             // ═══════════════════════════════════════════════════════════════════════
             let adjustment6_pace = 0;
-            const leagueAvgPace = intelData.paceData?.leagueAvg || (['ncaab', 'basketball_ncaab'].includes(state.sport) ? 68 : 100); // V49.6: Sport-specific pace baseline
-            if (intelData.paceData) {
+            // V50.14: Sport-specific pace baselines (prevents MMA/soccer using NBA pace=100)
+            const sportPaceDefaults = {
+                'nba': 100, 'basketball_nba': 100,
+                'ncaab': 68, 'basketball_ncaab': 68,
+                'nfl': 65, 'americanfootball_nfl': 65, 'ncaaf': 65,
+                'nhl': 60, 'icehockey_nhl': 60,
+                'soccer_epl': 2.7, 'soccer_bundesliga': 3.1, 'soccer_la_liga': 2.5,
+                'soccer_serie_a': 2.6, 'soccer_ligue1': 2.6, 'soccer_mls': 2.8,
+                'soccer_champions_league': 2.8,
+                'mma': 0, 'boxing': 0  // Combat sports: pace N/A, skip adjustment
+            };
+            const leagueAvgPace = intelData.paceData?.leagueAvg || sportPaceDefaults[state.sport] || 100;
+            const isCombatPace = ['mma', 'boxing'].includes(state.sport);
+            if (isCombatPace) {
+                // Combat sports have no pace concept — skip entirely
+            } else if (intelData.paceData) {
                 const gamePace = intelData.paceData.gamePace || leagueAvgPace;
                 const paceMultiplier = gamePace / leagueAvgPace;
                 // Pace impacts scoring roughly 40% proportionally
@@ -34867,7 +34902,13 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                                 // V47: Fire Reddit + Twitter Sentiment in background (non-blocking)
                                 (async () => {
                                     try {
-                                        const opponent = state.event?.awayTeam?.shortDisplayName || state.event?.homeTeam?.shortDisplayName || 'opponent';
+                                        // V50.14: Get actual opponent (not always awayTeam)
+                                        const awayName = state.event?.awayTeam?.shortDisplayName || '';
+                                        const homeName = state.event?.homeTeam?.shortDisplayName || '';
+                                        const playerLower = (player || '').toLowerCase();
+                                        const opponent = (playerLower === awayName.toLowerCase()) ? homeName 
+                                            : (playerLower === homeName.toLowerCase()) ? awayName 
+                                            : (awayName || homeName || 'opponent');
                                         const sport = state.sport || 'nba';
                                         
                                         const [redditData, twitterData] = await Promise.allSettled([
