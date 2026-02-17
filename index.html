@@ -33836,7 +33836,7 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             state._cachedHitRate = null;
             state._sitH2HCacheKey = null;
             state.situationalH2H = null;
-            const player = document.getElementById('player-select').value;
+            const player = document.getElementById('player-select').value || document.getElementById('team-select')?.value || state.currentPlayer || '';
             const market = document.getElementById('market-type').value;
             const lineInput = document.getElementById('line-input');
             const line = parseFloat(lineInput?.value) || 0;
@@ -34177,9 +34177,12 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
                 restDays = state.lastProjection?.restDays ?? 2;
             } else {
                 // V19: No playerData available — use line as baseline, no randomization
-                seasonAvg = line;
-                l10Avg = line;
-                l5Avg = line;
+                // V50.14: For team markets, pull from lastProjection which has real margin data
+                const projEngines = state.lastProjection?.engines || {};
+                const projFromState = state.lastProjection || {};
+                seasonAvg = projEngines.seasonAvg || line;
+                l10Avg = projFromState.l10Avg || projEngines.l10Avg || line;
+                l5Avg = projFromState.l5Avg || projEngines.l5Avg || line;
                 hitRate = null;
                 isHome = null;
                 restDays = null;
