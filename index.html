@@ -18640,8 +18640,22 @@ Return ONLY valid JSON:
                         
                         const dayEvents = (data.events || []).map(e => {
                             const comp = e.competitions?.[0];
-                            const home = comp?.competitors?.find(c => c.homeAway === 'home');
-                            const away = comp?.competitors?.find(c => c.homeAway === 'away');
+                            const isCombatSport = ['mma', 'boxing'].includes(sport);
+                            let home, away;
+                            
+                            if (isCombatSport) {
+                                // MMA/Boxing: ESPN doesn't use homeAway — competitors are just in array order
+                                // Also might use 'athlete' instead of 'team' for individual sports
+                                const c0 = comp?.competitors?.[0];
+                                const c1 = comp?.competitors?.[1];
+                                // Try homeAway first, fall back to array position
+                                home = comp?.competitors?.find(c => c.homeAway === 'home') || c0;
+                                away = comp?.competitors?.find(c => c.homeAway === 'away') || c1;
+                            } else {
+                                home = comp?.competitors?.find(c => c.homeAway === 'home');
+                                away = comp?.competitors?.find(c => c.homeAway === 'away');
+                            }
+                            
                             const gameDate = new Date(e.date);
                             const isLive = e.status?.type?.state === 'in';
                             const isCompleted = e.status?.type?.completed === true;
@@ -18652,22 +18666,47 @@ Return ONLY valid JSON:
                             // Format time
                             const timeStr = gameDate.toLocaleTimeString([], {hour: 'numeric', minute:'2-digit'});
                             
-                            const isCombatSport = ['mma', 'boxing'].includes(sport);
+                            // For MMA: competitor name might be in .athlete.displayName or .team.shortDisplayName
+                            const getCompName = (c) => {
+                                if (!c) return null;
+                                return c.team?.shortDisplayName || c.team?.displayName || 
+                                       c.athlete?.displayName || c.athlete?.shortName || null;
+                            };
+                            
+                            const homeName = getCompName(home);
+                            const awayName = getCompName(away);
+                            
+                            // Build team-like objects for MMA fighters
+                            const homeTeamObj = home?.team || (homeName ? { shortDisplayName: homeName, displayName: homeName } : null);
+                            const awayTeamObj = away?.team || (awayName ? { shortDisplayName: awayName, displayName: awayName } : null);
+                            
+                            // For MMA cards, e.name often has the card name (e.g. "UFC Fight Night")
+                            // Use shortName or build from fighter names
+                            let eventName;
+                            if (isCombatSport) {
+                                if (awayName && homeName) {
+                                    eventName = `${awayName} vs ${homeName}`;
+                                } else {
+                                    // Fallback to ESPN event name (card name)
+                                    eventName = e.shortName || e.name || 'TBD vs TBD';
+                                }
+                            } else {
+                                eventName = `${awayTeamObj?.shortDisplayName || 'Away'} @ ${homeTeamObj?.shortDisplayName || 'Home'}`;
+                            }
+                            
                             return {
                                 id: e.id,
-                                name: isCombatSport 
-                                    ? `${away?.team?.shortDisplayName || 'Fighter 1'} vs ${home?.team?.shortDisplayName || 'Fighter 2'}`
-                                    : `${away?.team?.shortDisplayName || 'Away'} @ ${home?.team?.shortDisplayName || 'Home'}`,
+                                name: eventName,
                                 fullName: e.name,
                                 live: isLive,
                                 completed: isCompleted,
                                 date: gameDate,
                                 dateStr: dateStr,
                                 dayLabel: dayLabel,
-                                time: isLive ? `LIVE ${e.status?.displayClock} ${e.status?.period}Q` : timeStr,
+                                time: isLive ? `LIVE ${e.status?.displayClock} ${e.status?.period}${isCombatSport ? 'R' : 'Q'}` : timeStr,
                                 displayTime: `${dayLabel} ${timeStr}`,
-                                homeTeam: home?.team,
-                                awayTeam: away?.team,
+                                homeTeam: homeTeamObj,
+                                awayTeam: awayTeamObj,
                                 homeScore: home?.score,
                                 awayScore: away?.score,
                                 status: e.status?.type?.description || 'Scheduled'
