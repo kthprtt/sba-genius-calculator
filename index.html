@@ -20445,13 +20445,18 @@ Return ONLY valid JSON:
                 const hWins = ht?.wins || 0, hLosses = ht?.losses || 0;
                 const aWins = at?.wins || 0, aLosses = at?.losses || 0;
                 
-                // Estimate pace from combined PPG (NCAAB avg ~68 possessions, NBA ~100)
+                // Estimate pace from combined PPG
+                // V50.14: Sport-specific league averages for pace estimation
                 const isNCAA = ['ncaab', 'basketball_ncaab'].includes(state.sport);
-                const leagueAvgPace = isNCAA ? 68 : 100;
-                const leagueAvgPPG = isNCAA ? 72 : 112;
-                const homePaceEst = leagueAvgPace * (hPPG / leagueAvgPPG);
-                const awayPaceEst = leagueAvgPace * (aPPG / leagueAvgPPG);
-                const gamePace = (homePaceEst + awayPaceEst) / 2;
+                const isSoccer = (state.sport || '').startsWith('soccer_');
+                const isNHL = ['nhl', 'icehockey_nhl'].includes(state.sport);
+                const isNFL = ['nfl', 'americanfootball_nfl', 'ncaaf'].includes(state.sport);
+                const isCombatV26 = ['mma', 'boxing'].includes(state.sport);
+                const leagueAvgPace = isNCAA ? 68 : isNHL ? 6 : isSoccer ? 2.7 : isNFL ? 44 : 100;
+                const leagueAvgPPG = isNCAA ? 72 : isNHL ? 3.1 : isSoccer ? 1.4 : isNFL ? 22 : 112;
+                const homePaceEst = isCombatV26 ? 0 : leagueAvgPace * (hPPG / leagueAvgPPG);
+                const awayPaceEst = isCombatV26 ? 0 : leagueAvgPace * (aPPG / leagueAvgPPG);
+                const gamePace = isCombatV26 ? 0 : (homePaceEst + awayPaceEst) / 2;
                 
                 // Compute matchup projection
                 // V50: Opponent-adjusted efficiency model
@@ -22772,8 +22777,8 @@ Return ONLY valid JSON:
             
             console.log(`🏥 Filtering injuries for: ${awayTeam} (${awayNickname}) @ ${homeTeam} (${homeNickname})`);
             
-            // Debug: Only log injury samples for sports where BDL has relevant data
-            if (injuries.length > 0 && ['nba', 'nhl', 'ncaab'].includes(state.sport)) {
+            // Debug: Only log injury samples for NBA (BDL injuries are NBA-only data)
+            if (injuries.length > 0 && state.sport === 'nba') {
                 console.log('🏥 Sample mapped injuries:', injuries.slice(0, 3).map(i => `${i.playerName} - ${i.team}`));
             }
             
@@ -24131,7 +24136,11 @@ Return ONLY valid JSON:
                         };
                         intelData.l3Avg = intelData.l5Avg;
                         intelData.defensiveMatchup = { oppDefRtg: (hOppPPG + aOppPPG) / 2 || 0 };
-                        intelData.homeAwaySplit = { home: hPPG, away: aPPG };
+                        // V50.14: Use margins (PPG-OppPPG) for homeAwaySplit, not raw PPGs
+                        // Raw PPGs would give E4 values like 115 which are nonsensical as "splits"
+                        const homeMargin = hPPG - hOppPPG;
+                        const awayMargin = aPPG - aOppPPG;
+                        intelData.homeAwaySplit = { home: homeMargin, away: awayMargin, source: 'ESPN_MARGIN' };
                         
                         // ═══════════════════════════════════════════════════════════
                         // V49.2: Populate ALL remaining pipeline sources from ESPN data
@@ -31527,12 +31536,12 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             // Fast teams = more possessions = more stats
             // ═══════════════════════════════════════════════════════════════════════
             let adjustment6_pace = 0;
-            // V50.14: Sport-specific pace baselines (prevents MMA/soccer using NBA pace=100)
+            // V50.14: Sport-specific pace baselines matching V26 scale (PPG-based)
             const sportPaceDefaults = {
                 'nba': 100, 'basketball_nba': 100,
                 'ncaab': 68, 'basketball_ncaab': 68,
-                'nfl': 65, 'americanfootball_nfl': 65, 'ncaaf': 65,
-                'nhl': 60, 'icehockey_nhl': 60,
+                'nfl': 44, 'americanfootball_nfl': 44, 'ncaaf': 44,
+                'nhl': 6, 'icehockey_nhl': 6,
                 'soccer_epl': 2.7, 'soccer_bundesliga': 3.1, 'soccer_la_liga': 2.5,
                 'soccer_serie_a': 2.6, 'soccer_ligue1': 2.6, 'soccer_mls': 2.8,
                 'soccer_champions_league': 2.8,
@@ -36976,10 +36985,11 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             const minStable = projMin > 0 ? (Math.abs(projMin - (effAvgMin || projMin)) / Math.max(projMin, 1)) < 0.25 : true;
             // Also check if L5 is wildly different from season (minutes proxy)
             const l5SeasonRatio = seasonAvg > 0 ? effectiveL5 / seasonAvg : 1;
-            const minutesVolatile = !minStable || (l5SeasonRatio < 0.3 && seasonAvg > 5);
+            // V50.14: Skip minutes check for team/game markets (no player minutes)
+            const minutesVolatile = isGameOrTeam ? false : (!minStable || (l5SeasonRatio < 0.3 && seasonAvg > 5));
             checks.stableMinutes = {
                 pass: !minutesVolatile,
-                value: projMin > 0 ? `Projected ${projMin.toFixed(0)} min` : `L5/Season ratio: ${l5SeasonRatio.toFixed(2)}`,
+                value: isGameOrTeam ? 'Game/Team market — N/A' : (projMin > 0 ? `Projected ${projMin.toFixed(0)} min` : `L5/Season ratio: ${l5SeasonRatio.toFixed(2)}`),
                 label: 'Stable Minutes'
             };
             if (minutesVolatile) vetoes.push('Minutes volatility / role uncertainty');
