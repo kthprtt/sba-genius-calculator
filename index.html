@@ -8828,7 +8828,7 @@ Return ONLY valid JSON:
             async getPlayerPropsDualSource(gameId, options = {}) {
                 const [bdlProps, oddsApiProps] = await Promise.allSettled([
                     this.getPlayerProps(gameId, options),
-                    fetch(`${window.SBA_CONFIG?.ODDS_API_URL || ''}/v4/sports/americanfootball_nfl/events/${gameId}/odds?apiKey=${window.SBA_CONFIG?.ODDS_API_KEY}&regions=us,us2&markets=player_pass_yds,player_pass_tds,player_interceptions,player_completions,player_rush_yds,player_rush_tds,player_reception_yds,player_receptions,player_rush_reception_yds,player_rush_reception_tds,player_anytime_td,player_first_td,player_last_td,player_kicking_points&oddsFormat=american`)
+                    fetch(`${window.SBA_CONFIG?.ODDS_API_URL || ''}/v4/sports/americanfootball_nfl/events/${gameId}/odds?apiKey=${window.SBA_CONFIG?.ODDS_API_KEY}&regions=us,us2,us_dfs,us_ex,eu,uk,au&markets=player_pass_yds,player_pass_tds,player_interceptions,player_completions,player_rush_yds,player_rush_tds,player_reception_yds,player_receptions,player_rush_reception_yds,player_rush_reception_tds,player_anytime_td,player_first_td,player_last_td,player_kicking_points&oddsFormat=american`)
                         .then(r => r.json()).catch(() => null)
                 ]);
                 
@@ -9109,7 +9109,7 @@ Return ONLY valid JSON:
             async getPlayerPropsDualSource(gameId, options = {}) {
                 const [bdlProps, oddsApiProps] = await Promise.allSettled([
                     this.getPlayerProps(gameId, options),
-                    fetch(`${window.SBA_CONFIG?.ODDS_API_URL || ''}/v4/sports/basketball_nba/events/${gameId}/odds?apiKey=${window.SBA_CONFIG?.ODDS_API_KEY}&regions=us,us2&markets=player_points,player_rebounds,player_assists,player_threes,player_blocks,player_steals,player_turnovers,player_points_rebounds_assists,player_points_rebounds,player_points_assists,player_rebounds_assists,player_double_double,player_triple_double&oddsFormat=american`)
+                    fetch(`${window.SBA_CONFIG?.ODDS_API_URL || ''}/v4/sports/basketball_nba/events/${gameId}/odds?apiKey=${window.SBA_CONFIG?.ODDS_API_KEY}&regions=us,us2,us_dfs,us_ex,eu,uk,au&markets=player_points,player_rebounds,player_assists,player_threes,player_blocks,player_steals,player_turnovers,player_points_rebounds_assists,player_points_rebounds,player_points_assists,player_rebounds_assists,player_double_double,player_triple_double&oddsFormat=american`)
                         .then(r => r.json()).catch(() => null)
                 ]);
                 
@@ -9341,7 +9341,7 @@ Return ONLY valid JSON:
             async getPlayerPropsDualSource(gameId, options = {}) {
                 const [bdlProps, oddsApiProps] = await Promise.allSettled([
                     this.getPlayerProps(gameId, options),
-                    fetch(`${window.SBA_CONFIG?.ODDS_API_URL || ''}/v4/sports/icehockey_nhl/events/${gameId}/odds?apiKey=${window.SBA_CONFIG?.ODDS_API_KEY}&regions=us,us2&markets=player_points,player_goals,player_assists,player_shots_on_goal,player_blocked_shots,player_power_play_points,player_goal_scorer_anytime,player_goal_scorer_first&oddsFormat=american`)
+                    fetch(`${window.SBA_CONFIG?.ODDS_API_URL || ''}/v4/sports/icehockey_nhl/events/${gameId}/odds?apiKey=${window.SBA_CONFIG?.ODDS_API_KEY}&regions=us,us2,us_dfs,us_ex,eu,uk,au&markets=player_points,player_goals,player_assists,player_shots_on_goal,player_blocked_shots,player_power_play_points,player_goal_scorer_anytime,player_goal_scorer_first&oddsFormat=american`)
                         .then(r => r.json()).catch(() => null)
                 ]);
                 
@@ -9637,7 +9637,7 @@ Return ONLY valid JSON:
             async getPlayerPropsDualSource(gameId, options = {}) {
                 const [bdlProps, oddsApiProps] = await Promise.allSettled([
                     this.getPlayerProps(gameId, options),
-                    fetch(`${window.SBA_CONFIG?.ODDS_API_URL || ''}/v4/sports/baseball_mlb/events/${gameId}/odds?apiKey=${window.SBA_CONFIG?.ODDS_API_KEY}&regions=us,us2&markets=pitcher_strikeouts,pitcher_hits_allowed,pitcher_earned_runs,pitcher_outs,batter_hits,batter_total_bases,batter_home_runs,batter_rbis,batter_runs_scored,batter_stolen_bases,batter_singles,batter_doubles,batter_walks,batter_strikeouts&oddsFormat=american`)
+                    fetch(`${window.SBA_CONFIG?.ODDS_API_URL || ''}/v4/sports/baseball_mlb/events/${gameId}/odds?apiKey=${window.SBA_CONFIG?.ODDS_API_KEY}&regions=us,us2,us_dfs,us_ex,eu,uk,au&markets=pitcher_strikeouts,pitcher_hits_allowed,pitcher_earned_runs,pitcher_outs,batter_hits,batter_total_bases,batter_home_runs,batter_rbis,batter_runs_scored,batter_stolen_bases,batter_singles,batter_doubles,batter_walks,batter_strikeouts&oddsFormat=american`)
                         .then(r => r.json()).catch(() => null)
                 ]);
                 
@@ -10590,7 +10590,7 @@ Return ONLY valid JSON:
             async getPlayerPropsDualSource(gameId, options = {}) {
                 const [bdlProps, oddsApiProps] = await Promise.allSettled([
                     this.getPlayerProps(gameId, options),
-                    fetch(`${window.SBA_CONFIG?.ODDS_API_URL || ''}/v4/sports/basketball_wnba/events/${gameId}/odds?apiKey=${window.SBA_CONFIG?.ODDS_API_KEY}&regions=us,us2&markets=player_points,player_rebounds,player_assists,player_threes,player_blocks,player_steals,player_points_rebounds_assists,player_points_rebounds,player_points_assists,player_double_double&oddsFormat=american`)
+                    fetch(`${window.SBA_CONFIG?.ODDS_API_URL || ''}/v4/sports/basketball_wnba/events/${gameId}/odds?apiKey=${window.SBA_CONFIG?.ODDS_API_KEY}&regions=us,us2,us_dfs,us_ex,eu,uk,au&markets=player_points,player_rebounds,player_assists,player_threes,player_blocks,player_steals,player_points_rebounds_assists,player_points_rebounds,player_points_assists,player_double_double&oddsFormat=american`)
                         .then(r => r.json()).catch(() => null)
                 ]);
                 
@@ -14023,6 +14023,7 @@ Return ONLY valid JSON:
             state.event = null;
             state.cachedPlayers = null;
             state.players = null;
+            state.gameLines = null; // V50.14 FIX 16: Clear stale spread/total from previous sport
             
             // V50.14 FIX: Clear V26 team caches — keys are teamId-based (not sport-scoped)
             // so NBA team 1 (Hawks) and WNBA team 1 share the same cache key
@@ -14271,6 +14272,11 @@ Return ONLY valid JSON:
             state.propsCache = null;
             state.liveOdds = null;
             state.bestOdds = null;
+            // V50.14 FIX 16: Clear stale game lines and team intel when switching events
+            state.gameLines = null;
+            state.teamStats = null;
+            state._teamStatsPromise = null;
+            state.teamIntelligence = null;
             
             if (option && option.value) {
                 // Find the selected event and SAVE IT TO STATE
@@ -24800,11 +24806,13 @@ Return ONLY valid JSON:
                 const awayTeam = (state.event.awayTeam?.shortDisplayName || state.event.awayTeam?.displayName || '').toLowerCase();
                 
                 // Fetch spreads and totals - USE PROXY if configured
+                // V50.14 FIX 17: Use dynamic sport key (was hardcoded to basketball_nba!)
+                const sportKey = getSportKeyForOddsAPI(state.sport) || 'basketball_nba';
                 let url;
                 if (isAIProxyConfigured()) {
-                    url = `https://api.the-odds-api.com/v4/sports/basketball_nba/odds?apiKey=${CONFIG.keys.odds}&regions=${ODDS_API_REGIONS}&markets=spreads,totals&oddsFormat=american`;
+                    url = `https://api.the-odds-api.com/v4/sports/${sportKey}/odds?apiKey=${CONFIG.keys.odds}&regions=${ODDS_API_REGIONS}&markets=spreads,totals&oddsFormat=american`;
                 } else {
-                    url = `https://api.the-odds-api.com/v4/sports/basketball_nba/odds?apiKey=${apiKey}&regions=${ODDS_API_REGIONS}&markets=spreads,totals&oddsFormat=american`;
+                    url = `https://api.the-odds-api.com/v4/sports/${sportKey}/odds?apiKey=${apiKey}&regions=${ODDS_API_REGIONS}&markets=spreads,totals&oddsFormat=american`;
                 }
                 
                 const response = await fetch(url);
@@ -39812,6 +39820,9 @@ Respond with ONLY JSON: {"projection":12.5,"confidence":75,"reasoning":"explanat
             const filterReasons = { live: 0, scanMode: 0, viewMode: 0, tier: 0, minEdge: 0, book: 0, myBooks: 0, hidden: 0, passed: 0 };
             
             let filtered = results.filter(r => {
+                // V50.14 FIX 18-19: Suppress paired counterpart entries (shown on primary side)
+                if (r._h2hPaired || r._spreadPaired) return false;
+                
                 const isArb = r.arbPct && r.arbPct > 0;
                 const isQuality = r.estimatedTier === 'high' || r.score >= 65;
                 
@@ -40926,6 +40937,7 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
             const arbCount = scannerState.results.filter(r => r.arbPct && r.arbPct > 0).length;
             const moderateCount = scannerState.results.filter(r => r.estimatedTier === 'streak').length;
             const scanMode = scannerState.scanMode || 'all';
+            const middleCount = scannerState.results.filter(r => r.isMiddle).length;
             const modeLabel = scanMode === 'diamond' ? '⚡ High Edge Mode' : scanMode === 'lock' ? '🟢 Good Edge+ Mode' : '';
             
             resultsEl.insertAdjacentHTML('beforeend', `
@@ -40934,6 +40946,7 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                     <span style="color: #FFD700;">⚡ ${highEdgeCount} High Edge</span>
                     <span style="color: #00ff88;">🟢 ${goodEdgeCount} Good Edge</span>
                     <span style="color: #00ff88;">💰 ${arbCount} Arbs</span>
+                    ${middleCount > 0 ? `<span style="color: #b98fff;">🎯 ${middleCount} Middles</span>` : ''}
                     <span style="color: #00c8ff;">📊 ${moderateCount} Moderate</span>
                     <span style="color: #888;">📋 ${filtered.length}/${total} shown</span>
                     <span style="color: #b98fff; font-size: 9px;">🔒💎 = AI synthesis only</span>
@@ -42245,7 +42258,265 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                 let nearArbCount = 0;
                 let phantomCount = 0;
                 
+                // ═══════════════════════════════════════════════════════════════
+                // V50.14 FIX 18-20: H2H PAIRING + SPREAD PAIRING + MIDDLE DETECTION
+                // The scanner stores H2H/Spread as separate per-team entries.
+                // We must PAIR complementary sides and compare cross-book.
+                // ═══════════════════════════════════════════════════════════════
+                
+                // --- FIX 18: H2H (Moneyline) Arb Detection ---
+                // Group H2H entries by eventId+market, pair Home vs Away
+                const h2hGroups = new Map(); // key: eventId|market → [entry1, entry2]
+                const spreadGroups = new Map(); // key: eventId|market|absPoint → [entry1, entry2]
+                const middleCandidates = new Map(); // key: eventId|apiMarket → [{line, bookPrices}...]
+                
                 for (const result of scannerState.results) {
+                    if (!result.bookPrices || result.bookPrices.length < 2) continue;
+                    
+                    const dna = result.dna || '';
+                    
+                    // Collect H2H 2-Way entries for pairing
+                    if (dna.includes('H2H_2WAY') && !dna.includes('3WAY')) {
+                        const groupKey = `${result.eventId}|${result.market}`;
+                        if (!h2hGroups.has(groupKey)) h2hGroups.set(groupKey, []);
+                        h2hGroups.get(groupKey).push(result);
+                    }
+                    
+                    // Collect Spread entries for pairing (complementary +/- points)
+                    if (dna.includes('SPREAD') && result.line !== undefined) {
+                        const absLine = Math.abs(result.line);
+                        const groupKey = `${result.eventId}|${result.market}|${absLine}`;
+                        if (!spreadGroups.has(groupKey)) spreadGroups.set(groupKey, []);
+                        spreadGroups.get(groupKey).push(result);
+                    }
+                    
+                    // Collect Over/Under entries for middle detection
+                    if ((dna.includes('TOTAL') || result.line) && !dna.includes('H2H') && !dna.includes('SPREAD')) {
+                        const mKey = `${result.eventId}|${result.apiMarket}`;
+                        if (!middleCandidates.has(mKey)) middleCandidates.set(mKey, []);
+                        middleCandidates.get(mKey).push(result);
+                    }
+                }
+                
+                // Process H2H pairs — compare Home book prices vs Away book prices
+                for (const [groupKey, entries] of h2hGroups) {
+                    if (entries.length < 2) continue;
+                    const sideA = entries[0]; // e.g., Home team
+                    const sideB = entries[1]; // e.g., Away team
+                    
+                    // Sort each side's prices (highest = best for bettor)
+                    const pricesA = sideA.bookPrices.slice().sort((a, b) => b.price - a.price);
+                    const pricesB = sideB.bookPrices.slice().sort((a, b) => b.price - a.price);
+                    
+                    // Find best arb: best price for Side A at Book X + best price for Side B at Book Y
+                    let bestArbPct = -Infinity, bestBookA = null, bestBookB = null;
+                    const topA = pricesA.slice(0, 8);
+                    const topB = pricesB.slice(0, 8);
+                    
+                    for (const a of topA) {
+                        for (const b of topB) {
+                            if (a.book === b.book) continue; // Skip same book
+                            const totalImpl = toImplied(a.price) + toImplied(b.price);
+                            const pct = (1 - totalImpl) * 100;
+                            if (pct > bestArbPct) {
+                                bestArbPct = pct;
+                                bestBookA = a;
+                                bestBookB = b;
+                            }
+                        }
+                    }
+                    
+                    // Store arb data on sideA entry (the one that will display)
+                    if (bestArbPct > -50 && bestBookA && bestBookB) {
+                        const arbRounded = parseFloat(bestArbPct.toFixed(1));
+                        sideA.arbPct = arbRounded;
+                        sideA.arbBooks = `${bestBookA.bookTitle} (${sideA.player}) / ${bestBookB.bookTitle} (${sideB.player})`;
+                        sideA.bestOverPrice = bestBookA.price;
+                        sideA.bestUnderPrice = bestBookB.price;
+                        sideA.bestOverBook = bestBookA.bookTitle;
+                        sideA.bestUnderBook = bestBookB.bookTitle;
+                        sideA.bestOverBookKey = bestBookA.book;
+                        sideA.bestUnderBookKey = bestBookB.book;
+                        sideA.h2hPaired = true;
+                        sideA.h2hCounterpart = sideB.player;
+                        sideA.allBooksCount = new Set([...sideA.bookPrices, ...sideB.bookPrices].map(b => b.book)).size;
+                        
+                        // DNA scoring
+                        const overDNA = getBookDNA(bestBookA.book);
+                        const underDNA = getBookDNA(bestBookB.book);
+                        sideA.overBookDNA = overDNA;
+                        sideA.underBookDNA = underDNA;
+                        sideA.execQuality = Math.sqrt(overDNA.execMult * underDNA.execMult);
+                        sideA.gameStatus = getGameStatus(sideA.commenceTime);
+                        sideA.isSameBook = false;
+                        
+                        if (arbRounded > 0) {
+                            sideA.ev = calculateEV(arbRounded, bestBookA.price, bestBookB.price,
+                                estimateLimit(overDNA, sideA.market, sideA.dna),
+                                estimateLimit(underDNA, sideA.market, sideA.dna));
+                            sideA.staleFlags = detectStale(arbRounded, overDNA, underDNA, bestBookA.price, bestBookB.price);
+                            arbCount++;
+                        }
+                        
+                        // Mark sideB as paired (suppress duplicate display)
+                        sideB._h2hPaired = true;
+                    }
+                }
+                
+                // --- FIX 19: Spread Arb Detection ---
+                for (const [groupKey, entries] of spreadGroups) {
+                    if (entries.length < 2) continue;
+                    const sideA = entries[0];
+                    const sideB = entries[1];
+                    
+                    const pricesA = sideA.bookPrices.slice().sort((a, b) => b.price - a.price);
+                    const pricesB = sideB.bookPrices.slice().sort((a, b) => b.price - a.price);
+                    
+                    let bestArbPct = -Infinity, bestBookA = null, bestBookB = null;
+                    const topA = pricesA.slice(0, 8);
+                    const topB = pricesB.slice(0, 8);
+                    
+                    for (const a of topA) {
+                        for (const b of topB) {
+                            if (a.book === b.book) continue;
+                            const totalImpl = toImplied(a.price) + toImplied(b.price);
+                            const pct = (1 - totalImpl) * 100;
+                            if (pct > bestArbPct) {
+                                bestArbPct = pct;
+                                bestBookA = a;
+                                bestBookB = b;
+                            }
+                        }
+                    }
+                    
+                    if (bestArbPct > -50 && bestBookA && bestBookB) {
+                        const arbRounded = parseFloat(bestArbPct.toFixed(1));
+                        sideA.arbPct = arbRounded;
+                        sideA.arbBooks = `${bestBookA.bookTitle} (${sideA.player}) / ${bestBookB.bookTitle} (${sideB.player})`;
+                        sideA.bestOverPrice = bestBookA.price;
+                        sideA.bestUnderPrice = bestBookB.price;
+                        sideA.bestOverBook = bestBookA.bookTitle;
+                        sideA.bestUnderBook = bestBookB.bookTitle;
+                        sideA.bestOverBookKey = bestBookA.book;
+                        sideA.bestUnderBookKey = bestBookB.book;
+                        sideA.spreadPaired = true;
+                        sideA.allBooksCount = new Set([...sideA.bookPrices, ...sideB.bookPrices].map(b => b.book)).size;
+                        
+                        const overDNA = getBookDNA(bestBookA.book);
+                        const underDNA = getBookDNA(bestBookB.book);
+                        sideA.overBookDNA = overDNA;
+                        sideA.underBookDNA = underDNA;
+                        sideA.execQuality = Math.sqrt(overDNA.execMult * underDNA.execMult);
+                        sideA.gameStatus = getGameStatus(sideA.commenceTime);
+                        sideA.isSameBook = false;
+                        
+                        if (arbRounded > 0) {
+                            sideA.ev = calculateEV(arbRounded, bestBookA.price, bestBookB.price,
+                                estimateLimit(overDNA, sideA.market, sideA.dna),
+                                estimateLimit(underDNA, sideA.market, sideA.dna));
+                            sideA.staleFlags = detectStale(arbRounded, overDNA, underDNA, bestBookA.price, bestBookB.price);
+                            arbCount++;
+                        }
+                        sideB._spreadPaired = true;
+                    }
+                }
+                
+                // --- FIX 20: Middle Bet Detection ---
+                // Compare entries with DIFFERENT lines for same market/event
+                for (const [mKey, entries] of middleCandidates) {
+                    if (entries.length < 2) continue;
+                    
+                    // Get all unique lines
+                    const lineSet = [...new Set(entries.map(e => e.line))].sort((a, b) => a - b);
+                    if (lineSet.length < 2) continue;
+                    
+                    // For each pair of different lines, check for middle opportunity
+                    for (let i = 0; i < lineSet.length; i++) {
+                        for (let j = i + 1; j < lineSet.length; j++) {
+                            const lowLine = lineSet[i];
+                            const highLine = lineSet[j];
+                            const gap = highLine - lowLine;
+                            
+                            // Sport-specific max gap
+                            const sportUp = (entries[0].sportLabel || '').toUpperCase();
+                            let maxGap = 5;
+                            if (sportUp.includes('NBA') || sportUp.includes('NCAAB')) maxGap = 7;
+                            else if (sportUp.includes('NFL')) maxGap = 7;
+                            else if (sportUp.includes('MLB')) maxGap = 3;
+                            else if (sportUp.includes('NHL')) maxGap = 2;
+                            else if (sportUp.includes('SOC') || sportUp.includes('EPL') || sportUp.includes('MLS')) maxGap = 1.5;
+                            
+                            if (gap < 0.5 || gap > maxGap) continue;
+                            
+                            // Find best OVER on low line, best UNDER on high line
+                            const lowEntry = entries.find(e => e.line === lowLine);
+                            const highEntry = entries.find(e => e.line === highLine);
+                            if (!lowEntry || !highEntry) continue;
+                            
+                            const lowOvers = lowEntry.bookPrices.filter(bp => (bp.side || '').toLowerCase() === 'over').sort((a, b) => b.price - a.price);
+                            const highUnders = highEntry.bookPrices.filter(bp => (bp.side || '').toLowerCase() === 'under').sort((a, b) => b.price - a.price);
+                            
+                            if (lowOvers.length === 0 || highUnders.length === 0) continue;
+                            
+                            const bestOver = lowOvers[0];
+                            const bestUnder = highUnders[0];
+                            if (bestOver.book === bestUnder.book) continue;
+                            
+                            const totalImpl = toImplied(bestOver.price) + toImplied(bestUnder.price);
+                            const middlePct = (1 - totalImpl) * 100;
+                            
+                            // Only flag if it's profitable or near-profitable  
+                            if (middlePct > -5) {
+                                // Create a synthetic middle result
+                                const middleResult = {
+                                    player: lowEntry.player || lowEntry.event,
+                                    market: lowEntry.market + ' MIDDLE',
+                                    apiMarket: lowEntry.apiMarket,
+                                    line: lowLine,
+                                    event: lowEntry.event,
+                                    eventId: lowEntry.eventId,
+                                    commenceTime: lowEntry.commenceTime,
+                                    sport: lowEntry.sport,
+                                    sportLabel: lowEntry.sportLabel,
+                                    bookCount: lowEntry.bookCount + highEntry.bookCount,
+                                    bookPrices: [...lowEntry.bookPrices, ...highEntry.bookPrices],
+                                    isGameLevel: lowEntry.isGameLevel,
+                                    dna: lowEntry.dna,
+                                    isMiddle: true,
+                                    middleGap: gap,
+                                    middleLowLine: lowLine,
+                                    middleHighLine: highLine,
+                                    arbPct: parseFloat(middlePct.toFixed(1)),
+                                    arbBooks: `${bestOver.bookTitle} OVER ${lowLine} / ${bestUnder.bookTitle} UNDER ${highLine}`,
+                                    bestOverPrice: bestOver.price,
+                                    bestUnderPrice: bestUnder.price,
+                                    bestOverBook: bestOver.bookTitle,
+                                    bestUnderBook: bestUnder.bookTitle,
+                                    bestOverBookKey: bestOver.book,
+                                    bestUnderBookKey: bestUnder.book,
+                                    allBooksCount: new Set([...lowEntry.bookPrices, ...highEntry.bookPrices].map(b => b.book)).size,
+                                    overBookDNA: getBookDNA(bestOver.book),
+                                    underBookDNA: getBookDNA(bestUnder.book),
+                                    execQuality: Math.sqrt(getBookDNA(bestOver.book).execMult * getBookDNA(bestUnder.book).execMult),
+                                    gameStatus: getGameStatus(lowEntry.commenceTime),
+                                    isSameBook: false,
+                                    edgeSignals: [`🎯 ${gap}pt middle window: OVER ${lowLine} / UNDER ${highLine}`]
+                                };
+                                
+                                if (middlePct > 0) arbCount++;
+                                scannerState.results.push(middleResult);
+                            }
+                        }
+                    }
+                }
+                
+                console.log(`💎 V50.14 Arb Radar: H2H pairs=${h2hGroups.size}, Spread pairs=${spreadGroups.size}, Middle candidates=${middleCandidates.size}`);
+                
+                // ═══ Now run the standard Over/Under arb engine on remaining results ═══
+                
+                for (const result of scannerState.results) {
+                    // Skip already-paired H2H/Spread entries and suppressed counterparts
+                    if (result.h2hPaired || result._h2hPaired || result.spreadPaired || result._spreadPaired || result.isMiddle) continue;
                     if (!result.bookPrices || result.bookPrices.length < 2) continue;
                     
                     // Group prices by side
@@ -42452,7 +42723,7 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                 
                 // Re-sort by updated scores
                 scannerState.results.sort((a, b) => b.score - a.score);
-                console.log(`💎 Arb Engine: ${arbCount} arbs, ${nearArbCount} near-arbs, ${phantomCount} phantoms detected (no extra API calls)`);
+                console.log(`💎 Arb Engine: ${arbCount} arbs, ${nearArbCount} near-arbs, ${phantomCount} phantoms detected (H2H:${h2hGroups.size}, Spread:${spreadGroups.size}, Middles:${middleCandidates.size})`);
                 
                 // V41: Apply filters and render with filter controls
                 resultsEl.innerHTML = '';
