@@ -42515,9 +42515,29 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                 // ═══ Now run the standard Over/Under arb engine on remaining results ═══
                 
                 for (const result of scannerState.results) {
-                    // Skip already-paired H2H/Spread entries and suppressed counterparts
-                    if (result.h2hPaired || result._h2hPaired || result.spreadPaired || result._spreadPaired || result.isMiddle) continue;
+                    // Skip suppressed counterparts entirely
+                    if (result._h2hPaired || result._spreadPaired) continue;
                     if (!result.bookPrices || result.bookPrices.length < 2) continue;
+                    
+                    // --- For paired entries (H2H/Spread/Middle), use pre-computed arb data ---
+                    let bestArbPct, bestOverBook, bestUnderBook, overDNA, underDNA;
+                    let overLimit, underLimit, execQuality, gameStatus, isSameBook, bookQualityScore;
+                    
+                    if (result.h2hPaired || result.spreadPaired || result.isMiddle) {
+                        // Already computed in Fix 18-20
+                        bestArbPct = result.arbPct || -Infinity;
+                        bestOverBook = { book: result.bestOverBookKey || '', bookTitle: result.bestOverBook || '', price: result.bestOverPrice || -110 };
+                        bestUnderBook = { book: result.bestUnderBookKey || '', bookTitle: result.bestUnderBook || '', price: result.bestUnderPrice || -110 };
+                        overDNA = result.overBookDNA || getBookDNA(result.bestOverBookKey || '');
+                        underDNA = result.underBookDNA || getBookDNA(result.bestUnderBookKey || '');
+                        overLimit = estimateLimit(overDNA, result.market, result.dna);
+                        underLimit = estimateLimit(underDNA, result.market, result.dna);
+                        execQuality = result.execQuality || 1.0;
+                        gameStatus = result.gameStatus || getGameStatus(result.commenceTime);
+                        isSameBook = result.isSameBook || false;
+                        bookQualityScore = Math.max(0, Math.round(20 * execQuality));
+                    } else {
+                    // --- Standard Over/Under detection ---
                     
                     // Group prices by side
                     const overPrices = []; // {book, bookTitle, price}
@@ -42551,9 +42571,9 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                     underPrices.sort((a, b) => b.price - a.price);
                     
                     // Find best arb pair across ALL book combinations
-                    let bestArbPct = -Infinity;
-                    let bestOverBook = overPrices[0];
-                    let bestUnderBook = underPrices[0];
+                    bestArbPct = -Infinity;
+                    bestOverBook = overPrices[0];
+                    bestUnderBook = underPrices[0];
                     let bestTotalImplied = 2;
                     
                     // Check top 5 over x top 5 under combinations for best arb
@@ -42574,23 +42594,23 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                     }
                     
                     // Calculate book quality score for this arb pair — NOW USING BOOK DNA
-                    const overDNA = getBookDNA(bestOverBook.book);
-                    const underDNA = getBookDNA(bestUnderBook.book);
+                    overDNA = getBookDNA(bestOverBook.book);
+                    underDNA = getBookDNA(bestUnderBook.book);
                     const avgTier = (overDNA.tier + underDNA.tier) / 2;
                     // Execution multiplier: geometric mean of both books
-                    const execQuality = Math.sqrt(overDNA.execMult * underDNA.execMult);
+                    execQuality = Math.sqrt(overDNA.execMult * underDNA.execMult);
                     // Book quality score: higher for premium pairs
-                    const bookQualityScore = Math.max(0, Math.round(20 * execQuality));
+                    bookQualityScore = Math.max(0, Math.round(20 * execQuality));
                     
                     // Estimate limits for this market type
-                    const overLimit = estimateLimit(overDNA, result.market, result.dna);
-                    const underLimit = estimateLimit(underDNA, result.market, result.dna);
+                    overLimit = estimateLimit(overDNA, result.market, result.dna);
+                    underLimit = estimateLimit(underDNA, result.market, result.dna);
                     
                     // Time-to-game status
-                    const gameStatus = getGameStatus(result.commenceTime);
+                    gameStatus = getGameStatus(result.commenceTime);
                     
                     // Same-book detection
-                    const isSameBook = bestOverBook.book === bestUnderBook.book;
+                    isSameBook = bestOverBook.book === bestUnderBook.book;
                     
                     // Store arb data
                     result.bestOverPrice = bestOverBook.price;
@@ -42608,9 +42628,11 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                     result.isSameBook = isSameBook;
                     result.execQuality = execQuality;
                     
+                    } // ← close else block (O/U detection). Scoring below runs for ALL entries.
+                    
                     // ═══ SCORING BASED ON ARB DATA ═══
                     let edgeScore = 0;
-                    let edgeSignals = [];
+                    let edgeSignals = result.edgeSignals || [];
                     
                     if (bestArbPct > 0) {
                         // CONFIRMED ARB — Calculate EV
