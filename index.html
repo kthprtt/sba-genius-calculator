@@ -23750,13 +23750,16 @@ Return ONLY valid JSON:
                                 };
                             }
                             
-                            // homeAwaySplit: use team home/away records
+                            // homeAwaySplit: use team margins (not raw PPGs)
+                            // V50.14: Use differential (PPG-OppPPG) for home/away split
                             if (!intelData.homeAwaySplit) {
                                 const homeWPct = m.teamA?.wPct || 0.5;
                                 const awayWPct = m.teamB?.wPct || 0.5;
+                                const homeMarginV49 = (m.teamA?.ppg || 0) - (m.teamA?.oppPpg || m.teamB?.ppg || 0);
+                                const awayMarginV49 = (m.teamB?.ppg || 0) - (m.teamB?.oppPpg || m.teamA?.ppg || 0);
                                 intelData.homeAwaySplit = {
-                                    home: m.teamA?.ppg || intelData.seasonAvg,
-                                    away: m.teamB?.ppg || intelData.seasonAvg,
+                                    home: homeMarginV49 || intelData.seasonAvg,
+                                    away: awayMarginV49 || intelData.seasonAvg,
                                     homeWPct, awayWPct,
                                     source: 'V49_TEAM_INTEL'
                                 };
