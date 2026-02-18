@@ -42264,11 +42264,11 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                 // We must PAIR complementary sides and compare cross-book.
                 // ═══════════════════════════════════════════════════════════════
                 
-                // --- FIX 18: H2H (Moneyline) Arb Detection ---
-                // Group H2H entries by eventId+market, pair Home vs Away
-                const h2hGroups = new Map(); // key: eventId|market → [entry1, entry2]
-                const spreadGroups = new Map(); // key: eventId|market|absPoint → [entry1, entry2]
-                const middleCandidates = new Map(); // key: eventId|apiMarket → [{line, bookPrices}...]
+                let h2hGroups = new Map();
+                let spreadGroups = new Map();
+                let middleCandidates = new Map();
+                
+                try {
                 
                 for (const result of scannerState.results) {
                     if (!result.bookPrices || result.bookPrices.length < 2) continue;
@@ -42511,6 +42511,11 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                 }
                 
                 console.log(`💎 V50.14 Arb Radar: H2H pairs=${h2hGroups.size}, Spread pairs=${spreadGroups.size}, Middle candidates=${middleCandidates.size}`);
+                
+                } catch (radarErr) {
+                    console.error('💎 V50.14 Arb Radar error (non-fatal):', radarErr.message);
+                    console.log('💎 Falling through to standard O/U arb engine...');
+                }
                 
                 // ═══ Now run the standard Over/Under arb engine on remaining results ═══
                 
@@ -43029,6 +43034,7 @@ Respond ONLY with JSON: {"pick": "OVER" or "UNDER", "trueProb": 0.XX (decimal 0-
                 const isVerify = roi.tier === 'VERIFY';
                 arbDetailLine = `<div style="background: ${roi.bg}; border: 1px solid ${roi.border}; border-radius: 4px; padding: 3px 8px; margin-top: 4px; font-size: 10px; color: ${roi.color}; font-weight: 700; ${isVerify ? 'opacity: 0.7;' : ''}">
                     🚨 ARB ${result.arbPct}% ${roi.label} — ${result.arbBooks}
+                    ${result.isMiddle ? `<span style="color: #b98fff; margin-left: 8px;">🎯 ${result.middleGap}pt middle</span>` : ''}
                     ${result.ev && result.ev.profit > 0 && !isVerify ? `<span style="color: #00ff88; margin-left: 8px;">💰 $${result.ev.profit} est.</span>` : ''}
                     ${result.isSameBook ? '<span style="color: #55ff55; margin-left: 8px;">🎯 Same-book</span>' : ''}
                     ${result.staleFlags && result.staleFlags.length > 0 ? `<span style="color: #ff8800; margin-left: 8px;">⚠️ ${result.staleFlags[0].msg}</span>` : ''}
