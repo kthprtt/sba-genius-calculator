@@ -24060,8 +24060,15 @@ Return ONLY valid JSON:
                                     
                                     // Fallback: use combined PPG proxy if no H2H found
                                     if (!intelData.matchupHistory) {
-                                        const proxyTotal = (m.teamA?.ppg || 0) + (m.teamB?.ppg || 0);
-                                        intelData.matchupHistory = { avg: proxyTotal > 0 ? proxyTotal : 0, games: 0, statKey: 'total', source: 'TEAM_PPG_PROXY' };
+                                        const isMLProxy = (lockedMarket || '').toLowerCase() === 'moneyline';
+                                        if (isMLProxy) {
+                                            // Moneyline: proxy with projected margin (not total)
+                                            const proxyMargin = m.expectedMargin || ((m.teamA?.ppg || 0) - (m.teamB?.ppg || 0));
+                                            intelData.matchupHistory = { avg: proxyMargin, games: 0, statKey: 'margin', source: 'TEAM_PPG_PROXY' };
+                                        } else {
+                                            const proxyTotal = (m.teamA?.ppg || 0) + (m.teamB?.ppg || 0);
+                                            intelData.matchupHistory = { avg: proxyTotal > 0 ? proxyTotal : 0, games: 0, statKey: 'total', source: 'TEAM_PPG_PROXY' };
+                                        }
                                     }
                                 }
                                 
@@ -24272,11 +24279,17 @@ Return ONLY valid JSON:
                             
                             if (!h2hFound) {
                             if (!h2hFound) {
-                                // No direct H2H — use combined team PPG as proxy
+                                // No direct H2H — use proxy based on market type
                                 const homeP = state.teamStats?.home?.ppg || 0;
                                 const awayP = state.teamStats?.away?.ppg || 0;
-                                const proxyTotal = homeP + awayP;
-                                intelData.matchupHistory = { avg: proxyTotal > 0 ? proxyTotal : 0, games: 0, statKey: 'total', source: 'TEAM_PPG_PROXY', note: 'No direct H2H — using combined team PPG' };
+                                const isMLProxy2 = (lockedMarket || '').toLowerCase() === 'moneyline';
+                                if (isMLProxy2) {
+                                    const proxyMargin2 = (homeP - (state.teamStats?.home?.oppPpg || awayP)) || 0;
+                                    intelData.matchupHistory = { avg: proxyMargin2, games: 0, statKey: 'margin', source: 'TEAM_PPG_PROXY', note: 'No direct H2H — using margin proxy' };
+                                } else {
+                                    const proxyTotal = homeP + awayP;
+                                    intelData.matchupHistory = { avg: proxyTotal > 0 ? proxyTotal : 0, games: 0, statKey: 'total', source: 'TEAM_PPG_PROXY', note: 'No direct H2H — using combined team PPG' };
+                                }
                             }
                             }
                         }
